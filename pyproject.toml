@@ -1,0 +1,37 @@
+[project]
+name = "ercot-mis"
+version = "0.0.1"
+description = "Fetch, cache and standardize ERCOT MIS data locally, with provenance."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Erich Trieschman" }]
+dependencies = [
+    "lxml>=5",
+    "polars>=1.30",
+    "requests>=2.32",
+    "zeep[xmlsec]>=4.3",
+]
+
+[dependency-groups]
+dev = [
+    "cryptography>=43",
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ercot_mis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# Always resolve from public PyPI, whatever the machine's default index is.
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true

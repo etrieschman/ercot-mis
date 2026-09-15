@@ -1,0 +1,25 @@
+# ERCOT data and personal pulls never enter the repository
+data/
+pulls/
+
+# Identity and credentials
+.env
+*.pfx
+*.p12
+*.key
+*.crt
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
