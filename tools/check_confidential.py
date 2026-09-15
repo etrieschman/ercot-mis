@@ -29,7 +29,9 @@ BLOCKED_SUFFIXES = {".raw", ".pfx", ".p12", ".key", ".crt", ".pem", ".zip", ".xl
 
 # A DUNS+4 is 13 digits and ERCOT file names zero-pad it to 16.
 DIGIT_RUN = re.compile(rb"(?<![0-9A-Za-z])(\d{13}|\d{16})(?![0-9A-Za-z])")
-API_USER = re.compile(rb"API_[A-Z0-9]{8,}")
+# ERCOT API user IDs are API_ plus letters and digits (e.g. a date and a name). Requiring a
+# digit and a word boundary keeps variable names like ERCOT_PUBLIC_API_USERNAME out.
+API_USER = re.compile(rb"(?<![A-Za-z0-9_])API_(?=[A-Z0-9]*\d)[A-Z0-9]{8,}")
 # Machine-generated from PyPI; its hashes produce false digit-run matches.
 PATTERN_EXEMPT = {"uv.lock"}
 
@@ -48,8 +50,16 @@ def read_dotenv(path: Path) -> dict[str, str]:
     return values
 
 
+# Secrets and identifiers whose exact values must never appear in a tracked file.
+SECRET_VARIABLES = (
+    "ERCOT_PUBLIC_API_USERNAME",
+    "ERCOT_PUBLIC_API_PASSWORD",
+    "ERCOT_PUBLIC_API_SUBSCRIPTION_KEY",
+)
+
+
 def identifiers(root: Path = ROOT) -> list[bytes]:
-    """The user's real DUNS (both spellings) and API user, from the environment or .env."""
+    """Exact values to block: DUNS (both spellings), API user, and Public API credentials."""
     values = {**read_dotenv(root / ".env"), **os.environ}
     duns = values.get("ERCOT_DUNS", "").strip()
     user = values.get("ERCOT_API_USER", "").strip()
@@ -58,6 +68,10 @@ def identifiers(root: Path = ROOT) -> list[bytes]:
         found += [duns.encode(), duns.zfill(16).encode()]
     if user.startswith("API_") and len(user) > 6:
         found.append(user.encode())
+    for name in SECRET_VARIABLES:
+        value = values.get(name, "").strip()
+        if len(value) >= 6 and not value.startswith("<"):  # skip .env.example-style placeholders
+            found.append(value.encode())
     return found
 
 
@@ -88,7 +102,7 @@ def problems(
         for ident in known:
             index = data.find(ident)
             if index >= 0:
-                found.append(f"{rel}:{_line(data, index)}: contains your ERCOT_DUNS or ERCOT_API_USER")
+                found.append(f"{rel}:{_line(data, index)}: contains a value from your .env (DUNS, API user or Public API credential)")
         if rel in PATTERN_EXEMPT:
             continue
         if match := DIGIT_RUN.search(data):

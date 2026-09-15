@@ -21,6 +21,7 @@ def _check(files, known=()):
 
 def test_clean_code_passes():
     assert _check({"src/x.py": "size = 43214180\nsha = 'a1b2c3'\n"}) == []
+    assert _check({".env.example": "ERCOT_PUBLIC_API_USERNAME=<email>\nERCOT_API_USER=API_YOURID\n"}) == []
 
 
 def test_flags_identifier_patterns_with_line_numbers_not_values():
@@ -33,7 +34,10 @@ def test_flags_identifier_patterns_with_line_numbers_not_values():
 def test_flags_real_identifiers_everywhere_even_in_uv_lock():
     real = "9" * 9
     found = _check({"uv.lock": f"x\n{real}\n", "src/y.py": DUNS_LIKE}, known=[real])
-    assert found == ["uv.lock:2: contains your ERCOT_DUNS or ERCOT_API_USER", "src/y.py:1: 13- or 16-digit number (looks like a DUNS)"]
+    assert found == [
+        "uv.lock:2: contains a value from your .env (DUNS, API user or Public API credential)",
+        "src/y.py:1: 13- or 16-digit number (looks like a DUNS)",
+    ]
 
 
 @pytest.mark.parametrize("path", ["data.RAW", "tests/api.key", "docs/model.xlsx", "pkg.zip", "docs/ECEII_notes.md"])
@@ -45,11 +49,17 @@ def test_allows_synthetic_fixtures():
     assert _check({"tests/fixtures/synthetic/tiny_package.zip": "fake"}) == []
 
 
-def test_identifiers_read_both_duns_spellings(tmp_path, monkeypatch):
-    monkeypatch.delenv("ERCOT_DUNS", raising=False)
-    monkeypatch.delenv("ERCOT_API_USER", raising=False)
-    (tmp_path / ".env").write_text(f"ERCOT_DUNS={DUNS_LIKE}\nERCOT_API_USER={API_LIKE}\n")
-    assert guard.identifiers(tmp_path) == [DUNS_LIKE.encode(), ("000" + DUNS_LIKE).encode(), API_LIKE.encode()]
+def test_identifiers_include_duns_spellings_api_user_and_public_api_secrets(tmp_path, monkeypatch):
+    for name in ("ERCOT_DUNS", "ERCOT_API_USER", *guard.SECRET_VARIABLES):
+        monkeypatch.delenv(name, raising=False)
+    secret = "s3cret-" + "x" * 8
+    (tmp_path / ".env").write_text(
+        f"ERCOT_DUNS={DUNS_LIKE}\nERCOT_API_USER={API_LIKE}\n"
+        f"ERCOT_PUBLIC_API_PASSWORD={secret}\nERCOT_PUBLIC_API_USERNAME=<your email>\n"
+    )
+    assert guard.identifiers(tmp_path) == [
+        DUNS_LIKE.encode(), ("000" + DUNS_LIKE).encode(), API_LIKE.encode(), secret.encode(),
+    ]
 
 
 def test_every_tracked_file_is_clean():

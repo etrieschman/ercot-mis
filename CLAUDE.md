@@ -35,7 +35,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | network output | standardized tables + optional `ercot_mis.sensitivities` (base-case PTDF, LODF, GTC rows); no shift factors yet |
 | ratings | keep both: CRR monitored-element CSV (enforced, default) and PSS/E Rate A/B/C (MVA) |
 | conventions | facts stored as data; judgment calls as named options defaulting to ERCOT practice |
-| PSS/E parser | our own focused v30 parser on Arrow's CSV reader; PowerFlowData.jl as an optional reference check; **not** VeraGridEngine |
+| PSS/E parser | our own focused v30 parser (`parsers/psse.py`): one compiled tokenizer for both ERCOT dialects (~0.3 s per RAW), Arrow for type conversion. Arrow's CSV reader can't split the blank-separated DAM RAW, so it is used for the CSVs only. PowerFlowData.jl as an optional reference check; **not** VeraGridEngine |
 | CRR scope | annual (all sequences + updates) and monthly |
 | DAM scope | LMPs, SPPs, 60-day disclosure awards → node-space injections; network models for **every day** (all 24 hours, ~10 GB/yr zipped); shadow prices for validation |
 | shift factors | `SYS-608-CD` tracked (listed into catalog) but not pulled |
@@ -93,6 +93,32 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   days, so savings must come from columnar Parquet on parsed rows, not blob dedup.
   The DAM snapshot key therefore needs an hour: `dam:2026-10-14:he07:r1`.
 
+### Source file facts (verified on the archive, 2026-09-15)
+
+- **Two PSS/E v30 dialects.** CRR (PSS/ODMS export): comma-separated, sections closed
+  by `0 / END OF <X> DATA, BEGIN <Y> DATA`, CRLF, a `/*[...]*/` comment after most
+  records holding the element's ERCOT name (the `DeviceName` the CRR CSVs use). DAM:
+  blank-separated, bare `0` separators, LF, no comments, **no VSC DC section** (15
+  separators). Field layouts identical; all transformers are 2-winding; DC lines,
+  FACTS and multi-section lines are empty.
+- **DAM README says:** lossless DC power flow; RAW already includes scheduled outages;
+  bus shunt, load and generator MW/MVAr are all zero; names the slack bus; 23 or 25
+  hourly files on DST days, the extra hour being the third.
+- **CRR packages:** annual = one folder per month plus package-level mapping workbooks
+  (`Lines`, `Autos` sheets); monthly = flat. **CSV is canonical**: same values as the
+  XML twins, except device-type spelling (`LINE`/`XFMR` in the contingency CSV,
+  `Line`/`XFMR` in monitored elements, `Line`/`Transformer` in XML and GTCs) — the
+  core layer normalizes it. Monitored elements carry `TimeOfUse` ∈ {PeakWD, PeakWE,
+  Off-peak}; only a PeakWD RAW ships.
+- **Oddities the core layer must handle:** 15 of ~1,000 sources/sinks (load zones,
+  hubs) use MW-scale weights rather than fractions — normalize; mapping-workbook
+  bus-number cells hold a text sentinel for unmatched rows (kept as text in raw);
+  DAM contingency split-bus number columns sometimes hold a note instead of a number
+  (kept as text); monthly outages are pipe-delimited, annual `_None` outage files are
+  a comma header only; the DAM load CSV header has a trailing comma.
+- DAM RAW branches, transformers, loads and generators match the hour's `Ln`, `Xf`,
+  `Ld`, `Gn` CSV row counts in every hour checked (768 of 768).
+
 ### Provenance
 
 Catalog (`catalog.duckdb`): built so far `remote_doc` (every listed document,
@@ -117,6 +143,12 @@ src/ercot_mis/
   store/archive.py  content-addressed store (archive/<EMIL>/<sha256>.zip, read-only,
                   atomic via archive/.partial), zip member hashing
   store/catalog.py  DuckDB catalog: remote_doc, archive_blob, archive_member, archive_source
+  parsers/_common.py  Column specs, snake_case, cast_column, read_delimited (Arrow CSV,
+                  exact header check), read_sheet (xlsx via fastexcel); ParseError
+  parsers/psse.py   PSS/E v30 RAW -> psse_* tables, both dialects
+  parsers/crr.py    CRR package member classification + parsers -> crr_* tables
+  parsers/dam.py    DAM package member classification + parsers -> dam_* tables
+scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs)
 scripts/probe.py archive-depth probe over every EWS product
 scripts/daily_pull.py  fetch pulled EWS products, list tracked ones; launchd template in scripts/launchd/
 tools/check_confidential.py   pre-commit guard (stdlib only)
@@ -130,7 +162,7 @@ tests/            synthetic-only tests; test_guard also scans every tracked file
 |---|---|---|
 | M0 | scaffold, config, EWS client, archive probe | done — EWS depth = display window |
 | M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS half done and verified live; first pull 2026-09-15 archived every listed EWS document (1.8 GB) incl. the two `ftr_align/ercot_data` zips via ingest; daily scheduling not yet installed; Public API client waits for credentials |
-| M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | |
+| M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | parsers done (PSS/E both dialects, CRR, DAM); `scripts/validate_parsers.py` clean on all 29 CRR packages and 768 DAM hourly models (2026-09-15). Not yet: writing raw Parquet (lands with the M3 runner), DynamicRatings, PowerFlowData.jl cross-check (needs Julia) |
 | M3 | core layer + SQL runner, cache skip, lineage, validation checks | |
 | M4 | `out.network` + `ftr_align/cases/ercot.py` | |
 | M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | |
