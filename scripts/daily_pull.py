@@ -6,9 +6,9 @@ tracked ones so their availability is recorded, and exits non-zero if anything f
 failed documents are retried on the next run.
 
 To capture only some DAM days, copy this file to pulls/ (gitignored) and set
-DAM_OPERATING_DATES there. Schedule it with launchd: see examples/launchd/.
+DAM_OPERATING_DATES there. Schedule it with launchd: see scripts/launchd/.
 
-    uv run python examples/daily_pull.py
+    uv run python scripts/daily_pull.py
 """
 
 import sys

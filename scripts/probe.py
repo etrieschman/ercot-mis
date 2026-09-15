@@ -4,7 +4,7 @@ Lists documents only; downloads nothing. Writes each product's full listing and 
 summary to ``data/probes/<date>/``, and prints the summary. File names are not
 printed because ERCOT embeds the participant DUNS in them.
 
-    uv run python examples/probe.py
+    uv run python scripts/probe.py
 """
 
 from datetime import datetime, timezone

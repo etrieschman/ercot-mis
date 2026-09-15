@@ -37,9 +37,9 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | conventions | facts stored as data; judgment calls as named options defaulting to ERCOT practice |
 | PSS/E parser | our own focused v30 parser on Arrow's CSV reader; PowerFlowData.jl as an optional reference check; **not** VeraGridEngine |
 | CRR scope | annual (all sequences + updates) and monthly |
-| DAM scope | LMPs, SPPs, 60-day disclosure awards → node-space injections; network models for selected days; shadow prices for validation |
+| DAM scope | LMPs, SPPs, 60-day disclosure awards → node-space injections; network models for **every day** (all 24 hours, ~10 GB/yr zipped); shadow prices for validation |
 | shift factors | `SYS-608-CD` tracked (listed into catalog) but not pulled |
-| schedule | decided from the M0 probe |
+| schedule | daily at 07:00 via launchd (`scripts/daily_pull.py`, installed as `~/Library/LaunchAgents/ercot-mis.daily-pull.plist`); required because EWS keeps nothing past the display window |
 
 ### Layers and naming
 
@@ -117,8 +117,8 @@ src/ercot_mis/
   store/archive.py  content-addressed store (archive/<EMIL>/<sha256>.zip, read-only,
                   atomic via archive/.partial), zip member hashing
   store/catalog.py  DuckDB catalog: remote_doc, archive_blob, archive_member, archive_source
-examples/probe.py archive-depth probe over every EWS product
-examples/daily_pull.py  fetch pulled EWS products, list tracked ones; launchd template in examples/launchd/
+scripts/probe.py archive-depth probe over every EWS product
+scripts/daily_pull.py  fetch pulled EWS products, list tracked ones; launchd template in scripts/launchd/
 tools/check_confidential.py   pre-commit guard (stdlib only)
 .githooks/pre-commit
 tests/            synthetic-only tests; test_guard also scans every tracked file

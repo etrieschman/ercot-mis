@@ -80,11 +80,11 @@ models, one year for CRR network models. Anything not captured before then is go
 so run the daily pull every day:
 
 ```bash
-uv run python examples/daily_pull.py
+uv run python scripts/daily_pull.py
 ```
 
-`examples/launchd/` has a launchd template that runs it every morning on macOS.
-`examples/probe.py` lists what EWS offers for each product without downloading.
+`scripts/launchd/` has a launchd template that runs it every morning on macOS.
+`scripts/probe.py` lists what EWS offers for each product without downloading.
 
 ## Tests
 

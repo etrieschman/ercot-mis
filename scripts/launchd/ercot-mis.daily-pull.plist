@@ -4,10 +4,10 @@
   Runs the daily pull at 07:00 local time (after ERCOT posts the day's DAM model).
   If the Mac is asleep at 07:00, launchd runs it at the next wake.
 
-  Install:
-    1. Replace REPO with the absolute path of this repository and UV with `which uv`.
-    2. cp examples/launchd/ercot-mis.daily-pull.plist ~/Library/LaunchAgents/
-    3. launchctl load ~/Library/LaunchAgents/ercot-mis.daily-pull.plist
+  Install, from the repository root:
+    sed -e "s#REPO#$PWD#g" -e "s#<string>UV</string>#<string>$(which uv)</string>#" \
+        scripts/launchd/ercot-mis.daily-pull.plist > ~/Library/LaunchAgents/ercot-mis.daily-pull.plist
+    launchctl load ~/Library/LaunchAgents/ercot-mis.daily-pull.plist
   Check:   launchctl list | grep ercot-mis ; tail REPO/data/logs/daily_pull.log
   Remove:  launchctl unload ~/Library/LaunchAgents/ercot-mis.daily-pull.plist
 -->
@@ -22,7 +22,7 @@
         <string>UV</string>
         <string>run</string>
         <string>python</string>
-        <string>examples/daily_pull.py</string>
+        <string>scripts/daily_pull.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
