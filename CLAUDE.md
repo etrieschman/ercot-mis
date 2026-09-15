@@ -49,7 +49,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   (`raw.crr_monitored_lines_and_transformers`). snake_case + types only.
 - `core` — tidy keyed tables. Network tables are **shared by CRR and DAM** and keyed
   by `snapshot_id` (`crr:annual:2029.1st6:seq6:2029-01:r2`, `crr:monthly:2026-10:r1`,
-  `dam:2026-10-14:r1`): `core.bus`, `core.branch`, `core.branch_rating`,
+  `dam:2026-10-14:he07:r1`): `core.bus`, `core.branch`, `core.branch_rating`,
   `core.contingency`, `core.contingency_outage`, `core.gtc`, `core.gtc_member`,
   `core.constraint`, `core.price_node_bus`, `core.settlement_point`,
   `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_award`,
@@ -85,6 +85,13 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   years, Seq6 (≈3 yr out) → Seq1 (≈6 months out). Monthly model is closest to DAM.
 - DAM network models (`NP4-500-SG`) have a 31-day display window, disclosures a
   60-day lag: capture models first, injections fill in later.
+- **A DAM package is one day holding 24 hourly models**: ~29 MB zipped, ~240 MB
+  unzipped, 195 members. Per hour (`_###`): a PSS/E `.RAW` plus CSVs `Ctg`
+  (contingencies), `Ln` (lines), `Xf` (transformers), `Ld` (loads), `Gn`
+  (generators), `Sp` (settlement points), `Hb` (hubs); per day: `SpCtg`, `SpNb`,
+  and a README. No two hourly files are byte-identical, within a day or across
+  days, so savings must come from columnar Parquet on parsed rows, not blob dedup.
+  The DAM snapshot key therefore needs an hour: `dam:2026-10-14:he07:r1`.
 
 ### Provenance
 
@@ -122,7 +129,7 @@ tests/            synthetic-only tests; test_guard also scans every tracked file
 | # | milestone | status |
 |---|---|---|
 | M0 | scaffold, config, EWS client, archive probe | done — EWS depth = display window |
-| M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS half built (store, catalog, list/fetch/ingest, daily pull); live verification + import of existing data next; Public API client waits for credentials |
+| M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS half done and verified live; first pull 2026-09-15 archived every listed EWS document (1.8 GB) incl. the two `ftr_align/ercot_data` zips via ingest; daily scheduling not yet installed; Public API client waits for credentials |
 | M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | |
 | M3 | core layer + SQL runner, cache skip, lineage, validation checks | |
 | M4 | `out.network` + `ftr_align/cases/ercot.py` | |
