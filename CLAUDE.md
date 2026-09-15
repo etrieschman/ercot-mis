@@ -93,31 +93,14 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   days, so savings must come from columnar Parquet on parsed rows, not blob dedup.
   The DAM snapshot key therefore needs an hour: `dam:2026-10-14:he07:r1`.
 
-### Source file facts (verified on the archive, 2026-09-15)
+### Dataset notes — `docs/datasets/`
 
-- **Two PSS/E v30 dialects.** CRR (PSS/ODMS export): comma-separated, sections closed
-  by `0 / END OF <X> DATA, BEGIN <Y> DATA`, CRLF, a `/*[...]*/` comment after most
-  records holding the element's ERCOT name (the `DeviceName` the CRR CSVs use). DAM:
-  blank-separated, bare `0` separators, LF, no comments, **no VSC DC section** (15
-  separators). Field layouts identical; all transformers are 2-winding; DC lines,
-  FACTS and multi-section lines are empty.
-- **DAM README says:** lossless DC power flow; RAW already includes scheduled outages;
-  bus shunt, load and generator MW/MVAr are all zero; names the slack bus; 23 or 25
-  hourly files on DST days, the extra hour being the third.
-- **CRR packages:** annual = one folder per month plus package-level mapping workbooks
-  (`Lines`, `Autos` sheets); monthly = flat. **CSV is canonical**: same values as the
-  XML twins, except device-type spelling (`LINE`/`XFMR` in the contingency CSV,
-  `Line`/`XFMR` in monitored elements, `Line`/`Transformer` in XML and GTCs) — the
-  core layer normalizes it. Monitored elements carry `TimeOfUse` ∈ {PeakWD, PeakWE,
-  Off-peak}; only a PeakWD RAW ships.
-- **Oddities the core layer must handle:** 15 of ~1,000 sources/sinks (load zones,
-  hubs) use MW-scale weights rather than fractions — normalize; mapping-workbook
-  bus-number cells hold a text sentinel for unmatched rows (kept as text in raw);
-  DAM contingency split-bus number columns sometimes hold a note instead of a number
-  (kept as text); monthly outages are pipe-delimited, annual `_None` outage files are
-  a comma header only; the DAM load CSV header has a trailing comma.
-- DAM RAW branches, transformers, loads and generators match the hour's `Ln`, `Xf`,
-  `Ld`, `Gn` CSV row counts in every hour checked (768 of 768).
+Per-dataset design choices live in `docs/datasets/` (one note per dataset, fixed
+template: what it is, capture, package layout, what we parse, decisions, ERCOT
+quirks, validation, open questions). Read the relevant note before touching a
+parser; **update it in the same commit** whenever an import decision changes or a
+new quirk turns up. Notes are public: structure only, never names or values.
+Written so far: `psse-raw.md`, `crr-network-model.md`, `dam-network-model.md`.
 
 ### Provenance
 
@@ -169,6 +152,47 @@ tests/            synthetic-only tests; test_guard also scans every tracked file
 | M6 | CRR ↔ DAM matching + scorecard | |
 | M7 | `sensitivities` (restricted float32 PTDF/LODF, cache budget, cross-test vs `ftr_align.network.compute_ptdf`) | |
 | M8 | scheduled pulls (Python files), docs, first release | |
+
+## Pick up here (next session)
+
+State at 2026-09-15: M0–M2 done and pushed. Archive holds every EWS document offered
+(1.8 GB); the daily pull runs at 07:00 via launchd; parsers validated clean on all
+archived packages. Public API credentials are in `.env` (unused so far).
+
+First, check health (2 min):
+- `tail -30 data/logs/daily_pull.log` — a run each morning, `failed 0`.
+- `launchctl list | grep ercot-mis` — last exit code 0.
+
+Then, in order:
+1. **M3a: raw Parquet writer with provenance.** `mis.build_raw(product)`: for each
+   archived blob, each member with `is_parsed`, write the parser's tables to
+   `data/raw/<table>/…/part-<member_sha256[:16]>.parquet` (zstd). Add catalog tables
+   `run`, `artifact`, `lineage`. Cache key = sha256(parser module source + package
+   version + member sha256); skip when the artifact exists. Add identifying columns
+   to every raw row: `emil_id`, `doc_id`, `member_sha256`; CRR `auction`, `term`,
+   `sequence`, `month`, `time_of_use`; DAM `operating_date`, `hour`. Partition CRR
+   by `emil_id`/`month`, DAM by `operating_date`. Parse DAM days in parallel
+   (process pool) — ~12 s/day serial.
+2. **Snapshot IDs and revisions**: `core.snapshot` from the catalog + member
+   metadata; revision `r<n>` = order of `posted_at` among documents for the same
+   logical package (annual `_Upd` packages are revisions).
+3. **M3b: SQL runner** (`models/core/*.sql`, header `-- inputs:` / `-- partition_by:`)
+   and first core tables: `core.bus`, `core.branch` (lines + transformers),
+   `core.branch_rating` (CRR CSV + RAW Rate A/B/C), `core.contingency`,
+   `core.contingency_outage`, `core.gtc`, `core.gtc_member`, `core.price_node_bus`
+   (normalize MW-scale weights). Normalize device-type spellings (see crr note).
+4. **Public API client** (`sources/public_api.py`, same Source interface as EWS):
+   token via ERCOT B2C ROPC flow (username/password form POST, `id_token`), header
+   `Ocp-Apim-Subscription-Key`; archive listing `GET /archive/{emil_id}` paged by
+   `_meta.totalPages`; download via each archive's `_links.endpoint.href`. Verify on
+   first live call: timestamp format for `postDatetimeFrom/To`, listing field names,
+   whether sizes are given. Retry on 429. Then set `source="public_api"` products
+   to pull in `daily_pull.py`, confirm `NP4-183-CD` is the DAM hourly LMP product,
+   and write dataset notes for each public product.
+5. Write dataset notes for NP4-160-SG, NP3-220-SG, NP5-615-SG, and parse them.
+
+Open decisions for the user: keep capturing every DAM day (~10 GB/yr)? Install Julia
+for the PowerFlowData.jl cross-check?
 
 ## EWS facts learned the hard way (keep)
 
