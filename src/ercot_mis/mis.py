@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import re
+import zipfile
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from typing import Protocol
 
 import polars as pl
 
 from .config import Identity, load_identity
 from .products import Product, get_product
-from .sources.ews import EwsClient, EwsError, RemoteDoc
+from .sources.ews import ERCOT_TZ, EwsClient, EwsError, RemoteDoc
+from .store import archive
+from .store.catalog import Catalog
 
 DOCUMENT_SCHEMA = {
     "report_type_id": pl.Int64,
@@ -23,6 +29,42 @@ DOCUMENT_SCHEMA = {
     "format": pl.String,
     "url": pl.String,
 }
+
+# Results leave out file names, which embed the participant DUNS, so they are safe to print.
+FETCH_SCHEMA = {
+    "emil_id": pl.String,
+    "doc_id": pl.String,
+    "report_group": pl.String,
+    "operating_date": pl.String,
+    "posted_at": pl.Datetime("us", "UTC"),
+    "size_bytes": pl.Int64,
+    "sha256": pl.String,
+    "status": pl.String,
+    "error": pl.String,
+}
+INGEST_SCHEMA = {
+    "emil_id": pl.String,
+    "doc_id": pl.String,
+    "sha256": pl.String,
+    "size_bytes": pl.Int64,
+    "is_new_bytes": pl.Boolean,
+}
+
+# ERCOT names its downloads "man.<8-digit report type>.<participant>.<timestamp>.<name>".
+_ERCOT_NAME = re.compile(r"^man\.(\d{8})\.")
+
+
+class Source(Protocol):
+    def list_documents(self, product: Product, start: datetime | None, end: datetime | None) -> list[RemoteDoc]: ...
+    def download(self, url: str) -> Iterator[bytes]: ...
+
+
+class BudgetError(RuntimeError):
+    """A fetch would download more than ``max_gb`` allows; nothing was downloaded."""
+
+
+class DownloadError(RuntimeError):
+    """A download arrived incomplete or different from its listing; nothing was kept."""
 
 
 @dataclass(frozen=True)
@@ -39,15 +81,36 @@ class Probe:
 
 
 class Mis:
-    """A local ercot-mis data folder plus the clients that fill it."""
+    """A local ercot-mis data folder plus the clients that fill it.
+
+    Use as a context manager, or call ``close()``, to release the catalog.
+    """
 
     def __init__(self, data_dir: Path, identity: Identity | None = None):
         self.data_dir = Path(data_dir)
         self._identity = identity
         self._ews: EwsClient | None = None
+        self._catalog: Catalog | None = None
 
     def __repr__(self) -> str:
         return f"Mis({str(self.data_dir)!r})"
+
+    def __enter__(self) -> Mis:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self._catalog is not None:
+            self._catalog.close()
+            self._catalog = None
+
+    @property
+    def catalog(self) -> Catalog:
+        if self._catalog is None:
+            self._catalog = Catalog(self.data_dir / "catalog.duckdb")
+        return self._catalog
 
     @property
     def ews(self) -> EwsClient:
@@ -55,6 +118,26 @@ class Mis:
         if self._ews is None:
             self._ews = EwsClient(self._identity or load_identity())
         return self._ews
+
+    def _source(self, spec: Product) -> Source:
+        if spec.source == "ews":
+            return self.ews
+        raise NotImplementedError(f"{spec.emil_id} comes from the Public API, whose client is not built yet.")
+
+    # ------------------------------------------------------------------ listing
+
+    def list(self, product: str | int, since: date | datetime | str | None = None,
+             until: date | datetime | str | None = None) -> pl.DataFrame:
+        """List what ERCOT currently offers for a product, and record it in the catalog.
+
+        ``since`` and ``until`` bound the posting time; a date means midnight ERCOT time.
+        Returns the listed documents with ``is_archived`` and ``sha256``. Works for tracked
+        products too: listing is how they are tracked.
+        """
+        spec = get_product(product)
+        docs = self._source(spec).list_documents(spec, _bound(since), _bound(until))
+        self.catalog.record_listing(spec, docs, listed_at=datetime.now(timezone.utc))
+        return self.catalog.documents(spec.emil_id, [d.doc_id for d in docs if d.doc_id])
 
     def probe(self, product: str | int, *, archive_years: float = 7, now: datetime | None = None) -> Probe:
         """List everything EWS offers for a product, and whether it reaches past the display window.
@@ -67,9 +150,7 @@ class Mis:
         """
         spec = get_product(product)
         if spec.source != "ews" or spec.report_type_id is None:
-            raise NotImplementedError(
-                f"{spec.emil_id} comes from the Public API, whose client arrives with the archive store."
-            )
+            raise NotImplementedError(f"{spec.emil_id} comes from the Public API, whose client is not built yet.")
         now = datetime.now(timezone.utc) if now is None else now
         cutoff = now - timedelta(days=spec.display_days or 0)
 
@@ -87,12 +168,128 @@ class Mis:
         docs = _dedupe(unbounded + older)
         return Probe(summary=_summarize(spec, docs, len(unbounded), cutoff, now, older_error), documents=_frame(docs))
 
+    # --------------------------------------------------------------- archiving
+
+    def fetch(
+        self,
+        product: str | int,
+        since: date | datetime | str | None = None,
+        until: date | datetime | str | None = None,
+        *,
+        operating_dates: Iterable[date | str] | None = None,
+        max_gb: float | None = None,
+    ) -> pl.DataFrame:
+        """Download every listed document that is not archived yet.
+
+        Each document is committed on its own, so running again resumes an interrupted
+        fetch. A document that fails is reported (``status == "failed"``) without
+        stopping the others, and is retried on the next run. ``operating_dates``
+        restricts the fetch to those days; ``max_gb`` refuses, before downloading
+        anything, a fetch larger than the budget.
+        """
+        spec = get_product(product)
+        if spec.take != "pull":
+            raise ValueError(
+                f"{spec.emil_id} is tracked, not pulled: list() records its documents. "
+                "Set take='pull' in products.py to download it."
+            )
+        wanted = self.list(spec.emil_id, since, until).filter(~pl.col("is_archived"))
+        if operating_dates is not None:
+            days = sorted({_as_date(d).isoformat() for d in operating_dates})
+            wanted = wanted.filter(pl.col("operating_date").is_in(days))
+        total = int(wanted["size_bytes"].sum())
+        if max_gb is not None and total > max_gb * 1e9:
+            raise BudgetError(
+                f"{spec.emil_id}: {wanted.height} documents, {total / 1e9:.2f} GB exceeds max_gb={max_gb}. "
+                "Narrow the window or raise the budget."
+            )
+
+        source = self._source(spec)
+        results = []
+        for row in wanted.sort("posted_at").iter_rows(named=True):
+            outcome = {k: row[k] for k in ("emil_id", "doc_id", "report_group", "operating_date", "posted_at", "size_bytes")}
+            try:
+                blob = self._archive(spec, source.download(row["url"]), _suffix(row["file_name"], row["format"]),
+                                     expected_size=row["size_bytes"])
+                self.catalog.add_source(blob.sha256, spec.emil_id, row["doc_id"], "fetch", row["file_name"])
+                results.append({**outcome, "sha256": blob.sha256, "status": "fetched", "error": None})
+            except Exception as error:  # reported, and retried on the next run
+                results.append({**outcome, "sha256": None, "status": "failed", "error": f"{type(error).__name__}: {error}"})
+        return pl.DataFrame(results, schema=FETCH_SCHEMA)
+
+    def ingest(self, path: str | Path, product: str | int | None = None) -> pl.DataFrame:
+        """Adopt ERCOT documents downloaded outside ercot-mis, such as by the old notebook script.
+
+        ``path`` is a file or a folder. For a folder only its top-level zip files are taken,
+        since extracted copies are not documents. The product comes from ``product`` or from
+        ERCOT's file name (``man.<report type>.…``). Each file is linked to its listing by
+        name when the catalog has one, so call ``list()`` first while ERCOT still offers it.
+        """
+        path = Path(path).expanduser()
+        files = [path] if path.is_file() else sorted(
+            p for p in path.iterdir() if p.is_file() and zipfile.is_zipfile(p)
+        )
+        rows = []
+        for file in files:
+            spec = get_product(product) if product is not None else _product_from_name(file.name)
+            with file.open("rb") as handle:
+                blob = self._archive(spec, iter(lambda: handle.read(archive.CHUNK), b""), file.suffix)
+            doc_id = self.catalog.doc_id_for_name(spec.emil_id, file.name)
+            self.catalog.add_source(blob.sha256, spec.emil_id, doc_id, "ingest", file.name)
+            rows.append({"emil_id": spec.emil_id, "doc_id": doc_id, "sha256": blob.sha256,
+                         "size_bytes": blob.size_bytes, "is_new_bytes": blob.created})
+        return pl.DataFrame(rows, schema=INGEST_SCHEMA)
+
+    def _archive(self, spec: Product, chunks: Iterable[bytes], suffix: str,
+                 expected_size: int | None = None) -> archive.StoredBlob:
+        blob = archive.store(self.data_dir, spec.emil_id, chunks, suffix)
+        if expected_size and blob.size_bytes != expected_size:
+            if blob.created:
+                archive.discard(self.data_dir, blob)
+            raise DownloadError(f"received {blob.size_bytes:,} bytes but the listing says {expected_size:,}")
+        if not self.catalog.has_blob(blob.sha256):
+            self.catalog.add_blob(blob, spec, archive.index_members(self.data_dir / blob.path))
+        return blob
+
+
+# ---------------------------------------------------------------------- helpers
+
+
+def _bound(value: date | datetime | str | None) -> datetime | None:
+    """A posting-time bound: dates are midnight ERCOT time, naive datetimes are ERCOT time."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = date.fromisoformat(value) if len(value) == 10 else datetime.fromisoformat(value)
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=ERCOT_TZ)
+    return datetime.combine(value, time(), ERCOT_TZ)
+
+
+def _as_date(value: date | str) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    return value if isinstance(value, date) else date.fromisoformat(value)
+
+
+def _suffix(file_name: str | None, format: str | None) -> str:
+    suffix = Path(file_name or "").suffix
+    return suffix if suffix else (f".{format}" if format else "")
+
+
+def _product_from_name(name: str) -> Product:
+    match = _ERCOT_NAME.match(name)
+    if match is None:
+        raise ValueError(f"Can't tell the product from a file name like this; pass product= (e.g. 'NP7-801-M').")
+    return get_product(int(match.group(1)))
+
 
 def _dedupe(docs: list[RemoteDoc]) -> list[RemoteDoc]:
     seen: dict[str, RemoteDoc] = {}
     for doc in docs:
         seen.setdefault(doc.doc_id or doc.url or f"{doc.file_name}|{doc.posted_at}", doc)
-    return sorted(seen.values(), key=lambda d: (d.posted_at is None, d.posted_at or datetime.min.replace(tzinfo=timezone.utc)))
+    earliest = datetime.min.replace(tzinfo=timezone.utc)
+    return sorted(seen.values(), key=lambda d: (d.posted_at is None, d.posted_at or earliest))
 
 
 def _summarize(

@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from .config import ConfigError, Identity, load_identity, resolve_data_dir
-from .mis import Mis, Probe
+from .mis import BudgetError, DownloadError, Mis, Probe
 from .products import PRODUCTS, Product, get_product
 from .sources.ews import EwsError, RemoteDoc
 
@@ -11,7 +11,9 @@ __version__ = "0.0.1"
 
 __all__ = [
     "PRODUCTS",
+    "BudgetError",
     "ConfigError",
+    "DownloadError",
     "EwsError",
     "Identity",
     "Mis",

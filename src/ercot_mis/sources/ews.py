@@ -28,9 +28,11 @@ from __future__ import annotations
 
 import base64
 import secrets
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
@@ -39,7 +41,11 @@ from lxml import etree
 
 from ..config import Identity
 
+if TYPE_CHECKING:
+    from ..products import Product
+
 ENDPOINT = "https://misapi.ercot.com/NodalAPI/EWS/"
+CHUNK = 1 << 20
 
 # All EWS operations accept the same RequestMessage; the Noun selects the
 # resource, and reports are served by MarketInfo. The SOAPAction is a path, not a
@@ -242,6 +248,33 @@ class EwsClient:
         self.endpoint = endpoint
         self.timeout = timeout
         self.session = session or requests.Session()
+
+    def list_documents(
+        self,
+        product: Product,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[RemoteDoc]:
+        """The Source interface: list a product's documents."""
+        if product.report_type_id is None:
+            raise ValueError(f"{product.emil_id} has no EWS report type ID")
+        return self.get_reports(product.report_type_id, start, end)
+
+    def download(self, url: str) -> Iterator[bytes]:
+        """The Source interface: stream a listed document.
+
+        The download servlet wants the same client certificate as the SOAP call, but no
+        signed envelope.
+        """
+        with self.session.get(
+            url,
+            cert=(str(self.identity.cert), str(self.identity.key)),
+            timeout=self.timeout,
+            stream=True,
+        ) as response:
+            if response.status_code != 200:
+                raise EwsError(f"HTTP {response.status_code} downloading a document")
+            yield from response.iter_content(CHUNK)
 
     def get_reports(
         self,

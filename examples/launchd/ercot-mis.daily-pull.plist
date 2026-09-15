@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Runs the daily pull at 07:00 local time (after ERCOT posts the day's DAM model).
+  If the Mac is asleep at 07:00, launchd runs it at the next wake.
+
+  Install:
+    1. Replace REPO with the absolute path of this repository and UV with `which uv`.
+    2. cp examples/launchd/ercot-mis.daily-pull.plist ~/Library/LaunchAgents/
+    3. launchctl load ~/Library/LaunchAgents/ercot-mis.daily-pull.plist
+  Check:   launchctl list | grep ercot-mis ; tail REPO/data/logs/daily_pull.log
+  Remove:  launchctl unload ~/Library/LaunchAgents/ercot-mis.daily-pull.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ercot-mis.daily-pull</string>
+    <key>WorkingDirectory</key>
+    <string>REPO</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>UV</string>
+        <string>run</string>
+        <string>python</string>
+        <string>examples/daily_pull.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>REPO/data/logs/daily_pull.log</string>
+    <key>StandardErrorPath</key>
+    <string>REPO/data/logs/daily_pull.log</string>
+</dict>
+</plist>

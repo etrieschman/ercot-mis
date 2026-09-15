@@ -88,8 +88,11 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 
 ### Provenance
 
-Catalog (`catalog.duckdb`): `remote_doc`, `archive_blob`, `archive_member`, `run`,
-`artifact`, `lineage`. Transform identity = sha256 of the SQL file / parser module +
+Catalog (`catalog.duckdb`): built so far `remote_doc` (every listed document,
+refreshed per listing), `archive_blob` (distinct bytes), `archive_member` (zip
+members by hash), `archive_source` (one row per arrival: fetch or ingest, with
+doc_id when linked). Still to come with the SQL runner: `run`, `artifact`, `lineage`.
+DuckDB allows one writer: don't run the daily pull and a writing notebook at once. Transform identity = sha256 of the SQL file / parser module +
 package version. Cache key = hash(transform identity, input fingerprints, params);
 existing key ⇒ skip. Artifacts carry the most restrictive classification of their
 inputs; `export()` refuses Secure/ECEII outside `data/`.
@@ -101,9 +104,14 @@ src/ercot_mis/
   __init__.py     open(), re-exports
   config.py       data folder resolution + synced-folder warning; Identity from env/.env
   products.py     PRODUCTS: EMIL specs (report type, class, window, source, pull/track)
-  mis.py          Mis: the session object; probe()
-  sources/ews.py  EWS: build_request, sign (SHA-1 WS-Security), parse_reports, EwsClient
+  mis.py          Mis: the session object; list, fetch, ingest, probe
+  sources/ews.py  EWS: build_request, sign (SHA-1 WS-Security), parse_reports,
+                  EwsClient (list_documents + download = the Source interface)
+  store/archive.py  content-addressed store (archive/<EMIL>/<sha256>.zip, read-only,
+                  atomic via archive/.partial), zip member hashing
+  store/catalog.py  DuckDB catalog: remote_doc, archive_blob, archive_member, archive_source
 examples/probe.py archive-depth probe over every EWS product
+examples/daily_pull.py  fetch pulled EWS products, list tracked ones; launchd template in examples/launchd/
 tools/check_confidential.py   pre-commit guard (stdlib only)
 .githooks/pre-commit
 tests/            synthetic-only tests; test_guard also scans every tracked file
@@ -114,7 +122,7 @@ tests/            synthetic-only tests; test_guard also scans every tracked file
 | # | milestone | status |
 |---|---|---|
 | M0 | scaffold, config, EWS client, archive probe | done — EWS depth = display window |
-| M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | |
+| M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS half built (store, catalog, list/fetch/ingest, daily pull); live verification + import of existing data next; Public API client waits for credentials |
 | M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | |
 | M3 | core layer + SQL runner, cache skip, lineage, validation checks | |
 | M4 | `out.network` + `ftr_align/cases/ercot.py` | |

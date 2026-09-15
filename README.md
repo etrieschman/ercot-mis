@@ -3,9 +3,9 @@
 Fetch, cache and standardize ERCOT Market Information System (MIS) data locally,
 with every table traceable to the bytes ERCOT published.
 
-**Status: pre-alpha.** The EWS client and archive probe work; the archive store,
-parsers and data model are being built (see [CLAUDE.md](CLAUDE.md) for the design
-and milestones).
+**Status: pre-alpha.** EWS listing, fetching and the content-addressed archive work;
+the Public API client, parsers and data model are being built (see
+[CLAUDE.md](CLAUDE.md) for the design and milestones).
 
 ## What it is for
 
@@ -23,10 +23,16 @@ Everything is driven from Python:
 ```python
 import ercot_mis as em
 
-mis = em.open()                      # ./data in this repo, or $ERCOT_MIS_DATA
-probe = mis.probe("NP7-800-M")       # what EWS has for the monthly CRR model
-probe.summary
+with em.open() as mis:                               # ./data in this repo, or $ERCOT_MIS_DATA
+    docs = mis.list("NP7-800-M")                     # what EWS offers, with archive status
+    result = mis.fetch("NP7-800-M", max_gb=1)        # download what isn't archived yet
+    mis.fetch("NP4-500-SG", operating_dates=["2026-09-14"])
+    mis.ingest("~/Downloads/ercot")                  # adopt zips downloaded elsewhere
 ```
+
+Documents are stored once, by content hash, under `data/archive/`, and never edited.
+`data/catalog.duckdb` records every document ERCOT listed, every archived file and
+zip member, and how each arrived.
 
 ## Confidentiality
 
@@ -67,14 +73,18 @@ chmod 600 ~/.ercot/api.key
 folder. If `xmlsec` fails to build, install the C library with
 `brew install libxmlsec1 pkg-config`.
 
-## Try it
+## Keep a daily archive
+
+EWS keeps nothing older than each product's display window: 31 days for DAM network
+models, one year for CRR network models. Anything not captured before then is gone,
+so run the daily pull every day:
 
 ```bash
-uv run python examples/probe.py
+uv run python examples/daily_pull.py
 ```
 
-lists every document EWS offers for each EWS product, without downloading, and
-records how far back the archive goes under `data/probes/`.
+`examples/launchd/` has a launchd template that runs it every morning on macOS.
+`examples/probe.py` lists what EWS offers for each product without downloading.
 
 ## Tests
 
