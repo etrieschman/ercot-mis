@@ -86,6 +86,16 @@ def test_parse_fault_and_reply_code():
         ews.parse_reports(refused, 1)
 
 
+def test_no_reports_found_is_an_empty_listing():
+    empty = b"""<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>
+      <ns0:ResponseMessage xmlns:ns0="http://www.ercot.com/schema/2007-06/nodal/ews/message">
+        <ns0:Reply><ns0:ReplyCode>ERROR</ns0:ReplyCode>
+          <ns0:Error>No reports found matching the criteria</ns0:Error></ns0:Reply>
+      </ns0:ResponseMessage>
+    </soap:Body></soap:Envelope>"""
+    assert ews.parse_reports(empty, 11204) == []
+
+
 def _self_signed(tmp_path):
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization

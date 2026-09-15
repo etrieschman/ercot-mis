@@ -182,7 +182,10 @@ def parse_reports(xml: bytes, report_type_id: int) -> list[RemoteDoc]:
 
     code = root.findtext(".//msg:ReplyCode", namespaces=NS)
     if code and code.upper() != "OK":
-        errors = [e.text for e in root.findall(".//msg:Error", NS)]
+        errors = [(e.text or "").strip() for e in root.findall(".//msg:Error", NS)]
+        # An empty window comes back as ReplyCode=ERROR, not as an empty payload.
+        if errors and all(e.startswith("No reports found") for e in errors):
+            return []
         raise EwsError(f"ReplyCode={code}: {errors}")
 
     docs = []

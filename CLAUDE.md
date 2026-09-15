@@ -113,8 +113,8 @@ tests/            synthetic-only tests; test_guard also scans every tracked file
 
 | # | milestone | status |
 |---|---|---|
-| M0 | scaffold, config, EWS client, archive probe | in progress |
-| M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; DAM capture starts | |
+| M0 | scaffold, config, EWS client, archive probe | done — EWS depth = display window |
+| M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | |
 | M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | |
 | M3 | core layer + SQL runner, cache skip, lineage, validation checks | |
 | M4 | `out.network` + `ftr_align/cases/ercot.py` | |
@@ -134,6 +134,14 @@ tests/            synthetic-only tests; test_guard also scans every tracked file
 - Message.xsd uses "www.docs" WSS namespaces for ReplayDetection; the Security
   header uses the standard OASIS ones. Don't unify.
 - Parse replies by local name; ERCOT has changed namespaces before.
+- An empty listing is `ReplyCode=ERROR` with "No reports found…", not an empty payload.
+- **EWS keeps nothing older than a product's display window** (probe, 2026-09-15):
+  an unbounded listing returns exactly the window, and an explicit older window
+  returns "No reports found". History cannot be backfilled over EWS; anything not
+  captured before it rolls off is gone. Scheduled pulls are required.
+- Probe sizes (2026-09): CRR long-term ~17 docs/yr, ~43 MB each; CRR monthly
+  ~12/yr, ~20 MB; DAM PSS/E model 1/day, ~29 MB; SCED shift factors ~1,200
+  docs/month, ~690 MB/month (tracked only).
 
 ## Environment
 
