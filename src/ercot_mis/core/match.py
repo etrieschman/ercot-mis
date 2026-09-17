@@ -81,7 +81,7 @@ NODE_COLUMNS = ("crr_node_key", "dam_node_key", "match_method", "settlement_poin
 
 def _settlement_points(nodes: pl.DataFrame) -> pl.DataFrame:
     """(settlement_point, node_key) pairs from the ``S:`` labels in ``attachments``."""
-    return (nodes.filter(pl.col("attachments") != "").select("node_key", pl.col("attachments").str.split("|").alias("label")).explode("label")
+    return (nodes.filter(pl.col("attachments") != "").select("node_key", pl.col("attachments").str.split("|").alias("label")).explode("label", empty_as_null=False)
             .filter(pl.col("label").str.starts_with("S:"))
             .select(pl.col("label").str.slice(2).alias("settlement_point"), "node_key").unique())
 
