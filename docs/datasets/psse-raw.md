@@ -36,7 +36,9 @@ manual (`i`, `j`, `ckt`, `ratea`, ...). Every table except `psse_case` ends with
   other than 30, a 3-winding transformer, or records in a section with no layout
   (DC lines, FACTS, multi-section lines) each raise `ParseError`.
 - **Keep the `/*[...]*/` comment**: in CRR files it holds the element's ERCOT name,
-  which is the `DeviceName` the CRR CSVs use. It is the join key to those files.
+  which is the `DeviceName` the CRR CSVs use for **lines**. Transformer records carry no
+  comment; their CRR name is in the mapping workbook's `Autos` sheet, keyed by
+  (from, to, ckt). See identity-and-matching.md.
 
 ## ERCOT quirks
 | | CRR (PSS/ODMS export) | DAM (DAM study) |
@@ -50,6 +52,10 @@ manual (`i`, `j`, `ckt`, `ratea`, ...). Every table except `psse_case` ends with
 
 All transformers are 2-winding. Integers occasionally appear as `3.0`; they are
 accepted when whole.
+
+Bus numbers: CRR numbering is stable month to month; **DAM numbering is reassigned in
+every hourly model** and unrelated to CRR's. DAM bus names are station names shared by
+up to 16 buses. CRR has ~2,900 zero-impedance branches (bus ties); DAM has none.
 
 ## Validation
 `scripts/validate_parsers.py` checks parsed records against data lines per section

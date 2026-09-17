@@ -32,7 +32,17 @@ with em.open() as mis:                               # ./data in this repo, or $
 
 Documents are stored once, by content hash, under `data/archive/`, and never edited.
 `data/catalog.duckdb` records every document ERCOT listed, every archived file and
-zip member, and how each arrived.
+zip member, how each arrived, and every table built from them.
+
+```python
+with em.open() as mis:
+    mis.build_raw("NP4-500-SG")                      # parsed rows, one Parquet per package and table
+    mis.build_core()                                 # snapshots and equipment-based node keys
+    buses = mis.raw("psse_bus").filter(pl.col("operating_date") == "2026-09-15").collect()
+    nodes = mis.nodes().filter(pl.col("snapshot_id") == "dam:2026-09-15:he12:r1").collect()
+```
+
+Run builds from a script or notebook (the process pool needs an importable `__main__`).
 
 ## Confidentiality
 
@@ -73,6 +83,25 @@ chmod 600 ~/.ercot/api.key
 folder. If `xmlsec` fails to build, install the C library with
 `brew install libxmlsec1 pkg-config`.
 
+Public API credentials belong in the macOS Keychain rather than `.env`; ercot-mis
+reads them from there when the variable is unset:
+
+```bash
+security add-generic-password -s ercot-mis -a ERCOT_PUBLIC_API_USERNAME -w
+security add-generic-password -s ercot-mis -a ERCOT_PUBLIC_API_PASSWORD -w
+security add-generic-password -s ercot-mis -a ERCOT_PUBLIC_API_SUBSCRIPTION_KEY -w
+```
+
+### Keeping the data local
+
+`em.open()` makes the data folder and everything directly inside it owner-only.
+Backups copy ECEII too: exclude the folder from Time Machine unless the backup
+disk is local and encrypted:
+
+```bash
+tmutil addexclusion data
+```
+
 ## Keep a daily archive
 
 EWS keeps nothing older than each product's display window: 31 days for DAM network
@@ -84,7 +113,10 @@ uv run python scripts/daily_pull.py
 ```
 
 `scripts/launchd/` has a launchd template that runs it every morning on macOS.
-`scripts/probe.py` lists what EWS offers for each product without downloading.
+Transient download errors are retried within the run; a run that still has
+failures exits non-zero, writes `data/logs/last_run.json` and posts a macOS
+notification. `scripts/probe.py` lists what EWS offers for each product without
+downloading.
 
 ## Tests
 

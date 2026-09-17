@@ -47,6 +47,11 @@ PRODUCTS: dict[str, Product] = {
         ),
         Product("NP3-220-SG", "Electrical Bus to Hub List", "Public", "ews", "pull", 10011, 31),
         Product("NP5-615-SG", "Standard Contingency List", "ECEII", "ews", "pull", 13006, 31),
+        # GTC definitions and daily limits: the DAM model package (NP4-500-SG) carries no GTC
+        # file; the CRR packages do. Protocols 3.10.7.6 posts both to the MIS Secure Area.
+        Product("NP3-766-M", "Generic Transmission Limits", "ECEII", "ews", "pull", 11424, 31),
+        Product("NP3-770-M", "Generic Transmission Constraints Methodology", "ECEII", "ews", "pull", 11425),
+        Product("NP6-6-CD", "NSA Active Constraints", "ECEII", "ews", "track", 12305),
         Product("SYS-608-CD", "SCED Resource Shift Factors", "Secure", "ews", "track", 12354, 31),
         Product("NP3-966-ER", "60-Day DAM Disclosure Reports", "Public", "public_api", "pull"),
         Product("NP4-183-CD", "DAM Hourly LMPs", "Public", "public_api", "pull"),

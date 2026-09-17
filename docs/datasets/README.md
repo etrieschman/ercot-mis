@@ -12,7 +12,8 @@ formats; never bus, station, device, contingency or constraint names, or file na
 | [psse-raw.md](psse-raw.md) | PSS/E v30 RAW, shared by CRR and DAM | parsed, validated |
 | [crr-network-model.md](crr-network-model.md) | NP7-801-M (annual), NP7-800-M (monthly) | parsed, validated |
 | [dam-network-model.md](dam-network-model.md) | NP4-500-SG | parsed, validated |
-| _to write_ | NP4-160-SG, NP3-220-SG, NP5-615-SG | archived, not parsed |
+| [identity-and-matching.md](identity-and-matching.md) | keys across CRR and DAM | measured 2026-09-17 |
+| _to write_ | NP4-160-SG, NP3-220-SG, NP5-615-SG, NP3-766-M, NP3-770-M | archived, not parsed |
 | _to write_ | NP4-190-CD, NP4-191-CD, NP4-183-CD, NP3-966-ER, NP4-159-CD | Public API client not built |
 
 ## Template

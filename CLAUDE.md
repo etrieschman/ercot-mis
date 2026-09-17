@@ -30,7 +30,8 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | entry point | `em.open()` → `Mis`; methods `probe`, later `list`, `fetch`, `ingest`, `build`, `lineage`, `match`, `table`, `sql`, `export` |
 | transport | own thin clients: EWS (certificate) and Public API (archive files, not JSON rows) |
 | transforms | Python parsers → `raw`; `.sql` files on DuckDB → `core`, `out` |
-| storage | Parquet on disk (zstd, hive-partitioned), Arrow in memory, DuckDB catalog + SQL engine, polars for reading |
+| storage | Parquet on disk (zstd, hive-partitioned), Arrow in memory, DuckDB catalog + SQL engine, polars for reading. **Catalog writes are short-lived**: `Mis` reads through a read-only connection and takes the writer only to record a listing, a blob or an artifact, never across a download or a parse |
+| node identity | **equipment-based `node_key`**, not PSS/E number or name (DAM renumbers every hour; names are station names). CRR bus ties (`x <= 1e-4`, in service) are contracted first. `core/identity.py`; measured in `docs/datasets/identity-and-matching.md` |
 | data location | `data/` in this repo by default; `ERCOT_MIS_DATA` overrides |
 | network output | standardized tables + optional `ercot_mis.sensitivities` (base-case PTDF, LODF, GTC rows); no shift factors yet |
 | ratings | keep both: CRR monitored-element CSV (enforced, default) and PSS/E Rate A/B/C (MVA) |
@@ -49,7 +50,10 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   (`raw.crr_monitored_lines_and_transformers`). snake_case + types only.
 - `core` — tidy keyed tables. Network tables are **shared by CRR and DAM** and keyed
   by `snapshot_id` (`crr:annual:2029.1st6:seq6:2029-01:r2`, `crr:monthly:2026-10:r1`,
-  `dam:2026-10-14:he07:r1`): `core.bus`, `core.branch`, `core.branch_rating`,
+  `dam:2026-10-14:he07:r1`). Built so far: `core.snapshot` (one row per model, revision
+  = order of `posted_at` within a logical package) and `core.node` (one row per RAW bus
+  per snapshot: `node_key`, `station`, `kv`, `node_group`, `is_tie_member`, attachments).
+  Planned: `core.branch`, `core.branch_rating`,
   `core.contingency`, `core.contingency_outage`, `core.gtc`, `core.gtc_member`,
   `core.constraint`, `core.price_node_bus`, `core.settlement_point`,
   `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_award`,
@@ -74,13 +78,32 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   1:1, hubs via `NP3-220-SG`, load zones via `NP4-159-CD`. Checks: Σq ≈ 0 hourly;
   MS at settlement points (SPP) = MS at buses (LMP·q); both = Σ μ·limit from
   shadow prices. MS itself is analysis and lives in `ftr_align`.
-- **CRR ↔ DAM matching**: the CRR package's monthly mapping workbook (`Lines`:
-  `CRR_Tag` ↔ `Operations_Name`; `Autos`) is the authoritative branch key. Buses by
-  electrical bus name (never PSS/E number alone); contingencies by name then
-  identical device set; GTCs by name then members/factors/limit. `match_*` records
-  identity, `diff_*` records differences — never smooth differences over. Every
-  match carries `match_method`; unmatched records are output. Manual overrides live
-  in `data/`.
+- **CRR ↔ DAM matching** (order settled by measurement, see
+  `docs/datasets/identity-and-matching.md`): settlement points and generator/load
+  names first (all 996 CRR source/sink names appear among DAM settlement points),
+  then branches by the workbook's `Operations_Name` with the documented normalization
+  (never exact: 0 of 8,294 match DAM `Branch Name` verbatim, 2,217 after dropping
+  punctuation, 6,037 more as a prefix), then buses through matched branch endpoints
+  (**not** by name or number: CRR and DAM numbers are unrelated, DAM names are
+  stations), then contingencies by name (6,162 of 7,391) with member sets compared in
+  the matched vocabulary; GTCs by name then members/factors/limit. `match_*` records
+  identity, `diff_*` records differences — never smooth differences over. Every match
+  carries `match_method`; unmatched records are output. Manual overrides live in
+  `data/`.
+- **CRR is closer to node-breaker, DAM to bus-branch**: CRR RAWs hold ~2,900
+  zero-impedance branches (1,232 of them monitored), DAM none. Contract before any
+  PTDF; `core.node` records the contraction.
+- **CRR transformer names are not in the RAW**: the contingency, monitored and GTC
+  CSVs name transformers by the `Autos` workbook sheet, matched to the RAW by
+  (from, to, ckt). Lines use the RAW comment.
+- **GTCs in DAM** are not in NP4-500-SG. Definitions and daily limits are ECEII
+  products `NP3-770-M` and `NP3-766-M` (pulled since 2026-09-17); each GTL is a
+  base-case constraint in CRR, DAM and RT with one DAM limit per operating day.
+- **DAM `Monitored?`/`Monitored and Secured?`** are the CIM `DAM Monitored`/`DAM
+  Secured` flags (defaults FALSE/TRUE; 98% of lines are No/Yes). Working reading:
+  Secured = enforced, Monitored-only = reported; verify against `NP4-191-CD`.
+- **Ratings**: CRR `BaseCaseRating` = 0.90 × RAW rate A on every monitored line;
+  TOU blocks were identical in 2026-09. Store both, apply neither as a rule.
 - **Annual auctions**: each LTAS auctions six consecutive six-month terms over three
   years, Seq6 (≈3 yr out) → Seq1 (≈6 months out). Monthly model is closest to DAM.
 - DAM network models (`NP4-500-SG`) have a 31-day display window, disclosures a
@@ -89,9 +112,10 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   unzipped, 195 members. Per hour (`_###`): a PSS/E `.RAW` plus CSVs `Ctg`
   (contingencies), `Ln` (lines), `Xf` (transformers), `Ld` (loads), `Gn`
   (generators), `Sp` (settlement points), `Hb` (hubs); per day: `SpCtg`, `SpNb`,
-  and a README. No two hourly files are byte-identical, within a day or across
-  days, so savings must come from columnar Parquet on parsed rows, not blob dedup.
-  The DAM snapshot key therefore needs an hour: `dam:2026-10-14:he07:r1`.
+  and a README. No two hourly files are byte-identical because **every hourly model
+  renumbers its buses**; the equipment maps are identical across hours. Raw stays
+  one table per file (~16 MB Parquet per day, ~9 s with the process pool); semantic
+  dedup belongs in core. The DAM snapshot key needs an hour: `dam:2026-10-14:he07:r1`.
 
 ### Dataset notes — `docs/datasets/`
 
@@ -104,14 +128,21 @@ Written so far: `psse-raw.md`, `crr-network-model.md`, `dam-network-model.md`.
 
 ### Provenance
 
-Catalog (`catalog.duckdb`): built so far `remote_doc` (every listed document,
-refreshed per listing), `archive_blob` (distinct bytes), `archive_member` (zip
-members by hash), `archive_source` (one row per arrival: fetch or ingest, with
-doc_id when linked). Still to come with the SQL runner: `run`, `artifact`, `lineage`.
-DuckDB allows one writer: don't run the daily pull and a writing notebook at once. Transform identity = sha256 of the SQL file / parser module +
-package version. Cache key = hash(transform identity, input fingerprints, params);
-existing key ⇒ skip. Artifacts carry the most restrictive classification of their
-inputs; `export()` refuses Secure/ECEII outside `data/`.
+Catalog (`catalog.duckdb`): `remote_doc` (every listed document, refreshed per
+listing), `archive_blob` (distinct bytes), `archive_member` (zip members by hash),
+`archive_source` (one row per arrival), `run`, `artifact` (one row per written file:
+layer, table, blob, parser id, path, rows, bytes) and `lineage` (artifact ← members).
+Artifact key = sha256(parser/module source + package version | blob sha256 | table);
+existing key and file ⇒ skip, changed parser ⇒ rebuild. `build_raw` writes
+`raw/<table>/emil_id=<EMIL>/<blob16>.parquet` (one file per package and table) with
+identity columns on every row (`emil_id`, `doc_id`, `blob_sha256`, `member_sha256`,
+`member_path`, CRR `auction/term/sequence/month/time_of_use`, DAM
+`operating_date/hour`). `build_core` writes `core/snapshot.parquet` and
+`core/node/emil_id=<EMIL>/<blob16>.parquet`. Read with `mis.raw(table)`,
+`mis.snapshots()`, `mis.nodes()` (polars lazy scans). Artifacts will carry the most
+restrictive classification of their inputs; `export()` refuses Secure/ECEII outside
+`data/`. Drive builds from a script or notebook, not from `python -` (the process
+pool re-imports `__main__`).
 
 ## Layout
 
@@ -120,12 +151,17 @@ src/ercot_mis/
   __init__.py     open(), re-exports
   config.py       data folder resolution + synced-folder warning; Identity from env/.env
   products.py     PRODUCTS: EMIL specs (report type, class, window, source, pull/track)
-  mis.py          Mis: the session object; list, fetch, ingest, probe
+  mis.py          Mis: the session object; list, fetch, ingest, probe, build_raw, build_core, raw, snapshots, nodes
+  retry.py        retrying(): fixed back-off for stalled downloads and listings
+  build.py        raw layer: parse packages in a process pool, write Parquet, register artifacts
+  core/identity.py  equipment-based node keys; CRR tie contraction (dam_nodes, crr_nodes)
+  core/build.py   core.snapshot (IDs and revisions) and core.node
   sources/ews.py  EWS: build_request, sign (SHA-1 WS-Security), parse_reports,
                   EwsClient (list_documents + download = the Source interface)
   store/archive.py  content-addressed store (archive/<EMIL>/<sha256>.zip, read-only,
                   atomic via archive/.partial), zip member hashing
-  store/catalog.py  DuckDB catalog: remote_doc, archive_blob, archive_member, archive_source
+  store/catalog.py  DuckDB catalog (read-only by default, short writes): remote_doc, archive_blob,
+                  archive_member, archive_source, run, artifact, lineage
   parsers/_common.py  Column specs, snake_case, cast_column, read_delimited (Arrow CSV,
                   exact header check), read_sheet (xlsx via fastexcel); ParseError
   parsers/psse.py   PSS/E v30 RAW -> psse_* tables, both dialects
@@ -133,8 +169,10 @@ src/ercot_mis/
   parsers/dam.py    DAM package member classification + parsers -> dam_* tables
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs)
 scripts/probe.py archive-depth probe over every EWS product
+scripts/probe_keys.py  key-matching and node-identity measurements (counts only); feeds identity-and-matching.md
 scripts/daily_pull.py  fetch pulled EWS products, list tracked ones; launchd template in scripts/launchd/
-tools/check_confidential.py   pre-commit guard (stdlib only)
+tools/check_confidential.py   pre-commit guard (stdlib only; also blocks Keychain-stored secrets)
+.github/workflows/ci.yml  tests + guard on every push
 .githooks/pre-commit
 tests/            synthetic-only tests; test_guard also scans every tracked file
 ```
@@ -146,7 +184,7 @@ tests/            synthetic-only tests; test_guard also scans every tracked file
 | M0 | scaffold, config, EWS client, archive probe | done — EWS depth = display window |
 | M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS half done and verified live; first pull 2026-09-15 archived every listed EWS document (1.8 GB) incl. the two `ftr_align/ercot_data` zips via ingest; daily scheduling not yet installed; Public API client waits for credentials |
 | M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | parsers done (PSS/E both dialects, CRR, DAM); `scripts/validate_parsers.py` clean on all 29 CRR packages and 768 DAM hourly models (2026-09-15). Not yet: writing raw Parquet (lands with the M3 runner), DynamicRatings, PowerFlowData.jl cross-check (needs Julia) |
-| M3 | core layer + SQL runner, cache skip, lineage, validation checks | |
+| M3 | core layer + SQL runner, cache skip, lineage, validation checks | 2026-09-17: raw writer with provenance (`build_raw`, process pool, cache skip, `run`/`artifact`/`lineage`); `core.snapshot` and `core.node` with equipment-based keys (`build_core`); built on every archived package (930 snapshots, 12,570 DAM node keys, 8,972 present in all 816 hours). Not yet: SQL runner, branch/rating/contingency/GTC core tables |
 | M4 | `out.network` + `ftr_align/cases/ercot.py` | |
 | M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | |
 | M6 | CRR ↔ DAM matching + scorecard | |
@@ -155,44 +193,44 @@ tests/            synthetic-only tests; test_guard also scans every tracked file
 
 ## Pick up here (next session)
 
-State at 2026-09-15: M0–M2 done and pushed. Archive holds every EWS document offered
-(1.8 GB); the daily pull runs at 07:00 via launchd; parsers validated clean on all
-archived packages. Public API credentials are in `.env` (unused so far).
+State at 2026-09-17: M0–M2 done; M3 half done (raw layer, snapshots, nodes). The
+adversarial review of 2026-09-17 found that three locked assumptions were wrong (bus
+identity by name, number-keyed DAM snapshots, GTCs from every model) and they were
+replaced by measured facts: read `docs/datasets/identity-and-matching.md` first.
+Security fixes landed the same day (owner-only data folder on every `open()`, listings
+without file names, retries plus a macOS notification on a failed pull, Keychain
+lookup for Public API secrets, CI, Time Machine exclusion of `data/`).
 
 First, check health (2 min):
-- `tail -30 data/logs/daily_pull.log` — a run each morning, `failed 0`.
-- `launchctl list | grep ercot-mis` — last exit code 0.
+- `tail -30 data/logs/daily_pull.log` and `cat data/logs/last_run.json` — `failed 0`.
+- `launchctl list | grep ercot-mis` — last exit code 0. A failure also posts a
+  macOS notification.
+- `uv run python scripts/probe_keys.py` after a new CRR month posts; update the note.
 
 Then, in order:
-1. **M3a: raw Parquet writer with provenance.** `mis.build_raw(product)`: for each
-   archived blob, each member with `is_parsed`, write the parser's tables to
-   `data/raw/<table>/…/part-<member_sha256[:16]>.parquet` (zstd). Add catalog tables
-   `run`, `artifact`, `lineage`. Cache key = sha256(parser module source + package
-   version + member sha256); skip when the artifact exists. Add identifying columns
-   to every raw row: `emil_id`, `doc_id`, `member_sha256`; CRR `auction`, `term`,
-   `sequence`, `month`, `time_of_use`; DAM `operating_date`, `hour`. Partition CRR
-   by `emil_id`/`month`, DAM by `operating_date`. Parse DAM days in parallel
-   (process pool) — ~12 s/day serial.
-2. **Snapshot IDs and revisions**: `core.snapshot` from the catalog + member
-   metadata; revision `r<n>` = order of `posted_at` among documents for the same
-   logical package (annual `_Upd` packages are revisions).
-3. **M3b: SQL runner** (`models/core/*.sql`, header `-- inputs:` / `-- partition_by:`)
-   and first core tables: `core.bus`, `core.branch` (lines + transformers),
-   `core.branch_rating` (CRR CSV + RAW Rate A/B/C), `core.contingency`,
-   `core.contingency_outage`, `core.gtc`, `core.gtc_member`, `core.price_node_bus`
-   (normalize MW-scale weights). Normalize device-type spellings (see crr note).
-4. **Public API client** (`sources/public_api.py`, same Source interface as EWS):
-   token via ERCOT B2C ROPC flow (username/password form POST, `id_token`), header
-   `Ocp-Apim-Subscription-Key`; archive listing `GET /archive/{emil_id}` paged by
-   `_meta.totalPages`; download via each archive's `_links.endpoint.href`. Verify on
-   first live call: timestamp format for `postDatetimeFrom/To`, listing field names,
-   whether sizes are given. Retry on 429. Then set `source="public_api"` products
-   to pull in `daily_pull.py`, confirm `NP4-183-CD` is the DAM hourly LMP product,
-   and write dataset notes for each public product.
-5. Write dataset notes for NP4-160-SG, NP3-220-SG, NP5-615-SG, and parse them.
+1. **Core branches and ratings** (`core.branch`, `core.branch_rating`): lines by RAW
+   comment, transformers by `Autos` (from, to, ckt), endpoints as `node_key`s, CRR
+   ties marked; ratings from the monitored CSV and RAW rate A/B/C side by side.
+2. **Core contingencies and GTCs** (`core.contingency`, `core.contingency_outage`,
+   `core.gtc`, `core.gtc_member`): CRR from its CSVs; DAM contingencies from `Ctg`
+   (branch rows by key, load/generator/SP rows by (bus, id), split-bus rows kept as
+   their own kind); DAM GTC limits need a parser for `NP3-766-M` (xls) and definitions
+   from `NP3-770-M` — write dataset notes for both and check names against the CRR GTCs.
+3. **Matching** (`core.match_node`, `core.match_branch`, ...): settlement points →
+   nodes; branch `Operations_Name` normalization + prefix rule (measure and document);
+   endpoints → nodes; contingencies by name then members. Every row has
+   `match_method`; unmatched rows are output.
+4. **SQL runner** for `models/core/*.sql` once the Python-built tables settle; wire
+   `build_core` into the daily pull after the fetch.
+5. **Public API client** (`sources/public_api.py`): B2C ROPC token, subscription key,
+   paged archive listing, retry on 429; secrets via `load_secret()` (Keychain). Then
+   pull NP4-191-CD shadow prices and test the monitored/secured reading.
+6. `ftr_align/cases/ercot.py` needs a sparse PTDF (scipy `splu`) and a screened row
+   set: 11k elements × 10k nodes × 6.5k contingencies is not a dense `K`.
 
-Open decisions for the user: keep capturing every DAM day (~10 GB/yr)? Install Julia
-for the PowerFlowData.jl cross-check?
+Open decisions for the user: keep capturing every DAM day (~10 GB/yr zipped, ~6 GB/yr
+raw Parquet)? Install Julia for the PowerFlowData.jl cross-check? Move the Public API
+secrets from `.env` into the Keychain (commands in the README)?
 
 ## EWS facts learned the hard way (keep)
 
@@ -220,4 +258,7 @@ for the PowerFlowData.jl cross-check?
   index is private).
 - `uv run pytest -q`
 - `git config core.hooksPath .githooks` once per clone.
-- Credentials: `~/.ercot/api.crt`, `~/.ercot/api.key`; identity in `.env`.
+- Credentials: `~/.ercot/api.crt`, `~/.ercot/api.key`; identity in `.env`; Public API
+  secrets in `.env` or the macOS Keychain (`security add-generic-password -s ercot-mis -a <VAR> -w`).
+- `data/` is excluded from Time Machine (`tmutil addexclusion data`, sticky xattr).
+- The launchd job runs at 07:00 local (Eastern on this machine).

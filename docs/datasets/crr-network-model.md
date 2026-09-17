@@ -46,7 +46,14 @@ DynamicRatings (small; semantics not yet reviewed).
 - Mapping-workbook `From #`/`To #` cells hold a text placeholder for unmatched rows.
 - Monthly outages are pipe-delimited with 28 columns; annual `_None` outage files are a
   comma-separated header with no rows.
-- Only a PeakWD RAW ships, while ratings carry PeakWD, PeakWE and Off-peak.
+- Only a PeakWD RAW ships, while ratings carry PeakWD, PeakWE and Off-peak (identical
+  across the three blocks in 2026-09).
+- `BaseCaseRating` is 0.90 × the RAW rate A for every monitored line (2026-09).
+- Transformer names in the contingency, monitored and GTC CSVs are the `Autos` sheet's
+  `CRR Name`, not anything in the RAW; lines use the RAW comment.
+- `Operations_Name` never equals a DAM branch name exactly; see identity-and-matching.md.
+- 351 `Lines` rows share one placeholder `Operations_Name`; 2,250 RAW lines (mostly
+  zero-impedance ties) have no workbook row.
 - In `_Upd` annual packages, month folders and some file names gain `_Upd`/`_Upd<n>`.
 
 ## Validation
