@@ -55,6 +55,7 @@ def _monthly(tmp_path, suffix=b""):
         "2026.SEP.Monthly.Auction.SourcesAndSinks.CSV": b"Name,PriceNode,BusName,ParticipationFactor\nSP_A,SP_A,1 ALPHA 1,1\n",
         "2026.SEP.Monthly.Auction.MappingDocument.xlsx": _workbook(),
         "2026.SEP.Monthly.Auction.MonitoredLinesAndTransformers.CSV": b"DeviceName,DeviceType,BaseCaseRating,EmergencyRating,TimeOfUse\n",
+        "2026.SEP.Monthly.Auction.Non-ThermalConstraints.CSV": b"Name, Limit, DeviceName, DeviceType, FlowDirection, Factor\nGTC_1, 500, 1 ALPHA 2 BRAVO 1, Line, From-To, 1\n",
     }))
     return package
 
@@ -67,7 +68,8 @@ def _dam(tmp_path):
         "DAM09152026_Ln_001.csv": DAM_LINES, "DAM09152026_Ln_002.csv": DAM_LINES.replace(b"\n1, ", b"\n2, "),
         "README_DAM09152026.txt": b"notes",
         **{f"DAM09152026_{kind}_{hour}.csv": _headers(columns) for hour in ("001", "002") for kind, columns in
-           (("Xf", dam_parser.TRANSFORMERS), ("Gn", dam_parser.GENERATORS), ("Ld", dam_parser.LOADS), ("Sp", dam_parser.SETTLEMENT_POINTS))},
+           (("Xf", dam_parser.TRANSFORMERS), ("Gn", dam_parser.GENERATORS), ("Ld", dam_parser.LOADS), ("Sp", dam_parser.SETTLEMENT_POINTS),
+            ("Ctg", dam_parser.CONTINGENCIES))},
     }))
     return package
 
@@ -76,20 +78,21 @@ def test_build_raw_writes_identity_columns_and_provenance(tmp_path):
     with Session(tmp_path / "data") as mis:
         mis.ingest(_monthly(tmp_path))
         result = mis.build_raw("NP7-800-M")
-        assert result["status"].to_list() == ["built"] and result["tables"][0] == 16  # 11 psse + ctg + sources + monitored + 2 workbook sheets
+        assert result["status"].to_list() == ["built"] and result["tables"][0] == 17  # 11 psse + ctg + sources + monitored + gtc + 2 workbook sheets
 
         bus = mis.raw("psse_bus").collect()
         assert bus.height == 2
         assert bus["emil_id"].to_list() == ["NP7-800-M"] * 2
         assert bus["auction"][0] == "monthly" and str(bus["month"][0]) == "2026-09-01" and bus["time_of_use"][0] == "PeakWD"
+        assert bus.schema["sequence"] == pl.Int64 and bus["sequence"][0] is None  # typed by name, null for monthly
         assert bus["member_sha256"][0] and bus["blob_sha256"][0] == result["blob_sha256"][0]
         ctg = mis.raw("crr_contingencies").collect()
         assert ctg["contingency"].to_list() == ["CTG_1"] and ctg["time_of_use"][0] is None
 
         artifacts = mis.catalog.artifacts("raw")
-        assert artifacts.height == 16 and set(artifacts["table_name"]) >= {"psse_bus", "crr_contingencies"}
+        assert artifacts.height == 17 and set(artifacts["table_name"]) >= {"psse_bus", "crr_contingencies"}
         lineage = mis.catalog.con.execute("SELECT count(DISTINCT member_sha256) FROM lineage").fetchone()[0]
-        assert lineage == 5  # RAW, three CSVs and the workbook; the XML fed nothing
+        assert lineage == 6  # RAW, four CSVs and the workbook; the XML fed nothing
         runs = mis.catalog.con.execute("SELECT command, failed FROM run").fetchall()
         assert runs == [("build_raw NP7-800-M", 0)]
         for path in artifacts["path"]:
@@ -102,12 +105,12 @@ def test_build_raw_skips_built_packages_and_rebuilds_on_parser_change(tmp_path, 
         first = mis.build_raw("NP7-800-M")
         again = mis.build_raw("NP7-800-M")
         assert first["status"][0] == "built" and again["status"][0] == "skipped"
-        assert mis.catalog.artifacts("raw").height == 16
+        assert mis.catalog.artifacts("raw").height == 17
 
         monkeypatch.setattr(build, "parser_id", lambda emil_id: "changed")
         rebuilt = mis.build_raw("NP7-800-M")
         assert rebuilt["status"][0] == "built"
-        assert mis.catalog.artifacts("raw").height == 16  # replaced, not duplicated
+        assert mis.catalog.artifacts("raw").height == 17  # replaced, not duplicated
         assert set(mis.catalog.artifacts("raw")["parser_id"]) == {"changed"}
 
 
@@ -136,7 +139,7 @@ def test_build_raw_reports_a_broken_package_without_stopping(tmp_path):
 
 def test_parser_id_names_the_versions_that_matter():
     assert build.parser_id("NP7-800-M") != build.parser_id("NP4-500-SG")
-    assert build.parser_id("NP4-500-SG") == "ercot-mis=0.0.1|table=1|psse=1|dam=1"
+    assert build.parser_id("NP4-500-SG") == "ercot-mis=0.0.1|build=2|table=1|psse=1|dam=1"
     with pytest.raises(ValueError, match="no raw-layer parser"):
         build.parser_id("SYS-608-CD")
 
@@ -157,6 +160,14 @@ def test_build_core_snapshots_and_nodes(tmp_path):
         branches = mis.core("branch").collect()
         assert set(branches["snapshot_id"]) == set(snaps["snapshot_id"]) and "from_node_key" in branches.columns
         assert mis.core("branch_rating").filter(pl.col("rating_source") == "crr_monitored").collect().height == 0  # header-only CSV
+        ctg = mis.core("contingency").collect()
+        crr_ctg = ctg.filter(pl.col("snapshot_id").str.starts_with("crr")).select("contingency_id", "n_outages", "n_unresolved", "has_split_bus")
+        assert crr_ctg.rows() == [("CTG_1", 1, 0, False)]
+        assert mis.core("gtc_member").collect().filter(pl.col("is_resolved")).height == 1
+        assert mis.core("contingency_outage").filter(pl.col("branch_id") == "1 ALPHA 2 BRAVO 1").collect().height == 1
+        matched = mis.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
+        assert set(matched["match_method"]) <= {"exact", "ops+ckt", "prefix", "unmatched"} and matched.height >= 2
+        assert mis.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1").equals(matched)  # cached
         nodes = mis.core("node").collect()
         assert set(nodes["snapshot_id"]) == set(snaps["snapshot_id"])
         dam_nodes = nodes.filter(pl.col("snapshot_id").str.starts_with("dam"))

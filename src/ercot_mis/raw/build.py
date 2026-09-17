@@ -23,7 +23,6 @@ import time
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 
 import pyarrow as pa
@@ -44,7 +43,7 @@ def parser_id(emil_id: str) -> str:
     modules = _MODULES.get(emil_id)
     if modules is None:
         raise ValueError(f"{emil_id} has no raw-layer parser")
-    parts = [f"ercot-mis={__version__}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (table, psse, *modules)]
+    parts = [f"ercot-mis={__version__}", f"build={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (table, psse, *modules)]
     return "|".join(parts)
 
 
@@ -76,18 +75,18 @@ class PackageResult:
     error: str | None = None
 
 
+# Identity columns are typed by name, not by value, so a null (monthly ``sequence``,
+# a daily file's ``hour``) does not change the column type between packages.
+IDENTITY_TYPES = {"sequence": pa.int64(), "hour": pa.int64(), "month": pa.date32(), "operating_date": pa.date32()}
+VERSION = 2  # bump when identity columns or the artifact layout change
+
+
 def _identity_columns(table: pa.Table, values: dict) -> pa.Table:
     """Prepend identity columns; a column the file already has (DAM ``hour``) is kept."""
     for name, value in reversed(list(values.items())):
         if name in table.column_names:
             continue
-        if isinstance(value, date):
-            array = pa.array([value] * table.num_rows, pa.date32())
-        elif isinstance(value, int):
-            array = pa.array([value] * table.num_rows, pa.int64())
-        else:
-            array = pa.array([value] * table.num_rows, pa.string())
-        table = table.add_column(0, name, array)
+        table = table.add_column(0, name, pa.array([value] * table.num_rows, IDENTITY_TYPES.get(name, pa.string())))
     return table
 
 

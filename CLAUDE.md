@@ -51,9 +51,15 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 - `core` — tidy keyed tables. Network tables are **shared by CRR and DAM** and keyed
   by `snapshot_id` (`crr:annual:2029.1st6:seq6:2029-01:r2`, `crr:monthly:2026-10:r1`,
   `dam:2026-10-14:he07:r1`). Built so far: `core.snapshot` (one row per model, revision
-  = order of `posted_at` within a logical package) and `core.node` (one row per RAW bus
-  per snapshot: `node_key`, `station`, `kv`, `node_group`, `is_tie_member`, attachments).
-  Planned: `core.branch`, `core.branch_rating`,
+  = order of `posted_at` within a logical package), `core.node` (one row per RAW bus
+  per snapshot: `node_key`, `station`, `kv`, `node_group`, `is_tie_member`, attachments),
+  `core.branch` (stable `branch_id`, endpoints as node keys, tie/in-service/monitored/
+  secured flags), `core.branch_rating` (RAW rate A/B/C and CRR CSV ratings per TOU,
+  side by side), `core.contingency` + `core.contingency_outage` (each model's own
+  vocabulary resolved to branch/node keys, `is_resolved`, split-bus rows kept),
+  `core.gtc` + `core.gtc_member` (CRR only until NP3-766-M/NP3-770-M are parsed), and
+  `core.match_branch` per (CRR snapshot, DAM snapshot) via `session.match_branches`.
+  Planned:
   `core.contingency`, `core.contingency_outage`, `core.gtc`, `core.gtc_member`,
   `core.constraint`, `core.price_node_bus`, `core.settlement_point`,
   `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_award`,
@@ -170,7 +176,11 @@ src/ercot_mis/
   core/             layer 2: tidy keyed tables shared by CRR and DAM
     snapshot.py     snapshot IDs and revisions from the catalog and member names
     node.py         equipment-based node keys; CRR tie contraction (dam_nodes, crr_nodes)
-    build.py        core.snapshot and core.node
+    branch.py       core.branch and core.branch_rating (crr_branches, dam_branches)
+    contingency.py  core.contingency and core.contingency_outage, resolved to branch/node keys
+    gtc.py          core.gtc and core.gtc_member (CRR; DAM empty until NP3-766-M/NP3-770-M parse)
+    match.py        core.match_branch: exact -> ops+ckt -> prefix -> unmatched
+    build.py        writes every core table per package
 scripts/daily_pull.py        fetch pulled EWS products, list tracked ones; launchd template in scripts/launchd/
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs)
@@ -220,18 +230,16 @@ First, check health (2 min):
   report with the previous one.
 
 Then, in order:
-1. **Core branches and ratings** (`core.branch`, `core.branch_rating`): lines by RAW
-   comment, transformers by `Autos` (from, to, ckt), endpoints as `node_key`s, CRR
-   ties marked; ratings from the monitored CSV and RAW rate A/B/C side by side.
-2. **Core contingencies and GTCs** (`core.contingency`, `core.contingency_outage`,
-   `core.gtc`, `core.gtc_member`): CRR from its CSVs; DAM contingencies from `Ctg`
-   (branch rows by key, load/generator/SP rows by (bus, id), split-bus rows kept as
-   their own kind); DAM GTC limits need a parser for `NP3-766-M` (xls) and definitions
-   from `NP3-770-M` — write dataset notes for both and check names against the CRR GTCs.
-3. **Matching** (`core.match_node`, `core.match_branch`, ...): settlement points →
-   nodes; branch `Operations_Name` normalization + prefix rule (measure and document);
-   endpoints → nodes; contingencies by name then members. Every row has
-   `match_method`; unmatched rows are output.
+1. **DAM GTCs**: parse `NP3-766-M` (xls, daily limits) and `NP3-770-M` (definitions),
+   write their dataset notes, check names against the CRR GTCs, fill `core.gtc` for
+   DAM snapshots.
+2. **Node and contingency matching** (`core.match_node`, `core.match_contingency`):
+   settlement points and generator/load names → nodes; matched branch endpoints →
+   nodes; contingencies by name, then member sets in the matched vocabulary.
+   Disambiguate branches with several DAM circuit candidates (endpoint stations, kV).
+3. **`out.network`**: a per-snapshot network in one vocabulary (nodes, branches with
+   reactance and ratings, contingencies as outage sets, GTC rows) ready for
+   `ftr_align/cases/ercot.py`, with the contracted CRR topology.
 4. **SQL runner** for `models/core/*.sql` once the Python-built tables settle; wire
    `build_core` into the daily pull after the fetch.
 5. **Public API client** (`sources/public_api.py`): B2C ROPC token, subscription key,

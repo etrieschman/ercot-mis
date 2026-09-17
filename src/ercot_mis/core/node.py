@@ -23,7 +23,7 @@ import re
 
 import polars as pl
 
-VERSION = 1  # bump when keys or the contraction rule change; every core.node artifact is rebuilt
+VERSION = 2  # bump when keys or the contraction rule change; every core.node artifact is rebuilt
 TIE_REACTANCE = 1e-4  # |x| at or below this is a bus tie (breaker, switch, jumper)
 
 # ``core.node`` columns, the same for both models. ``station`` is the DAM station name or
@@ -133,11 +133,10 @@ def crr_nodes(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame
     to_group = nodes.select("psse_bus_number", "node_group")
 
     lines = branch.filter(pl.col("x").abs() > tie_reactance).select("i", "j", pl.col("comment").alias("name"))
+    from .branch import autos_by_key  # both orientations of the sheet's (from, to, ckt)
+
     xf = (transformer.select("i", "j", pl.col("ckt").str.strip_chars().alias("ckt"))
-          .join(autos.select(pl.col("from_number").cast(pl.Int64, strict=False).alias("i"),
-                             pl.col("to_number").cast(pl.Int64, strict=False).alias("j"),
-                             pl.col("id").str.strip_chars().alias("ckt"), pl.col("crr_name").alias("name")),
-                on=["i", "j", "ckt"], how="left"))
+          .join(autos_by_key(autos).rename({"from_bus": "i", "to_bus": "j"}), on=["i", "j", "ckt"], how="left"))
     xf = xf.with_columns(pl.coalesce(pl.col("name"), pl.format("XF {} {} {}", "i", "j", "ckt")).alias("name"))
     sp = sources_sinks.select(pl.col("bus_name").str.extract(r"^\s*(\d+)").cast(pl.Int64).alias("bus"), pl.col("name"))
     both = pl.concat([lines, xf.select("i", "j", "name")])

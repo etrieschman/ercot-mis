@@ -308,6 +308,33 @@ class Session:
 
         return pl.DataFrame(build(self, limit=limit), schema=BUILD_SCHEMA)
 
+    def match_branches(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
+        """``core.match_branch`` for one CRR model and one DAM hour, computed once and cached.
+
+        See ``ercot_mis.core.match``. Rows: every CRR branch with its DAM branch and the
+        ``match_method`` that found it, plus DAM branches nothing matched.
+        """
+        from .core.match import COLUMNS, VERSION, match_branches
+
+        key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
+        path = self.data_dir / "core" / "match_branch" / f"v{VERSION}" / f"{key}.parquet"
+        if path.is_file():
+            return pl.read_parquet(path)
+        crr = self.core("branch").filter(pl.col("snapshot_id") == crr_snapshot_id).collect()
+        dam = self.core("branch").filter(pl.col("snapshot_id") == dam_snapshot_id).collect()
+        if crr.is_empty() or dam.is_empty():
+            raise KeyError(f"no core.branch rows for {crr_snapshot_id!r} and {dam_snapshot_id!r}; run build_core()")
+        blob = self.core("snapshot").filter(pl.col("snapshot_id") == crr_snapshot_id).select("blob_sha256", "month").collect().row(0)
+        lines = self.raw("crr_mapping_lines").filter((pl.col("blob_sha256") == blob[0]) & (pl.col("month") == blob[1])).collect()
+        autos = self.raw("crr_mapping_autos").filter((pl.col("blob_sha256") == blob[0]) & (pl.col("month") == blob[1])).collect()
+        result = match_branches(crr, lines, autos, dam).with_columns(
+            pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id")
+        ).select("crr_snapshot_id", "dam_snapshot_id", *COLUMNS)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        result.write_parquet(path, compression="zstd")
+        path.chmod(0o600)
+        return result
+
     # ----------------------------------------------------------------- reading
 
     def raw(self, table: str) -> pl.LazyFrame:

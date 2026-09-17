@@ -33,10 +33,11 @@ node-breaker, DAM is bus-branch, so a CRR-to-DAM bus mapping is many-to-one.
 
 **Mapping workbook.** `Lines` maps every `CRR_Tag` (a RAW line comment) to an
 `Operations_Name`; ties mostly have no row, and a placeholder `Operations_Name` marks
-rows ERCOT could not map. `Operations_Name` never equals a DAM `Branch Name`
-verbatim: some match after dropping punctuation, most are a prefix of a DAM name
-(DAM appends a suffix). `Autos` operations names match DAM transformer names exactly
-for a majority.
+rows ERCOT could not map. A DAM `Branch Name` is the operations name followed by
+**DAM's own circuit designator** (one or two characters), which usually but not
+always equals the CRR circuit id; punctuation differs (single versus double
+underscores). `Autos` operations names match DAM transformer names verbatim for a
+majority.
 
 **Contingencies.** Most CRR contingency names have a DAM contingency of the same
 name, but the vocabularies differ: CRR rows are LINE/XFMR device names with one
@@ -76,17 +77,23 @@ to one. Some DAM settlement points have no bus in a given hour.
 - **CRR bus ties are contracted** (in-service branches with |x| at or below
   `TIE_REACTANCE`) before any PTDF; members and groups are recorded in `core.node`
   so monitored ties can be reported, not silently dropped.
-- **Matching order**: settlement points and generator/load names first, then
-  branches by workbook name with the documented normalization (punctuation-free,
-  then prefix), then buses through matched branch endpoints, then contingencies by
-  name with member sets compared in the matched vocabulary. Every match records
+- **Branch matching** (`core/match.py`, `session.match_branches`): compare names
+  with punctuation and case removed, in this order, recording the first method that
+  succeeds as `match_method`: `exact`; `ops+ckt` (operations name followed by the
+  CRR circuit id); `prefix` (exactly one DAM name is the operations name plus at
+  most two characters); otherwise `unmatched`, with the number of candidates. Every
+  CRR branch is listed once; unmatched DAM branches are listed with a null CRR side.
+- **Remaining matching order**: settlement points and generator/load names for
+  nodes, then buses through matched branch endpoints, then contingencies by name
+  with member sets compared in the matched vocabulary. Every match records
   `match_method`; every unmatched record is output.
 - **Ratings are facts**: store the CRR CSV ratings and RAW rate A/B/C both; the
   derate fraction is an observation the report checks, not a rule the code applies.
 
 ## Open questions
 
-- The suffix rule relating `Operations_Name` to DAM `Branch Name`.
+- Disambiguating branches with several DAM circuit candidates (parallel circuits
+  where the CRR and DAM circuit ids disagree).
 - How to treat monitored bus ties in a contracted CRR model.
 - Verify the monitored/secured reading against binding constraints in `NP4-191-CD`.
 - Parse `NP3-766-M` (xls) and check its GTC names against the CRR GTC names.

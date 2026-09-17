@@ -18,12 +18,22 @@ import polars as pl
 
 from .node import TIE_REACTANCE
 
-VERSION = 1  # bump when columns or identities change
+VERSION = 2  # bump when columns or identities change
 
 BRANCH_COLUMNS = ("branch_id", "kind", "from_bus", "to_bus", "ckt", "from_node_key", "to_node_key",
                   "is_in_service", "is_tie", "r_pu", "x_pu", "b_pu", "tap_ratio", "angle_deg",
                   "is_monitored", "is_secured")
 RATING_COLUMNS = ("branch_id", "rating_source", "time_of_use", "base_mw", "emergency_mw", "rate_c_mw")
+
+
+def autos_by_key(autos: pl.DataFrame) -> pl.DataFrame:
+    """``Autos`` names keyed by (from_bus, to_bus, ckt) in both orientations: the sheet
+    lists some transformers with from and to swapped relative to the RAW."""
+    direct = autos.select(pl.col("from_number").cast(pl.Int64, strict=False).alias("from_bus"),
+                          pl.col("to_number").cast(pl.Int64, strict=False).alias("to_bus"),
+                          pl.col("id").str.strip_chars().alias("ckt"), pl.col("crr_name").alias("name")).drop_nulls(["from_bus", "to_bus"])
+    swapped = direct.select(pl.col("to_bus").alias("from_bus"), pl.col("from_bus").alias("to_bus"), "ckt", "name")
+    return pl.concat([direct, swapped]).unique(subset=["from_bus", "to_bus", "ckt"], keep="first")
 
 
 def _keys(nodes: pl.DataFrame) -> pl.DataFrame:
@@ -85,9 +95,7 @@ def crr_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
     ``is_monitored`` is whether the monitored-element CSV lists the branch; CRR has no
     secured flag, so ``is_secured`` equals ``is_monitored``.
     """
-    auto_names = autos.select(pl.col("from_number").cast(pl.Int64, strict=False).alias("from_bus"),
-                              pl.col("to_number").cast(pl.Int64, strict=False).alias("to_bus"),
-                              pl.col("id").str.strip_chars().alias("ckt"), pl.col("crr_name").alias("auto_name")).drop_nulls(["from_bus", "to_bus"])
+    auto_names = autos_by_key(autos).rename({"name": "auto_name"})
     frame = (_raw_parts(psse_branch, psse_transformer)
              .join(auto_names, on=["from_bus", "to_bus", "ckt"], how="left")
              .with_columns(pl.when(pl.col("kind") == "line").then(pl.col("comment"))

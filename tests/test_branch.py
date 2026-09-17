@@ -24,7 +24,7 @@ def test_crr_branches_name_lines_by_comment_transformers_by_autos_and_keep_both_
                               (2, 3, "1", 0.01, 0.05, 0.0, 200.0, 220.0, 240.0, 1, "2 A2 3 B 1"),
                               (3, 4, "1", 0.01, 0.02, 0.0, 100.0, 110.0, 120.0, 0, "3 B 4 C 1")])
     raw_xf = _raw_xf([(1, 4, "T1", 0.0, 0.1, 1.05, 1.0, 0.0, 300.0, 330.0, 360.0, 1, None)])
-    autos = pl.DataFrame({"from_number": ["1"], "to_number": ["4"], "id": ["T1"], "crr_name": ["AUTO_A"]})
+    autos = pl.DataFrame({"from_number": ["4"], "to_number": ["1"], "id": ["T1"], "crr_name": ["AUTO_A"]})  # swapped vs the RAW
     sources = pl.DataFrame({"name": ["SP_A"], "bus_name": ["2 A2"]})
     monitored = pl.DataFrame({"device_name": ["2 A2 3 B 1", "2 A2 3 B 1", "AUTO_A"], "device_type": ["Line", "Line", "XFMR"],
                               "base_case_rating": [180.0, 170.0, 270.0], "emergency_rating": [220.0, 200.0, 330.0],

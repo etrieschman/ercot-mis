@@ -16,21 +16,22 @@ from pathlib import Path
 import polars as pl
 
 from ..raw import build as raw_build
-from . import branch, node, snapshot
+from . import branch, contingency, gtc, node, snapshot
 
 LAYER = "core"
 DAM_PRODUCT = snapshot.DAM_PRODUCT
 
 # Bump when the set of tables or how they are assembled changes.
-VERSION = 2
-TABLES = ("node", "branch", "branch_rating")
+VERSION = 3
+TABLES = ("node", "branch", "branch_rating", "contingency", "contingency_outage", "gtc", "gtc_member")
 
 
 def core_id() -> str:
     """Identity of the code that builds core tables: package and layer versions."""
     from .. import __version__
 
-    return f"ercot-mis={__version__}|core={VERSION}|node={node.VERSION}|branch={branch.VERSION}"
+    parts = [f"core={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (node, branch, contingency, gtc)]
+    return f"ercot-mis={__version__}|" + "|".join(parts)
 
 
 def _raw(session, table: str, emil_id: str, blob_sha256: str) -> pl.DataFrame | None:
@@ -38,8 +39,10 @@ def _raw(session, table: str, emil_id: str, blob_sha256: str) -> pl.DataFrame | 
     return pl.read_parquet(path) if path.is_file() else None
 
 
-DAM_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "dam_lines", "dam_transformers", "dam_generators", "dam_loads", "dam_settlement_points")
-CRR_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "crr_mapping_autos", "crr_sources_and_sinks", "crr_monitored_lines_and_transformers")
+DAM_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "dam_lines", "dam_transformers", "dam_generators", "dam_loads",
+              "dam_settlement_points", "dam_contingencies")
+CRR_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "crr_mapping_autos", "crr_sources_and_sinks",
+              "crr_monitored_lines_and_transformers", "crr_contingencies", "crr_non_thermal_constraints")
 
 
 def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame) -> dict[str, pl.DataFrame]:
@@ -55,16 +58,21 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame)
             r = {t: raw[t].filter(pl.col("hour") == snap["hour"]) for t in names}
             nodes = node.dam_nodes(r["psse_bus"], r["dam_lines"], r["dam_transformers"], r["dam_generators"], r["dam_loads"], r["dam_settlement_points"])
             branches, ratings = branch.dam_branches(nodes, r["psse_branch"], r["psse_transformer"], r["dam_lines"], r["dam_transformers"])
+            contingencies, outages = contingency.dam_contingencies(branches, nodes, r["dam_contingencies"])
+            gtcs, members = gtc.no_gtcs()
         else:
             r = {t: raw[t].filter(pl.col("month") == snap["month"]) for t in names}
             if r["psse_bus"].is_empty():
                 continue
             nodes = node.crr_nodes(r["psse_bus"], r["psse_branch"], r["psse_transformer"], r["crr_mapping_autos"], r["crr_sources_and_sinks"])
             branches, ratings = branch.crr_branches(nodes, r["psse_branch"], r["psse_transformer"], r["crr_mapping_autos"], r["crr_monitored_lines_and_transformers"])
-        for table, frame in (("node", nodes), ("branch", branches), ("branch_rating", ratings)):
+            contingencies, outages = contingency.crr_contingencies(branches, r["crr_contingencies"])
+            gtcs, members = gtc.crr_gtcs(branches, r["crr_non_thermal_constraints"])
+        for table, frame in (("node", nodes), ("branch", branches), ("branch_rating", ratings), ("contingency", contingencies),
+                             ("contingency_outage", outages), ("gtc", gtcs), ("gtc_member", members)):
             parts[table].append(frame.with_columns(pl.lit(snap["snapshot_id"]).alias("snapshot_id")))
     return {table: pl.concat(frames, how="diagonal_relaxed").select("snapshot_id", pl.exclude("snapshot_id"))
-            for table, frames in parts.items() if frames}
+            for table, frames in parts.items() if frames}  # empty GTC frames still carry the schema
 
 
 def build(session, *, limit: int | None = None) -> list[dict]:
