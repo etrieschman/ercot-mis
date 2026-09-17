@@ -3,10 +3,18 @@
 One DuckDB file in the data folder. Rows are inserted or refreshed, never deleted,
 so the catalog is also the history of what ERCOT offered and when. That matters
 because EWS forgets everything older than a product's display window.
+
+DuckDB lets one process write a file while nobody else has it open. Readers open
+``read_only=True`` and writers keep their connection only as long as the write, so
+a scheduled pull and a notebook seldom collide; when they do, opening waits and
+retries for a short while before failing.
 """
 
 from __future__ import annotations
 
+import os
+import re
+import time
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
@@ -66,7 +74,51 @@ SCHEMA = (
         original_name VARCHAR,
         stored_at TIMESTAMPTZ NOT NULL
     )""",
+    # -- provenance ------------------------------------------------------------
+    """CREATE TABLE IF NOT EXISTS run (
+        run_id VARCHAR PRIMARY KEY,
+        command VARCHAR NOT NULL,
+        client_version VARCHAR NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL,
+        finished_at TIMESTAMPTZ,
+        failed INTEGER
+    )""",
+    # One row per written file; the key changes whenever the parser or the input does.
+    """CREATE TABLE IF NOT EXISTS artifact (
+        artifact_key VARCHAR PRIMARY KEY,
+        layer VARCHAR NOT NULL,
+        table_name VARCHAR NOT NULL,
+        emil_id VARCHAR NOT NULL,
+        blob_sha256 VARCHAR NOT NULL,
+        parser_id VARCHAR NOT NULL,
+        path VARCHAR NOT NULL,
+        rows BIGINT NOT NULL,
+        size_bytes BIGINT NOT NULL,
+        run_id VARCHAR NOT NULL,
+        written_at TIMESTAMPTZ NOT NULL
+    )""",
+    # Which zip members fed each artifact.
+    """CREATE TABLE IF NOT EXISTS lineage (
+        artifact_key VARCHAR NOT NULL,
+        member_sha256 VARCHAR NOT NULL,
+        PRIMARY KEY (artifact_key, member_sha256)
+    )""",
 )
+
+
+TABLES = {re.search(r"EXISTS (\w+)", statement).group(1) for statement in SCHEMA}
+
+
+def _connect(path: Path, read_only: bool) -> duckdb.DuckDBPyConnection:
+    """Open the file, waiting out another process's lock for a while."""
+    for wait in (*LOCK_WAITS, None):
+        try:
+            return duckdb.connect(str(path), read_only=read_only)
+        except duckdb.IOException as error:
+            if wait is None or "lock" not in str(error).lower():
+                raise
+            time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def client_version() -> str:
@@ -76,14 +128,31 @@ def client_version() -> str:
         return "unknown"
 
 
+# Seconds between attempts to open a locked catalog, about a minute in total.
+LOCK_WAITS = (1, 2, 5, 10, 20, 30)
+
+
 class Catalog:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, read_only: bool = False):
         self.path = Path(path)
+        self.read_only = read_only
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.con = duckdb.connect(str(self.path))
+        if read_only and (not self.path.is_file() or self._missing_tables()):
+            Catalog(self.path).close()  # create the file, or tables a newer version added
+        self.con = _connect(self.path, read_only)
         self.con.execute("SET TimeZone = 'UTC'")
-        for statement in SCHEMA:
-            self.con.execute(statement)
+        if not read_only:
+            for statement in SCHEMA:
+                self.con.execute(statement)
+            os.chmod(self.path, 0o600)
+
+    def _missing_tables(self) -> bool:
+        con = _connect(self.path, read_only=True)
+        try:
+            present = {t for (t,) in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+        finally:
+            con.close()
+        return not TABLES <= present
 
     def close(self) -> None:
         self.con.close()
@@ -199,3 +268,72 @@ class Catalog:
             {"emil_id": emil_id, "name": name, "stem": stem},
         ).fetchall()
         return rows[0][0] if len(rows) == 1 else None
+
+    # ------------------------------------------------------------- provenance
+
+    def packages(self, emil_id: str) -> list[dict]:
+        """Archived packages of a product, newest posting first, each with its member hashes."""
+        rows = self.con.execute(
+            """SELECT b.sha256, b.path, any_value(s.doc_id) AS doc_id, max(d.posted_at) AS posted_at,
+                      list(m.member_path ORDER BY m.member_path) AS member_paths,
+                      list(m.member_sha256 ORDER BY m.member_path) AS member_hashes
+               FROM archive_blob b
+               JOIN archive_source s USING (sha256)
+               LEFT JOIN remote_doc d ON d.emil_id = s.emil_id AND d.doc_id = s.doc_id
+               LEFT JOIN archive_member m ON m.blob_sha256 = b.sha256
+               WHERE b.emil_id = ?
+               GROUP BY b.sha256, b.path
+               ORDER BY posted_at DESC NULLS LAST, b.sha256""",
+            [emil_id],
+        ).fetchall()
+        return [{"sha256": sha, "path": path, "doc_id": doc_id, "posted_at": posted,
+                 "members": dict(zip(paths or [], hashes or []))} for sha, path, doc_id, posted, paths, hashes in rows]
+
+    def artifact_keys(self, layer: str) -> set[str]:
+        return {k for (k,) in self.con.execute("SELECT artifact_key FROM artifact WHERE layer = ?", [layer]).fetchall()}
+
+    def artifact_tables(self, layer: str, blob_sha256: str) -> list[str]:
+        return [t for (t,) in self.con.execute(
+            "SELECT DISTINCT table_name FROM artifact WHERE layer = ? AND blob_sha256 = ?", [layer, blob_sha256]).fetchall()]
+
+    def artifact_paths(self, keys: Iterable[str]) -> list[str]:
+        keys = list(keys)
+        if not keys:
+            return []
+        return [p for (p,) in self.con.execute(
+            "SELECT path FROM artifact WHERE list_contains($keys, artifact_key)", {"keys": keys}).fetchall()]
+
+    def artifacts(self, layer: str | None = None) -> pl.DataFrame:
+        query = "SELECT * FROM artifact" + ("" if layer is None else " WHERE layer = $layer") + " ORDER BY written_at"
+        return self.con.execute(query, {"layer": layer} if layer else {}).pl()
+
+    def start_run(self, command: str) -> str:
+        run_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{os.urandom(3).hex()}"
+        self.con.execute("INSERT INTO run VALUES (?, ?, ?, ?, NULL, NULL)",
+                         [run_id, command, client_version(), datetime.now(timezone.utc)])
+        return run_id
+
+    def finish_run(self, run_id: str, failed: int) -> None:
+        self.con.execute("UPDATE run SET finished_at = ?, failed = ? WHERE run_id = ?",
+                         [datetime.now(timezone.utc), failed, run_id])
+
+    def add_artifacts(self, run_id: str, layer: str, emil_id: str, blob_sha256: str, parser: str, placed: list) -> None:
+        """Register written files and their member lineage; replaces earlier rows for the same key."""
+        self.con.begin()
+        try:
+            for key, artifact, rel in placed:
+                self.con.execute("DELETE FROM lineage WHERE artifact_key = ?", [key])
+                self.con.execute("DELETE FROM artifact WHERE artifact_key = ?", [key])
+                # A parser change gives a new key for the same (blob, table); drop the stale row too.
+                self.con.execute("DELETE FROM artifact WHERE layer = ? AND blob_sha256 = ? AND table_name = ?",
+                                 [layer, blob_sha256, artifact.table])
+                self.con.execute("INSERT INTO artifact VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                 [key, layer, artifact.table, emil_id, blob_sha256, parser, rel.as_posix(),
+                                  artifact.rows, artifact.size_bytes, run_id, datetime.now(timezone.utc)])
+                if artifact.member_sha256s:
+                    self.con.executemany("INSERT INTO lineage VALUES (?, ?) ON CONFLICT DO NOTHING",
+                                         [(key, m) for m in artifact.member_sha256s if m])
+            self.con.commit()
+        except BaseException:
+            self.con.rollback()
+            raise

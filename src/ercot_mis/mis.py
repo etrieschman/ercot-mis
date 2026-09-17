@@ -5,32 +5,36 @@ from __future__ import annotations
 import re
 import zipfile
 from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
 import polars as pl
+import requests
 
 from .config import Identity, load_identity
 from .products import Product, get_product
+from .retry import retrying
 from .sources.ews import ERCOT_TZ, EwsClient, EwsError, RemoteDoc
 from .store import archive
 from .store.catalog import Catalog
 
+# Columns that embed the participant DUNS (ERCOT's file names) or point at the
+# participant's download servlet. They stay in the catalog and never leave it.
+PRIVATE_COLUMNS = ("file_name", "url")
+
 DOCUMENT_SCHEMA = {
     "report_type_id": pl.Int64,
     "doc_id": pl.String,
-    "file_name": pl.String,
     "report_group": pl.String,
     "operating_date": pl.String,
     "posted_at": pl.Datetime("us", "UTC"),
     "size_bytes": pl.Int64,
     "format": pl.String,
-    "url": pl.String,
 }
 
-# Results leave out file names, which embed the participant DUNS, so they are safe to print.
 FETCH_SCHEMA = {
     "emil_id": pl.String,
     "doc_id": pl.String,
@@ -40,6 +44,16 @@ FETCH_SCHEMA = {
     "size_bytes": pl.Int64,
     "sha256": pl.String,
     "status": pl.String,
+    "error": pl.String,
+}
+BUILD_SCHEMA = {
+    "emil_id": pl.String,
+    "doc_id": pl.String,
+    "blob_sha256": pl.String,
+    "status": pl.String,
+    "tables": pl.Int64,
+    "rows": pl.Int64,
+    "seconds": pl.Float64,
     "error": pl.String,
 }
 INGEST_SCHEMA = {
@@ -52,6 +66,9 @@ INGEST_SCHEMA = {
 
 # ERCOT names its downloads "man.<8-digit report type>.<participant>.<timestamp>.<name>".
 _ERCOT_NAME = re.compile(r"^man\.(\d{8})\.")
+
+# Errors a second attempt can fix: a stalled connection, a short read, a 5xx reply.
+_TRANSIENT = (requests.RequestException, EwsError, ConnectionError, TimeoutError)
 
 
 class Source(Protocol):
@@ -71,9 +88,8 @@ class DownloadError(RuntimeError):
 class Probe:
     """What EWS holds for one product.
 
-    ``summary`` is safe to print: counts, dates, bytes and report groups.
-    ``documents`` holds the full listing, whose file names embed the participant
-    DUNS, so keep it inside the data folder.
+    Both parts are safe to print: ``summary`` holds counts, dates, bytes and report
+    groups; ``documents`` is the listing without ERCOT's file names and URLs.
     """
 
     summary: dict
@@ -83,7 +99,11 @@ class Probe:
 class Mis:
     """A local ercot-mis data folder plus the clients that fill it.
 
-    Use as a context manager, or call ``close()``, to release the catalog.
+    The catalog is a DuckDB file that allows one writer at a time. ``Mis`` reads it
+    through a read-only connection and takes a writable one only for the moments it
+    records a listing or an archived document, never across a download, so a daily
+    pull and a notebook rarely collide. Use as a context manager, or call ``close()``,
+    to release the read-only connection.
     """
 
     def __init__(self, data_dir: Path, identity: Identity | None = None):
@@ -108,9 +128,24 @@ class Mis:
 
     @property
     def catalog(self) -> Catalog:
+        """A read-only view of the catalog. Close the session to let another process write."""
         if self._catalog is None:
-            self._catalog = Catalog(self.data_dir / "catalog.duckdb")
+            self._catalog = Catalog(self._catalog_path, read_only=True)
         return self._catalog
+
+    @property
+    def _catalog_path(self) -> Path:
+        return self.data_dir / "catalog.duckdb"
+
+    @contextmanager
+    def _writer(self) -> Iterator[Catalog]:
+        """The writable catalog, held only for the duration of the block."""
+        self.close()
+        writer = Catalog(self._catalog_path)
+        try:
+            yield writer
+        finally:
+            writer.close()
 
     @property
     def ews(self) -> EwsClient:
@@ -131,13 +166,17 @@ class Mis:
         """List what ERCOT currently offers for a product, and record it in the catalog.
 
         ``since`` and ``until`` bound the posting time; a date means midnight ERCOT time.
-        Returns the listed documents with ``is_archived`` and ``sha256``. Works for tracked
-        products too: listing is how they are tracked.
+        Returns the listed documents with ``is_archived`` and ``sha256``, without ERCOT's
+        file names (they embed the participant DUNS). Works for tracked products too:
+        listing is how they are tracked.
         """
-        spec = get_product(product)
+        return self._list(get_product(product), since, until).drop(PRIVATE_COLUMNS)
+
+    def _list(self, spec: Product, since, until) -> pl.DataFrame:
         docs = self._source(spec).list_documents(spec, _bound(since), _bound(until))
-        self.catalog.record_listing(spec, docs, listed_at=datetime.now(timezone.utc))
-        return self.catalog.documents(spec.emil_id, [d.doc_id for d in docs if d.doc_id])
+        with self._writer() as writer:
+            writer.record_listing(spec, docs, listed_at=datetime.now(timezone.utc))
+            return writer.documents(spec.emil_id, [d.doc_id for d in docs if d.doc_id])
 
     def probe(self, product: str | int, *, archive_years: float = 7, now: datetime | None = None) -> Probe:
         """List everything EWS offers for a product, and whether it reaches past the display window.
@@ -182,8 +221,9 @@ class Mis:
         """Download every listed document that is not archived yet.
 
         Each document is committed on its own, so running again resumes an interrupted
-        fetch. A document that fails is reported (``status == "failed"``) without
-        stopping the others, and is retried on the next run. ``operating_dates``
+        fetch. A transient failure (stalled connection, short read, 5xx) is retried
+        within the run; a document that still fails is reported (``status == "failed"``)
+        without stopping the others, and is retried on the next run. ``operating_dates``
         restricts the fetch to those days; ``max_gb`` refuses, before downloading
         anything, a fetch larger than the budget.
         """
@@ -193,7 +233,7 @@ class Mis:
                 f"{spec.emil_id} is tracked, not pulled: list() records its documents. "
                 "Set take='pull' in products.py to download it."
             )
-        wanted = self.list(spec.emil_id, since, until).filter(~pl.col("is_archived"))
+        wanted = self._list(spec, since, until).filter(~pl.col("is_archived"))
         if operating_dates is not None:
             days = sorted({_as_date(d).isoformat() for d in operating_dates})
             wanted = wanted.filter(pl.col("operating_date").is_in(days))
@@ -208,10 +248,14 @@ class Mis:
         results = []
         for row in wanted.sort("posted_at").iter_rows(named=True):
             outcome = {k: row[k] for k in ("emil_id", "doc_id", "report_group", "operating_date", "posted_at", "size_bytes")}
+            suffix = _suffix(row["file_name"], row["format"])
             try:
-                blob = self._archive(spec, source.download(row["url"]), _suffix(row["file_name"], row["format"]),
-                                     expected_size=row["size_bytes"])
-                self.catalog.add_source(blob.sha256, spec.emil_id, row["doc_id"], "fetch", row["file_name"])
+                blob = retrying(
+                    lambda: self._archive(spec, source.download(row["url"]), suffix, expected_size=row["size_bytes"]),
+                    _TRANSIENT + (DownloadError,),
+                )
+                with self._writer() as writer:
+                    writer.add_source(blob.sha256, spec.emil_id, row["doc_id"], "fetch", row["file_name"])
                 results.append({**outcome, "sha256": blob.sha256, "status": "fetched", "error": None})
             except Exception as error:  # reported, and retried on the next run
                 results.append({**outcome, "sha256": None, "status": "failed", "error": f"{type(error).__name__}: {error}"})
@@ -234,21 +278,67 @@ class Mis:
             spec = get_product(product) if product is not None else _product_from_name(file.name)
             with file.open("rb") as handle:
                 blob = self._archive(spec, iter(lambda: handle.read(archive.CHUNK), b""), file.suffix)
-            doc_id = self.catalog.doc_id_for_name(spec.emil_id, file.name)
-            self.catalog.add_source(blob.sha256, spec.emil_id, doc_id, "ingest", file.name)
+            with self._writer() as writer:
+                doc_id = writer.doc_id_for_name(spec.emil_id, file.name)
+                writer.add_source(blob.sha256, spec.emil_id, doc_id, "ingest", file.name)
             rows.append({"emil_id": spec.emil_id, "doc_id": doc_id, "sha256": blob.sha256,
                          "size_bytes": blob.size_bytes, "is_new_bytes": blob.created})
         return pl.DataFrame(rows, schema=INGEST_SCHEMA)
 
+    # ----------------------------------------------------------------- building
+
+    def build_raw(self, product: str | int, *, workers: int | None = None, limit: int | None = None) -> pl.DataFrame:
+        """Parse every archived package of a product into raw Parquet, skipping what is built.
+
+        One file per package and table under ``raw/<table>/emil_id=<EMIL>/``, every row
+        carrying its source identity. See ``ercot_mis.build``. Returns one row per package.
+        """
+        from .build import build_raw
+
+        return pl.DataFrame(build_raw(self, product, workers=workers, limit=limit), schema=BUILD_SCHEMA)
+
+    def build_core(self, *, limit: int | None = None) -> pl.DataFrame:
+        """Write ``core.snapshot`` and ``core.node`` from the raw layer. See ``ercot_mis.core.build``."""
+        from .core.build import build_core
+
+        return pl.DataFrame(build_core(self, limit=limit), schema=BUILD_SCHEMA)
+
+    def snapshots(self) -> pl.DataFrame:
+        """``core.snapshot`` as last built."""
+        return pl.read_parquet(self.data_dir / "core" / "snapshot.parquet")
+
+    def nodes(self) -> pl.LazyFrame:
+        """A lazy scan over ``core.node`` for every built package."""
+        return pl.scan_parquet(str(self.data_dir / "core" / "node" / "**" / "*.parquet"), hive_partitioning=True)
+
+    def raw(self, table: str) -> pl.LazyFrame:
+        """A lazy scan over every raw artifact of a table (``emil_id`` comes from the path)."""
+        pattern = self.data_dir / "raw" / table / "**" / "*.parquet"
+        return pl.scan_parquet(str(pattern), hive_partitioning=True)
+
+    def _start_run(self, command: str) -> str:
+        with self._writer() as writer:
+            return writer.start_run(command)
+
+    def _finish_run(self, run_id: str, failed: int) -> None:
+        with self._writer() as writer:
+            writer.finish_run(run_id, failed)
+
+    def _add_artifacts(self, *args) -> None:
+        with self._writer() as writer:
+            writer.add_artifacts(*args)
+
     def _archive(self, spec: Product, chunks: Iterable[bytes], suffix: str,
                  expected_size: int | None = None) -> archive.StoredBlob:
+        """Stream bytes into the archive and index them; the catalog is locked only for the index."""
         blob = archive.store(self.data_dir, spec.emil_id, chunks, suffix)
         if expected_size and blob.size_bytes != expected_size:
             if blob.created:
                 archive.discard(self.data_dir, blob)
             raise DownloadError(f"received {blob.size_bytes:,} bytes but the listing says {expected_size:,}")
-        if not self.catalog.has_blob(blob.sha256):
-            self.catalog.add_blob(blob, spec, archive.index_members(self.data_dir / blob.path))
+        with self._writer() as writer:
+            if not writer.has_blob(blob.sha256):
+                writer.add_blob(blob, spec, archive.index_members(self.data_dir / blob.path))
         return blob
 
 
@@ -326,7 +416,8 @@ def _summarize(
 
 def _frame(docs: list[RemoteDoc]) -> pl.DataFrame:
     rows = [
-        {**asdict(d), "posted_at": d.posted_at.astimezone(timezone.utc) if d.posted_at else None}
+        {**{k: v for k, v in asdict(d).items() if k not in PRIVATE_COLUMNS},
+         "posted_at": d.posted_at.astimezone(timezone.utc) if d.posted_at else None}
         for d in docs
     ]
     return pl.DataFrame(rows, schema=DOCUMENT_SCHEMA)

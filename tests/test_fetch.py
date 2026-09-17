@@ -148,3 +148,39 @@ def test_ingest_needs_a_product_for_unrecognized_names(tmp_path, payloads):
         with pytest.raises(ValueError, match="pass product="):
             mis.ingest(path)
         assert mis.ingest(path, product="NP7-800-M")["doc_id"].to_list() == [None]
+
+
+def test_listing_hides_file_names_and_urls(tmp_path, payloads):
+    source = FakeSource([(_doc("a", payloads["a"]), payloads["a"])])
+    with _mis(tmp_path, source) as mis:
+        listed = mis.list("NP7-800-M")
+        assert "file_name" not in listed.columns and "url" not in listed.columns
+        # The catalog keeps them: fetch needs the URL and the suffix.
+        assert mis.catalog.con.execute("SELECT count(file_name) FROM remote_doc").fetchone()[0] == 1
+
+
+def test_transient_download_errors_are_retried_within_a_run(tmp_path, payloads):
+    doc = _doc("a", payloads["a"])
+
+    class Flaky(FakeSource):
+        def download(self, url):
+            self.downloads.append(url)
+            if len(self.downloads) < 3:
+                raise ConnectionError("read timed out")
+            yield self.payloads[url]
+
+    source = Flaky([(doc, payloads["a"])])
+    with _mis(tmp_path, source) as mis:
+        result = mis.fetch("NP7-800-M")
+    assert result["status"].to_list() == ["fetched"] and len(source.downloads) == 3
+
+
+def test_catalog_is_read_only_between_writes(tmp_path, payloads):
+    import duckdb
+
+    with _mis(tmp_path, FakeSource([(_doc("a", payloads["a"]), payloads["a"])])) as mis:
+        mis.list("NP7-800-M")
+        assert mis.catalog.read_only
+        with pytest.raises(duckdb.Error):
+            mis.catalog.con.execute("DELETE FROM remote_doc")
+        assert oct(mis.catalog.path.stat().st_mode & 0o777) == "0o600"
