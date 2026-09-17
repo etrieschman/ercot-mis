@@ -54,6 +54,7 @@ def _monthly(tmp_path, suffix=b""):
         "2026.SEP.Monthly.Auction.Contingencies.XML": b"<x/>",  # archived, not parsed
         "2026.SEP.Monthly.Auction.SourcesAndSinks.CSV": b"Name,PriceNode,BusName,ParticipationFactor\nSP_A,SP_A,1 ALPHA 1,1\n",
         "2026.SEP.Monthly.Auction.MappingDocument.xlsx": _workbook(),
+        "2026.SEP.Monthly.Auction.MonitoredLinesAndTransformers.CSV": b"DeviceName,DeviceType,BaseCaseRating,EmergencyRating,TimeOfUse\n",
     }))
     return package
 
@@ -75,7 +76,7 @@ def test_build_raw_writes_identity_columns_and_provenance(tmp_path):
     with Session(tmp_path / "data") as mis:
         mis.ingest(_monthly(tmp_path))
         result = mis.build_raw("NP7-800-M")
-        assert result["status"].to_list() == ["built"] and result["tables"][0] == 15  # 11 psse + ctg + sources + 2 workbook sheets
+        assert result["status"].to_list() == ["built"] and result["tables"][0] == 16  # 11 psse + ctg + sources + monitored + 2 workbook sheets
 
         bus = mis.raw("psse_bus").collect()
         assert bus.height == 2
@@ -86,9 +87,9 @@ def test_build_raw_writes_identity_columns_and_provenance(tmp_path):
         assert ctg["contingency"].to_list() == ["CTG_1"] and ctg["time_of_use"][0] is None
 
         artifacts = mis.catalog.artifacts("raw")
-        assert artifacts.height == 15 and set(artifacts["table_name"]) >= {"psse_bus", "crr_contingencies"}
+        assert artifacts.height == 16 and set(artifacts["table_name"]) >= {"psse_bus", "crr_contingencies"}
         lineage = mis.catalog.con.execute("SELECT count(DISTINCT member_sha256) FROM lineage").fetchone()[0]
-        assert lineage == 4  # RAW, two CSVs and the workbook; the XML fed nothing
+        assert lineage == 5  # RAW, three CSVs and the workbook; the XML fed nothing
         runs = mis.catalog.con.execute("SELECT command, failed FROM run").fetchall()
         assert runs == [("build_raw NP7-800-M", 0)]
         for path in artifacts["path"]:
@@ -101,12 +102,12 @@ def test_build_raw_skips_built_packages_and_rebuilds_on_parser_change(tmp_path, 
         first = mis.build_raw("NP7-800-M")
         again = mis.build_raw("NP7-800-M")
         assert first["status"][0] == "built" and again["status"][0] == "skipped"
-        assert mis.catalog.artifacts("raw").height == 15
+        assert mis.catalog.artifacts("raw").height == 16
 
         monkeypatch.setattr(build, "parser_id", lambda emil_id: "changed")
         rebuilt = mis.build_raw("NP7-800-M")
         assert rebuilt["status"][0] == "built"
-        assert mis.catalog.artifacts("raw").height == 15  # replaced, not duplicated
+        assert mis.catalog.artifacts("raw").height == 16  # replaced, not duplicated
         assert set(mis.catalog.artifacts("raw")["parser_id"]) == {"changed"}
 
 
@@ -153,6 +154,9 @@ def test_build_core_snapshots_and_nodes(tmp_path):
 
         result = mis.build_core()
         assert result["status"].to_list() == ["built", "built"], result["error"].to_list()
+        branches = mis.core("branch").collect()
+        assert set(branches["snapshot_id"]) == set(snaps["snapshot_id"]) and "from_node_key" in branches.columns
+        assert mis.core("branch_rating").filter(pl.col("rating_source") == "crr_monitored").collect().height == 0  # header-only CSV
         nodes = mis.core("node").collect()
         assert set(nodes["snapshot_id"]) == set(snaps["snapshot_id"])
         dam_nodes = nodes.filter(pl.col("snapshot_id").str.starts_with("dam"))

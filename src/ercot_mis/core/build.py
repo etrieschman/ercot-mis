@@ -1,9 +1,10 @@
-"""Build the core layer from raw: ``core/snapshot.parquet`` and ``core/node/...``.
+"""Build the core layer from raw: ``core/snapshot.parquet`` and, per package,
+``core/<table>/emil_id=<EMIL>/<blob16>.parquet`` for ``node``, ``branch`` and
+``branch_rating``.
 
-``core.node`` holds one row per RAW bus per snapshot with its equipment-based
-``node_key`` (``core/node.py``), written per package under
-``core/node/emil_id=<EMIL>/<blob16>.parquet`` and registered in the catalog like a
-raw artifact (key = hash of ``VERSION``, the package version and the blob).
+Each table is registered in the catalog like a raw artifact (key = ``VERSION``s, the
+package version and the blob). Tables are computed per snapshot (a DAM hour, a CRR
+month) from that package's raw tables and stacked with ``snapshot_id`` first.
 """
 
 from __future__ import annotations
@@ -15,20 +16,21 @@ from pathlib import Path
 import polars as pl
 
 from ..raw import build as raw_build
-from . import node, snapshot
+from . import branch, node, snapshot
 
 LAYER = "core"
 DAM_PRODUCT = snapshot.DAM_PRODUCT
 
-# Bump when core.snapshot or core.node change (columns, keys, contraction rules).
-VERSION = 1
+# Bump when the set of tables or how they are assembled changes.
+VERSION = 2
+TABLES = ("node", "branch", "branch_rating")
 
 
 def core_id() -> str:
     """Identity of the code that builds core tables: package and layer versions."""
     from .. import __version__
 
-    return f"ercot-mis={__version__}|core={VERSION}|node={node.VERSION}"
+    return f"ercot-mis={__version__}|core={VERSION}|node={node.VERSION}|branch={branch.VERSION}"
 
 
 def _raw(session, table: str, emil_id: str, blob_sha256: str) -> pl.DataFrame | None:
@@ -36,38 +38,33 @@ def _raw(session, table: str, emil_id: str, blob_sha256: str) -> pl.DataFrame | 
     return pl.read_parquet(path) if path.is_file() else None
 
 
-def package_nodes(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame) -> pl.DataFrame:
-    """``core.node`` rows for every snapshot of one package, read from its raw artifacts."""
-    parts = []
-    if emil_id == DAM_PRODUCT:
-        tables = {t: _raw(session, t, emil_id, blob_sha256) for t in
-                  ("psse_bus", "dam_lines", "dam_transformers", "dam_generators", "dam_loads", "dam_settlement_points")}
-        missing = [t for t, v in tables.items() if v is None]
-        if missing:
-            raise FileNotFoundError(f"raw tables not built for this package: {missing}")
-        for snap in snaps.iter_rows(named=True):
-            hour = snap["hour"]
-            nodes = node.dam_nodes(*(tables[t].filter(pl.col("hour") == hour) for t in
-                                         ("psse_bus", "dam_lines", "dam_transformers", "dam_generators", "dam_loads", "dam_settlement_points")))
-            parts.append(nodes.with_columns(pl.lit(snap["snapshot_id"]).alias("snapshot_id")))
-    else:
-        tables = {t: _raw(session, t, emil_id, blob_sha256) for t in
-                  ("psse_bus", "psse_branch", "psse_transformer", "crr_mapping_autos", "crr_sources_and_sinks")}
-        missing = [t for t, v in tables.items() if v is None]
-        if missing:
-            raise FileNotFoundError(f"raw tables not built for this package: {missing}")
-        for snap in snaps.iter_rows(named=True):
-            month = snap["month"]
-            by_month = {t: tables[t].filter(pl.col("month") == month) for t in tables}
-            if by_month["psse_bus"].is_empty():
+DAM_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "dam_lines", "dam_transformers", "dam_generators", "dam_loads", "dam_settlement_points")
+CRR_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "crr_mapping_autos", "crr_sources_and_sinks", "crr_monitored_lines_and_transformers")
+
+
+def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame) -> dict[str, pl.DataFrame]:
+    """Core tables for every snapshot of one package, read from its raw artifacts."""
+    names = DAM_TABLES if emil_id == DAM_PRODUCT else CRR_TABLES
+    raw = {t: _raw(session, t, emil_id, blob_sha256) for t in names}
+    missing = [t for t, v in raw.items() if v is None]
+    if missing:
+        raise FileNotFoundError(f"raw tables not built for this package: {missing}")
+    parts: dict[str, list[pl.DataFrame]] = {t: [] for t in TABLES}
+    for snap in snaps.iter_rows(named=True):
+        if emil_id == DAM_PRODUCT:
+            r = {t: raw[t].filter(pl.col("hour") == snap["hour"]) for t in names}
+            nodes = node.dam_nodes(r["psse_bus"], r["dam_lines"], r["dam_transformers"], r["dam_generators"], r["dam_loads"], r["dam_settlement_points"])
+            branches, ratings = branch.dam_branches(nodes, r["psse_branch"], r["psse_transformer"], r["dam_lines"], r["dam_transformers"])
+        else:
+            r = {t: raw[t].filter(pl.col("month") == snap["month"]) for t in names}
+            if r["psse_bus"].is_empty():
                 continue
-            nodes = node.crr_nodes(by_month["psse_bus"], by_month["psse_branch"], by_month["psse_transformer"],
-                                       by_month["crr_mapping_autos"], by_month["crr_sources_and_sinks"])
-            parts.append(nodes.with_columns(pl.lit(snap["snapshot_id"]).alias("snapshot_id")))
-    if not parts:
-        return pl.DataFrame()
-    frame = pl.concat(parts, how="diagonal_relaxed")
-    return frame.select("snapshot_id", pl.exclude("snapshot_id"))
+            nodes = node.crr_nodes(r["psse_bus"], r["psse_branch"], r["psse_transformer"], r["crr_mapping_autos"], r["crr_sources_and_sinks"])
+            branches, ratings = branch.crr_branches(nodes, r["psse_branch"], r["psse_transformer"], r["crr_mapping_autos"], r["crr_monitored_lines_and_transformers"])
+        for table, frame in (("node", nodes), ("branch", branches), ("branch_rating", ratings)):
+            parts[table].append(frame.with_columns(pl.lit(snap["snapshot_id"]).alias("snapshot_id")))
+    return {table: pl.concat(frames, how="diagonal_relaxed").select("snapshot_id", pl.exclude("snapshot_id"))
+            for table, frames in parts.items() if frames}
 
 
 def build(session, *, limit: int | None = None) -> list[dict]:
@@ -86,14 +83,14 @@ def build(session, *, limit: int | None = None) -> list[dict]:
         packages = packages.head(limit)
     run_id = None
     for emil_id, blob, doc_id in packages.rows():
-        key = raw_build.artifact_key(version, blob, "node")
-        rel = Path(LAYER) / "node" / f"emil_id={emil_id}" / f"{blob[:16]}.parquet"
-        record = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob, "status": "skipped", "tables": 1, "rows": None, "seconds": 0.0, "error": None}
-        if key in existing and (session.data_dir / rel).is_file():
+        keys = {t: raw_build.artifact_key(version, blob, t) for t in TABLES}
+        rels = {t: Path(LAYER) / t / f"emil_id={emil_id}" / f"{blob[:16]}.parquet" for t in TABLES}
+        record = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob, "status": "skipped", "tables": len(TABLES), "rows": None, "seconds": 0.0, "error": None}
+        if set(keys.values()) <= existing and all((session.data_dir / rel).is_file() for rel in rels.values()):
             results.append(record)
             continue
         try:
-            nodes = package_nodes(session, emil_id, blob, snaps.filter(pl.col("blob_sha256") == blob))
+            tables = package_tables(session, emil_id, blob, snaps.filter(pl.col("blob_sha256") == blob))
         except FileNotFoundError:
             results.append({**record, "status": "no_raw"})  # build_raw first
             continue
@@ -101,16 +98,18 @@ def build(session, *, limit: int | None = None) -> list[dict]:
             results.append({**record, "status": "failed", "error": f"{type(error).__name__}: {error}"})
             continue
         run_id = run_id or session._start_run("build_core")
-        dest = session.data_dir / rel
-        dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        handle, tmp = tempfile.mkstemp(dir=dest.parent, suffix=".parquet")
-        os.close(handle)
-        nodes.write_parquet(tmp, compression="zstd")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, dest)
-        written = raw_build.Written("node", dest, nodes.height, dest.stat().st_size, ())
-        session._add_artifacts(run_id, LAYER, emil_id, blob, version, [(key, written, rel)])
-        results.append({**record, "status": "built", "rows": nodes.height})
+        placed = []
+        for table, frame in tables.items():
+            dest = session.data_dir / rels[table]
+            dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            handle, tmp = tempfile.mkstemp(dir=dest.parent, suffix=".parquet")
+            os.close(handle)
+            frame.write_parquet(tmp, compression="zstd")
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, dest)
+            placed.append((keys[table], raw_build.Written(table, dest, frame.height, dest.stat().st_size, ()), rels[table]))
+        session._add_artifacts(run_id, LAYER, emil_id, blob, version, placed)
+        results.append({**record, "status": "built", "tables": len(placed), "rows": sum(f.height for f in tables.values())})
     if run_id:
         session._finish_run(run_id, failed=sum(1 for r in results if r["status"] == "failed"))
     return results
