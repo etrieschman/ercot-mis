@@ -11,6 +11,8 @@ DAM_OPERATING_DATES there. Schedule it with launchd: see scripts/launchd/.
     uv run python scripts/daily_pull.py
 """
 
+import json
+import subprocess
 import sys
 from datetime import date, datetime, timezone
 
@@ -26,10 +28,20 @@ DAM_OPERATING_DATES: set[date] | None = None
 MAX_GB = 5
 
 
+def notify(title: str, text: str) -> None:
+    """A macOS notification, so a failed run does not hide in a log file."""
+    if sys.platform != "darwin":
+        return
+    script = f'display notification "{text}" with title "{title}"'
+    subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
+
+
 def main() -> int:
-    print(f"daily pull {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC", flush=True)
+    started = datetime.now(timezone.utc)
+    print(f"daily pull {started:%Y-%m-%d %H:%M} UTC", flush=True)
     failed = 0
     with em.open() as mis:
+        status_path = mis.data_dir / "logs" / "last_run.json"
         for spec in em.PRODUCTS.values():
             if spec.source != "ews":
                 continue
@@ -50,6 +62,10 @@ def main() -> int:
             print(f"  {spec.emil_id}: fetched {done.height} ({done['size_bytes'].sum() / 1e6:.1f} MB), failed {errors.height}")
             for doc_id, error in errors.select("doc_id", "error").iter_rows():
                 print(f"    doc {doc_id}: {error}")
+    status_path.parent.mkdir(mode=0o700, exist_ok=True)
+    status_path.write_text(json.dumps({"started_utc": started.isoformat(), "finished_utc": datetime.now(timezone.utc).isoformat(), "failed": failed}))
+    if failed:
+        notify("ercot-mis daily pull", f"{failed} failure(s); see data/logs/daily_pull.log")
     return 1 if failed else 0
 
 

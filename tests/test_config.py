@@ -55,3 +55,23 @@ def test_identity_errors_say_how_to_fix(tmp_path):
             env={"ERCOT_DUNS": "1", "ERCOT_API_USER": "API_X", "ERCOT_CERT": str(tmp_path / "nope.crt")},
             dotenv=missing,
         )
+
+
+def test_secure_permissions_fixes_parent_folders(tmp_path):
+    data = tmp_path / "data"
+    (data / "archive" / "NP7-800-M").mkdir(parents=True)  # parents get the default mode
+    (data / "logs").mkdir()
+    (data / "logs" / "daily_pull.log").write_text("x")
+    config.secure_permissions(data)
+    for folder in (data, data / "archive", data / "archive" / "NP7-800-M", data / "logs"):
+        assert oct(folder.stat().st_mode & 0o777) == "0o700"
+    assert oct((data / "logs" / "daily_pull.log").stat().st_mode & 0o777) == "0o600"
+
+
+def test_load_secret_prefers_env_then_dotenv_and_skips_placeholders(tmp_path, monkeypatch):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("ERCOT_PUBLIC_API_PASSWORD=<placeholder>\nERCOT_PUBLIC_API_USERNAME=from-file\n")
+    monkeypatch.setattr(config, "keychain_secret", lambda name, service=None: None)
+    assert config.load_secret("ERCOT_PUBLIC_API_USERNAME", env={}, dotenv=dotenv) == "from-file"
+    assert config.load_secret("ERCOT_PUBLIC_API_USERNAME", env={"ERCOT_PUBLIC_API_USERNAME": "from-env"}, dotenv=dotenv) == "from-env"
+    assert config.load_secret("ERCOT_PUBLIC_API_PASSWORD", env={}, dotenv=dotenv) is None

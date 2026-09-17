@@ -13,7 +13,7 @@ dependencies = [
     "lxml>=5",
     "polars>=1.30",
     "pyarrow>=18",
-    "pytz>=2024.1",
+    "pytz>=2024.1",  # DuckDB needs it to hand TIMESTAMPTZ values to Python
     "requests>=2.32",
     "zeep[xmlsec]>=4.3",
 ]

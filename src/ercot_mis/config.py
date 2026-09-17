@@ -9,6 +9,9 @@ none of it is ever written into the repository.
 from __future__ import annotations
 
 import os
+import stat
+import subprocess
+import sys
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -50,6 +53,67 @@ def read_dotenv(path: Path) -> dict[str, str]:
         name, _, value = line.removeprefix("export ").partition("=")
         values[name.strip()] = value.strip().strip("'\"")
     return values
+
+
+KEYCHAIN_SERVICE = "ercot-mis"
+
+# Values that may live in the macOS Keychain instead of the environment or .env:
+#   security add-generic-password -s ercot-mis -a ERCOT_PUBLIC_API_PASSWORD -w
+SECRET_VARIABLES = (
+    "ERCOT_PUBLIC_API_USERNAME",
+    "ERCOT_PUBLIC_API_PASSWORD",
+    "ERCOT_PUBLIC_API_SUBSCRIPTION_KEY",
+)
+
+
+def keychain_secret(name: str, service: str = KEYCHAIN_SERVICE) -> str | None:
+    """A generic password from the macOS Keychain (account ``name``), or None."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-a", name, "-w"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = result.stdout.strip()
+    return value if result.returncode == 0 and value else None
+
+
+def load_secret(name: str, env: Mapping[str, str] | None = None, dotenv: Path | None = None) -> str | None:
+    """A secret by name: environment, then ``.env``, then the Keychain. Never logged."""
+    dotenv = REPO_ROOT / ".env" if dotenv is None else dotenv
+    values = {**read_dotenv(dotenv), **(os.environ if env is None else env)}
+    value = values.get(name, "").strip()
+    if value and not value.startswith("<"):
+        return value
+    return keychain_secret(name)
+
+
+def secure_permissions(data_dir: Path) -> None:
+    """Make the data folder, its top-level entries and the archive's product folders owner-only.
+
+    ``Path.mkdir(mode=...)`` applies the mode to the last component only, and launchd
+    creates the log file with its own mode, so this runs on every ``open()``. Archived
+    documents themselves are already read-only for the owner and are left alone.
+    """
+    targets = [data_dir]
+    if data_dir.is_dir():
+        for entry in data_dir.iterdir():
+            targets.append(entry)
+            if entry.is_dir():
+                # Product folders under archive/; log and probe files elsewhere. Archived
+                # documents (two levels down) are already 0400.
+                targets += [p for p in entry.iterdir() if entry.name != "archive" or p.is_dir()]
+    for path in targets:
+        try:
+            mode = path.stat().st_mode
+            wanted = 0o700 if stat.S_ISDIR(mode) else 0o600
+            if stat.S_IMODE(mode) != wanted:
+                os.chmod(path, wanted)
+        except OSError:
+            continue
 
 
 def resolve_data_dir(path: str | Path | None = None, env: Mapping[str, str] | None = None) -> Path:

@@ -40,6 +40,7 @@ import requests
 from lxml import etree
 
 from ..config import Identity
+from ..retry import retrying
 
 if TYPE_CHECKING:
     from ..products import Product
@@ -70,6 +71,10 @@ ERCOT_TZ = ZoneInfo("America/Chicago")
 
 class EwsError(RuntimeError):
     """EWS answered with a SOAP Fault, a non-OK reply code, or an HTTP error."""
+
+
+class _ServerError(EwsError):
+    """A gateway error (502-504) worth one more attempt."""
 
 
 @dataclass(frozen=True)
@@ -283,6 +288,9 @@ class EwsClient:
         end: datetime | None = None,
     ) -> list[RemoteDoc]:
         """List the documents posted for a report type, optionally within a time window."""
+        return retrying(lambda: self._get_reports(report_type_id, start, end), (requests.RequestException, _ServerError))
+
+    def _get_reports(self, report_type_id: int, start: datetime | None, end: datetime | None) -> list[RemoteDoc]:
         envelope = build_request(self.identity.duns, self.identity.api_user, report_type_id, start, end)
         body = sign(envelope, self.identity.cert, self.identity.key)
         response = self.session.post(
@@ -293,6 +301,8 @@ class EwsClient:
             cert=(str(self.identity.cert), str(self.identity.key)),
             timeout=self.timeout,
         )
+        if response.status_code >= 502:
+            raise _ServerError(f"HTTP {response.status_code}")
         if response.status_code != 200:
             # Faults usually arrive as HTTP 500 with a SOAP body worth reading.
             try:

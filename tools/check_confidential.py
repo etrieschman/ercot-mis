@@ -58,8 +58,23 @@ SECRET_VARIABLES = (
 )
 
 
+def keychain(name: str) -> str:
+    """The value stored under ``security add-generic-password -s ercot-mis -a <name>``, or ''."""
+    if sys.platform != "darwin":
+        return ""
+    try:
+        done = subprocess.run(["security", "find-generic-password", "-s", "ercot-mis", "-a", name, "-w"],
+                              capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
 def identifiers(root: Path = ROOT) -> list[bytes]:
-    """Exact values to block: DUNS (both spellings), API user, and Public API credentials."""
+    """Exact values to block: DUNS (both spellings), API user, and Public API credentials.
+
+    Credentials are looked up in the environment, ``.env`` and the macOS Keychain.
+    """
     values = {**read_dotenv(root / ".env"), **os.environ}
     duns = values.get("ERCOT_DUNS", "").strip()
     user = values.get("ERCOT_API_USER", "").strip()
@@ -70,7 +85,9 @@ def identifiers(root: Path = ROOT) -> list[bytes]:
         found.append(user.encode())
     for name in SECRET_VARIABLES:
         value = values.get(name, "").strip()
-        if len(value) >= 6 and not value.startswith("<"):  # skip .env.example-style placeholders
+        if not value or value.startswith("<"):  # skip .env.example-style placeholders
+            value = keychain(name)
+        if len(value) >= 6 and not value.startswith("<"):
             found.append(value.encode())
     return found
 
