@@ -57,8 +57,11 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   secured flags), `core.branch_rating` (RAW rate A/B/C and CRR CSV ratings per TOU,
   side by side), `core.contingency` + `core.contingency_outage` (each model's own
   vocabulary resolved to branch/node keys, `is_resolved`, split-bus rows kept),
-  `core.gtc` + `core.gtc_member` (CRR only until NP3-766-M/NP3-770-M are parsed), and
-  `core.match_branch` per (CRR snapshot, DAM snapshot) via `session.match_branches`.
+  `core.gtc` + `core.gtc_member` (CRR from its CSV with members; DAM hourly limits from
+  the GTL workbook with `crr_gtc_id` from the manual crosswalk in
+  `data/overrides/gtc_names.csv`, members empty), and `core.match_branch` /
+  `core.match_node` per (CRR snapshot, DAM snapshot) via `session.match_branches` and
+  `session.match_nodes`.
   Planned:
   `core.contingency`, `core.contingency_outage`, `core.gtc`, `core.gtc_member`,
   `core.constraint`, `core.price_node_bus`, `core.settlement_point`,
@@ -94,7 +97,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   name with member sets compared in the matched vocabulary; GTCs by name then members/factors/limit. `match_*` records
   identity, `diff_*` records differences — never smooth differences over. Every match
   carries `match_method`; unmatched records are output. Manual overrides live in
-  `data/`.
+  `data/overrides/` (gitignored), read by core when present.
 - **CRR is closer to node-breaker, DAM to bus-branch**: CRR RAWs hold thousands of
   zero-impedance branches (some monitored), DAM none. Contract before any PTDF;
   `core.node` records the contraction.
@@ -103,7 +106,9 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   (from, to, ckt). Lines use the RAW comment.
 - **GTCs in DAM** are not in NP4-500-SG. Definitions and daily limits are ECEII
   products `NP3-770-M` and `NP3-766-M` (pulled since 2026-09-17); each GTL is a
-  base-case constraint in CRR, DAM and RT with one DAM limit per operating day.
+  base-case constraint in CRR, DAM and RT. The GTL workbook gives hourly DAM and RT
+  limits under human-readable names; the CRR CSV uses codes; the crosswalk is manual
+  (`data/overrides/gtc_names.csv`, never committed).
 - **DAM `Monitored?`/`Monitored and Secured?`** are the CIM `DAM Monitored`/`DAM
   Secured` flags (defaults FALSE/TRUE, hence mostly No/Yes). Working reading:
   Secured = enforced, Monitored-only = reported; verify against `NP4-191-CD`.
@@ -172,6 +177,7 @@ src/ercot_mis/
     table.py        Column specs, snake_case, read_delimited (Arrow CSV, exact header check), read_sheet; ParseError
     psse.py         PSS/E v30 RAW -> psse_* tables, both dialects
     crr.py, dam.py  package member classification + parsers -> crr_* / dam_* tables
+    gtl.py          NP3-766-M GTL workbook (whole document, not a zip) -> gtl_hourly
     build.py        parse packages in a process pool, write Parquet with identity columns, register artifacts
   core/             layer 2: tidy keyed tables shared by CRR and DAM
     snapshot.py     snapshot IDs and revisions from the catalog and member names
@@ -179,7 +185,8 @@ src/ercot_mis/
     branch.py       core.branch and core.branch_rating (crr_branches, dam_branches)
     contingency.py  core.contingency and core.contingency_outage, resolved to branch/node keys
     gtc.py          core.gtc and core.gtc_member (CRR; DAM empty until NP3-766-M/NP3-770-M parse)
-    match.py        core.match_branch: exact -> ops+ckt -> prefix -> unmatched
+    match.py        core.match_branch (exact -> ops+ckt -> prefix) and core.match_node
+                    (settlement point -> matched branch endpoints by vote)
     build.py        writes every core table per package
 scripts/daily_pull.py        fetch pulled EWS products, list tracked ones; launchd template in scripts/launchd/
 scripts/probe.py             archive-depth probe over every EWS product
@@ -230,14 +237,13 @@ First, check health (2 min):
   report with the previous one.
 
 Then, in order:
-1. **DAM GTCs**: parse `NP3-766-M` (xls, daily limits) and `NP3-770-M` (definitions),
-   write their dataset notes, check names against the CRR GTCs, fill `core.gtc` for
-   DAM snapshots.
-2. **Node and contingency matching** (`core.match_node`, `core.match_contingency`):
-   settlement points and generator/load names → nodes; matched branch endpoints →
-   nodes; contingencies by name, then member sets in the matched vocabulary.
+1. **Contingency matching** (`core.match_contingency`): by name, then member sets in
+   the matched branch/node vocabulary; report the split-bus rows separately.
    Disambiguate branches with several DAM circuit candidates (endpoint stations, kV).
-3. **`out.network`**: a per-snapshot network in one vocabulary (nodes, branches with
+2. **DAM GTC members**: NP3-770-M ships PDF/PPTX/database files; either parse the
+   database or keep borrowing CRR member sets through `crr_gtc_id` and say so in
+   `out.network`. Add NP3-766-M to `scripts/validate_parsers.py`.
+3. **`out.network`: a per-snapshot network in one vocabulary (nodes, branches with
    reactance and ratings, contingencies as outage sets, GTC rows) ready for
    `ftr_align/cases/ercot.py`, with the contracted CRR topology.
 4. **SQL runner** for `models/core/*.sql` once the Python-built tables settle; wire
