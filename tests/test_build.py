@@ -172,6 +172,8 @@ def test_build_core_snapshots_and_nodes(tmp_path):
         assert set(nodes_matched["match_method"]) <= {"settlement_point", "branch_endpoints", "unmatched"}
         ctg_matched = mis.match_contingencies("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
         assert ctg_matched.filter(pl.col("crr_contingency_id") == "CTG_1").height == 1
+        both = mis.raw("psse_bus").collect()  # CRR and DAM packages in one scan
+        assert set(both["emil_id"]) == {"NP7-800-M", "NP4-500-SG"} and {"month", "operating_date"} <= set(both.columns)
         nodes = mis.core("node").collect()
         assert set(nodes["snapshot_id"]) == set(snaps["snapshot_id"])
         dam_nodes = nodes.filter(pl.col("snapshot_id").str.starts_with("dam"))

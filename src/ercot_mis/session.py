@@ -391,7 +391,17 @@ class Session:
         single = folder.with_suffix(".parquet")
         if single.is_file():
             return pl.scan_parquet(str(single))
-        return pl.scan_parquet(str(folder / "**" / "*.parquet"), hive_partitioning=True)
+        # CRR and DAM packages carry different identity columns (month vs operating_date).
+        # Union the schema of one file per product so a scan across products fills the
+        # missing columns with nulls instead of failing.
+        schema: dict = {}
+        for product in sorted(folder.glob("emil_id=*")):
+            for file in sorted(product.glob("*.parquet"))[:1]:
+                for name, dtype in pl.read_parquet_schema(file).items():
+                    schema.setdefault(name, dtype)
+        if not schema:
+            raise FileNotFoundError(f"no {layer}.{table} artifacts under {folder}; run the build first")
+        return pl.scan_parquet(str(folder / "**" / "*.parquet"), hive_partitioning=True, schema=schema, missing_columns="insert")
 
     def _start_run(self, command: str) -> str:
         with self._writer() as writer:

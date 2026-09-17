@@ -92,6 +92,13 @@ security add-generic-password -s ercot-mis -a ERCOT_PUBLIC_API_PASSWORD -w
 security add-generic-password -s ercot-mis -a ERCOT_PUBLIC_API_SUBSCRIPTION_KEY -w
 ```
 
+Run each command exactly as written, with nothing after `-w`: it then prompts
+`password data for new item:` and you paste the *value* (the sign-in email, the
+password, or the key) blind, twice. Never put the value on the command line: zsh
+expands `!` inside it (`event not found`) and the shell history would keep it.
+Check with `security find-generic-password -s ercot-mis -a ERCOT_PUBLIC_API_PASSWORD -w`,
+then delete the lines from `.env`.
+
 ### Keeping the data local
 
 `em.open()` makes the data folder and everything directly inside it owner-only.

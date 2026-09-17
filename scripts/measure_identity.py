@@ -366,6 +366,11 @@ def node_identity(mis: em.Session, dam_path, hour: int, D, C) -> None:
 
     crr = node.crr_nodes(C["psse_bus"], C["psse_branch"], C["psse_transformer"], C["crr_mapping_autos"], C["crr_sources_and_sinks"])
     groups = crr.filter(pl.col("is_tie_member")).group_by("node_group").len()
+    ties = C["psse_branch"].filter(pl.col("x").abs() <= node.TIE_REACTANCE)
+    kv = dict(zip(C["psse_bus"]["i"].to_list(), C["psse_bus"]["basekv"].to_list()))
+    show("CRR bus ties (|x| <= TIE_REACTANCE)", n=ties.height, same_kv_both_ends=sum(1 for i, j in zip(ties["i"], ties["j"]) if kv.get(i) == kv.get(j)),
+         r_zero=int((ties["r"] == 0).sum()), in_service=int((ties["st"] == 1).sum()), ratea_9999_or_more=int((ties["ratea"] >= 9999).sum()),
+         x_patterns=patterns(ties["x"].to_list(), 3))
     show("CRR contraction", buses=crr.height, nodes=crr["node_group"].n_unique(), tie_groups=groups.height,
          buses_in_tie_groups=int(groups["len"].sum()), largest_group=int(groups["len"].max()) if groups.height else 0,
          ambiguous=int(crr["is_ambiguous"].sum()), no_attachments=int((crr["n_attachments"] == 0).sum()))
@@ -396,6 +401,23 @@ def matching(mis: em.Session, crr_month: date, day: date, hour: int) -> None:
     ctg = mis.match_contingencies(crr_id, dam_id).filter(pl.col("match_method") == "name")
     show("name-matched contingencies", n=ctg.height, identical_branch_sets=int(((ctg["n_shared_branches"] == ctg["n_crr_branches"]) & (ctg["n_crr_branches"] == ctg["n_dam_branches"])).sum()),
          no_shared_branch=int((ctg["n_shared_branches"] == 0).sum()), with_dam_load_gen_sp_rows=int((ctg["n_dam_other_rows"] > 0).sum()), split_bus=int(ctg["has_split_bus"].sum()))
+    # Why a name-matched contingency's CRR branch set differs from the DAM one.
+    branches = mis.match_branches(crr_id, dam_id).filter(pl.col("crr_branch_id").is_not_null()).select("crr_branch_id", "dam_branch_id")
+    crr_b = mis.core("branch").filter(pl.col("snapshot_id") == crr_id).select("branch_id", "kind", "is_tie").collect()
+    crr_o = mis.core("contingency_outage").filter(pl.col("snapshot_id") == crr_id).collect()
+    dam_o = (mis.core("contingency_outage").filter((pl.col("snapshot_id") == dam_id) & (pl.col("element_kind") == "branch")).collect()
+             .select(pl.col("contingency_id").alias("dam_contingency_id"), pl.col("branch_id").alias("dam_branch_id"), pl.lit(True).alias("in_dam")).unique())
+    rows = (crr_o.join(ctg.select("crr_contingency_id", "dam_contingency_id"), left_on="contingency_id", right_on="crr_contingency_id")
+            .join(branches, left_on="branch_id", right_on="crr_branch_id", how="left")
+            .join(crr_b, on="branch_id", how="left")
+            .join(dam_o, on=["dam_contingency_id", "dam_branch_id"], how="left")
+            .with_columns(pl.when(pl.col("branch_id").is_null()).then(pl.lit("crr_device_unresolved"))
+                          .when(pl.col("is_tie")).then(pl.lit("crr_bus_tie_no_dam_equivalent"))
+                          .when(pl.col("dam_branch_id").is_null() & (pl.col("kind") == "transformer")).then(pl.lit("transformer_not_matched"))
+                          .when(pl.col("dam_branch_id").is_null()).then(pl.lit("line_not_matched"))
+                          .when(pl.col("in_dam")).then(pl.lit("shared"))
+                          .otherwise(pl.lit("matched_branch_but_dam_contingency_omits_it")).alias("why")))
+    show("name-matched contingency rows by outcome", **{why: n for why, n in rows.group_by("why").len().sort("len", descending=True).rows()})
     nodes = mis.match_nodes(crr_id, dam_id).filter(pl.col("match_method") != "unmatched")
     kv = (nodes.join(mis.core("node").filter(pl.col("snapshot_id") == crr_id).select("node_key", "kv").unique(subset=["node_key"]).collect(), left_on="crr_node_key", right_on="node_key")
           .join(mis.core("node").filter(pl.col("snapshot_id") == dam_id).select("node_key", pl.col("kv").alias("dam_kv")).collect(), left_on="dam_node_key", right_on="node_key"))

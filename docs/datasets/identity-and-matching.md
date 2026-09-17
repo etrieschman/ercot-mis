@@ -29,9 +29,15 @@ ckt) **in either orientation** (about half the sheet's rows list from and to swa
 relative to the RAW); the CSVs use the `Autos` name. DAM transformers are named in
 the `Xf` CSV.
 
-**Topology level.** CRR RAWs hold thousands of zero-impedance branches (bus ties,
-breakers, jumpers), a share of them monitored; DAM RAWs hold none. CRR is closer to
-node-breaker, DAM is bus-branch, so a CRR-to-DAM bus mapping is many-to-one.
+**Topology level.** CRR RAWs hold thousands of branches at PSS/E's minimum
+reactance (`x = 0.0001`, `r = 0`) joining two buses of the same station and voltage:
+closed breakers, disconnect switches and bus-section jumpers, exported from a
+node-breaker model. They are not alternative connections; they are the switching
+devices that make several bus sections one electrical node. Most carry the 9999
+placeholder rating, some carry a real breaker rating and appear in the monitored
+list, and some appear as contingency devices (a breaker opening). DAM RAWs hold none,
+so CRR-to-DAM bus mapping is many-to-one and a CRR breaker outage has no DAM
+counterpart.
 
 **Mapping workbook.** `Lines` maps every `CRR_Tag` (a RAW line comment) to an
 `Operations_Name`; ties mostly have no row, and a placeholder `Operations_Name` marks
@@ -98,8 +104,13 @@ to one. Some DAM settlement points have no bus in a given hour.
   exactly one DAM contingency. Every pair records how many branches each side
   outages, how many they share, how many DAM rows are loads, generators or
   settlement points (which CRR never lists) and whether the DAM side splits a bus.
-  Many name matches do not share the same branch set; that is a difference to study,
-  not to hide. Every match records `match_method`; every unmatched record is output.
+  Many name matches do not share the same branch set. The report breaks the
+  non-shared rows down: most are matching-coverage gaps (CRR breaker outages with no
+  DAM device, transformers and lines without a DAM branch match), and only a small
+  remainder are matched branches that the DAM contingency genuinely omits. Trust
+  each model's own contingency rows; treat the join as partial and read
+  `n_shared_branches` before assuming equivalence. Every match records
+  `match_method`; every unmatched record is output.
 - **Ratings are facts**: store the CRR CSV ratings and RAW rate A/B/C both; the
   derate fraction is an observation the report checks, not a rule the code applies.
 

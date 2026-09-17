@@ -31,12 +31,12 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | transport | own thin clients: EWS (certificate) and Public API (archive files, not JSON rows) |
 | transforms | Python parsers → `raw`; `.sql` files on DuckDB → `core`, `out` |
 | storage | Parquet on disk (zstd, hive-partitioned), Arrow in memory, DuckDB catalog + SQL engine, polars for reading. **Catalog writes are short-lived**: `Session` reads through a read-only connection and takes the writer only to record a listing, a blob or an artifact, never across a download or a parse |
-| node identity | **equipment-based `node_key`**, not PSS/E number or name (DAM renumbers every hour; names are station names). CRR bus ties (`x <= 1e-4`, in service) are contracted first. `core/identity.py`; measured in `docs/datasets/identity-and-matching.md` |
+| node identity | **equipment-based `node_key`**, not PSS/E number or name (DAM renumbers every hour; names are station names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted first. `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `scripts/measure_identity.py` |
 | data location | `data/` in this repo by default; `ERCOT_MIS_DATA` overrides |
 | network output | standardized tables + optional `ercot_mis.sensitivities` (base-case PTDF, LODF, GTC rows); no shift factors yet |
 | ratings | keep both: CRR monitored-element CSV (enforced, default) and PSS/E Rate A/B/C (MVA) |
 | conventions | facts stored as data; judgment calls as named options defaulting to ERCOT practice |
-| PSS/E parser | our own focused v30 parser (`parsers/psse.py`): one compiled tokenizer for both ERCOT dialects (~0.3 s per RAW), Arrow for type conversion. Arrow's CSV reader can't split the blank-separated DAM RAW, so it is used for the CSVs only. PowerFlowData.jl as an optional reference check; **not** VeraGridEngine |
+| PSS/E parser | our own focused v30 parser (`raw/psse.py`): one compiled tokenizer for both ERCOT dialects (~0.3 s per RAW), Arrow for type conversion. Arrow's CSV reader can't split the blank-separated DAM RAW, so it is used for the CSVs only. PowerFlowData.jl as an optional reference check; **not** VeraGridEngine |
 | CRR scope | annual (all sequences + updates) and monthly |
 | DAM scope | LMPs, SPPs, 60-day disclosure awards → node-space injections; network models for **every day** (all 24 hours, ~10 GB/yr zipped); shadow prices for validation |
 | shift factors | `SYS-608-CD` tracked (listed into catalog) but not pulled |
@@ -63,11 +63,9 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   `core.match_node` per (CRR snapshot, DAM snapshot) via `session.match_branches` and
   `session.match_nodes`, and `core.match_contingency` via `session.match_contingencies`
   (name, then translated branch set; member-set differences recorded).
-  Planned:
-  `core.contingency`, `core.contingency_outage`, `core.gtc`, `core.gtc_member`,
-  `core.constraint`, `core.price_node_bus`, `core.settlement_point`,
+  Planned: `core.constraint`, `core.price_node_bus`, `core.settlement_point`,
   `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_award`,
-  `core.hourly_shadow_price`, `core.match_*`, `core.diff_*`, `core.tou_hours`.
+  `core.hourly_shadow_price`, `core.diff_*`, `core.tou_hours`.
 - `out` — what consumers read: `out.network` (conventions applied),
   `out.hourly_injection` (q).
 - Layer = folder = DuckDB schema. No PUDL-style `layer_source__type` names.
@@ -77,10 +75,10 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 
 ### Domain notes that shape the model
 
-- **GTCs** come from each model's Non-Thermal Constraints file (name, limit,
-  member devices with factor and flow direction); each GTL is enforced as a
-  **base-case** constraint in CRR, DAM and RT. A GTC's PTDF row is the
-  factor-weighted sum of its members' rows.
+- **GTCs**: the CRR package's Non-Thermal Constraints file gives name, limit and
+  member devices with factor and flow direction; DAM limits come from the GTL
+  workbook (see below). Each GTL is enforced as a **base-case** constraint in CRR,
+  DAM and RT. A GTC's PTDF row is the factor-weighted sum of its members' rows.
 - **q (node-space net injection)** is not published. Build it from the 60-Day DAM
   Disclosure (`NP3-966-ER`): generation and ESR awards at resource nodes;
   energy-only offer awards (+), energy bid awards (−), PTP obligation/option awards
@@ -135,7 +133,8 @@ template: what it is, capture, package layout, what we parse, decisions, ERCOT
 quirks, validation, open questions). Read the relevant note before touching a
 parser; **update it in the same commit** whenever an import decision changes or a
 new quirk turns up. Notes are public: structure only, never names or values.
-Written so far: `psse-raw.md`, `crr-network-model.md`, `dam-network-model.md`.
+Written so far: `psse-raw.md`, `crr-network-model.md`, `dam-network-model.md`,
+`identity-and-matching.md`, `generic-transmission-limits.md`.
 
 ### Provenance
 
@@ -148,9 +147,12 @@ existing key and file ⇒ skip, bumped version ⇒ rebuild. `build_raw` writes
 `raw/<table>/emil_id=<EMIL>/<blob16>.parquet` (one file per package and table) with
 identity columns on every row (`emil_id`, `doc_id`, `blob_sha256`, `member_sha256`,
 `member_path`, CRR `auction/term/sequence/month/time_of_use`, DAM
-`operating_date/hour`). `build_core` writes `core/snapshot.parquet` and
-`core/node/emil_id=<EMIL>/<blob16>.parquet`. Read with `session.raw(table)` and
-`session.core(table)` (polars lazy scans). Artifacts will carry the most
+`operating_date/hour`). `build_core` writes `core/snapshot.parquet` and, per
+package, `core/<table>/emil_id=<EMIL>/<blob16>.parquet` for node, branch,
+branch_rating, contingency, contingency_outage, gtc and gtc_member; the matchers
+cache under `core/match_<kind>/v<N>/`. Read with `session.raw(table)` and
+`session.core(table)` (polars lazy scans that span products; identity columns a
+product lacks come back null). Artifacts will carry the most
 restrictive classification of their inputs; `export()` refuses Secure/ECEII outside
 `data/`. Drive builds from a script or notebook, not from `python -` (the process
 pool re-imports `__main__`).
@@ -185,7 +187,7 @@ src/ercot_mis/
     node.py         equipment-based node keys; CRR tie contraction (dam_nodes, crr_nodes)
     branch.py       core.branch and core.branch_rating (crr_branches, dam_branches)
     contingency.py  core.contingency and core.contingency_outage, resolved to branch/node keys
-    gtc.py          core.gtc and core.gtc_member (CRR; DAM empty until NP3-766-M/NP3-770-M parse)
+    gtc.py          core.gtc and core.gtc_member (CRR members; DAM hourly limits + crosswalk)
     match.py        core.match_branch (exact -> ops+ckt -> prefix), core.match_node (settlement
                     point -> matched branch endpoints by vote), core.match_contingency (name -> members)
     build.py        writes every core table per package
@@ -211,12 +213,12 @@ measurements live in the scripts that make them and the dated reports under
 | # | milestone | status |
 |---|---|---|
 | M0 | scaffold, config, EWS client, archive probe | done — EWS depth = display window |
-| M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS half done and verified live; first pull 2026-09-15 archived every listed EWS document (1.8 GB) incl. the two `ftr_align/ercot_data` zips via ingest; daily scheduling not yet installed; Public API client waits for credentials |
-| M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | parsers done (PSS/E both dialects, CRR, DAM); `scripts/validate_parsers.py` clean on every archived package. Not yet: writing raw Parquet (lands with the M3 runner), DynamicRatings, PowerFlowData.jl cross-check (needs Julia) |
-| M3 | core layer + SQL runner, cache skip, lineage, validation checks | 2026-09-17: raw writer with provenance (`build_raw`, process pool, cache skip, `run`/`artifact`/`lineage`); `core.snapshot` and `core.node` with equipment-based keys (`build_core`); built on every archived package. Not yet: SQL runner, branch/rating/contingency/GTC core tables |
+| M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS side done and running daily via launchd since 2026-09-15 (retries, status file, notification on failure); Public API client not started |
+| M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | parsers done (PSS/E both dialects, CRR, DAM, GTL workbook); `scripts/validate_parsers.py` clean on every archived package. Not yet: DynamicRatings, PowerFlowData.jl cross-check (needs Julia) |
+| M3 | core layer + SQL runner, cache skip, lineage, validation checks | 2026-09-17: raw writer with provenance (`build_raw`, process pool, cache skip, `run`/`artifact`/`lineage`); `build_core` writes snapshot, node, branch, branch_rating, contingency, contingency_outage, gtc, gtc_member for every archived package. Not yet: SQL runner, validation checks as code |
 | M4 | `out.network` + `ftr_align/cases/ercot.py` | |
 | M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | |
-| M6 | CRR ↔ DAM matching + scorecard | |
+| M6 | CRR ↔ DAM matching + scorecard | matchers for branches, nodes and contingencies with `match_method` and unmatched rows (`session.match_*`); `scripts/measure_identity.py` reports their rates. Not yet: `diff_*` tables, scorecard |
 | M7 | `sensitivities` (restricted float32 PTDF/LODF, cache budget, cross-test vs `ftr_align.network.compute_ptdf`) | |
 | M8 | scheduled pulls (Python files), docs, first release | |
 
