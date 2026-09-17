@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ercot_mis import Mis, get_product
+from ercot_mis import Session, get_product
 from ercot_mis.sources.ews import EwsError, RemoteDoc
 
 NOW = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
@@ -37,7 +37,7 @@ class FakeEws:
 
 
 def _mis(tmp_path, fake):
-    mis = Mis(tmp_path)
+    mis = Session(tmp_path)
     mis._ews = fake
     return mis
 

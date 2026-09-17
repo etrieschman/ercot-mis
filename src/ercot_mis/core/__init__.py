@@ -1,1 +1,1 @@
-"""The core layer: tidy, keyed tables built from raw, shared by CRR and DAM."""
+"""The core layer: tidy keyed tables shared by CRR and DAM (snapshot, node, ...)."""

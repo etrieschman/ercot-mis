@@ -1,6 +1,6 @@
 import polars as pl
 
-from ercot_mis.core import identity
+from ercot_mis.core import node as identity
 
 
 def _bus(numbers, names, kv=138.0):

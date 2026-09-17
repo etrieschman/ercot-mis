@@ -1,1 +1,1 @@
-"""Transports: they list and fetch ERCOT documents and know nothing about their contents."""
+"""How bytes arrive: the EWS client (certificate) and, later, the Public API client."""

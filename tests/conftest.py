@@ -1,6 +1,6 @@
 import pytest
 
-from ercot_mis import retry
+from ercot_mis.sources import retry
 
 
 @pytest.fixture(autouse=True)

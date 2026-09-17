@@ -23,12 +23,16 @@ transfers) and 3-winding transformers raise ``ParseError`` if they ever hold rec
 
 from __future__ import annotations
 
+# Bump when the tables this parser produces change (columns, types, values). The raw
+# layer's cache key includes it, so every artifact built with an older version is rebuilt.
+VERSION = 1
+
 import re
 from dataclasses import dataclass
 
 import pyarrow as pa
 
-from ._common import F, I, S, ParseError, cast_column
+from .table import F, I, S, ParseError, cast_column
 
 _LINE = re.compile(r"^((?:[^'/]|'[^']*')*)(?:/(.*))?$")
 _TOKEN = re.compile(r"'([^']*)'|([^\s,']+)")

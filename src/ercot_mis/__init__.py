@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from .config import ConfigError, Identity, load_identity, load_secret, resolve_data_dir, secure_permissions
-from .mis import BudgetError, DownloadError, Mis, Probe
+from .session import BudgetError, DownloadError, Probe, Session
 from .products import PRODUCTS, Product, get_product
 from .sources.ews import EwsError, RemoteDoc
 
@@ -16,7 +16,7 @@ __all__ = [
     "DownloadError",
     "EwsError",
     "Identity",
-    "Mis",
+    "Session",
     "Probe",
     "Product",
     "RemoteDoc",
@@ -28,7 +28,7 @@ __all__ = [
 ]
 
 
-def open(data_dir: str | Path | None = None) -> Mis:  # noqa: A001 - em.open() is the API
+def open(data_dir: str | Path | None = None) -> Session:  # noqa: A001 - em.open() is the API
     """Open the local data folder, creating it with owner-only permissions if needed.
 
     Resolution order: ``data_dir``, then ``$ERCOT_MIS_DATA``, then ``data/`` in this
@@ -37,4 +37,4 @@ def open(data_dir: str | Path | None = None) -> Mis:  # noqa: A001 - em.open() i
     path = resolve_data_dir(data_dir)
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     secure_permissions(path)
-    return Mis(path)
+    return Session(path)

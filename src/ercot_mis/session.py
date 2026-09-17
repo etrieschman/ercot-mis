@@ -1,4 +1,9 @@
-"""The session object every ercot-mis workflow goes through."""
+"""The session: one open data folder, the clients that fill it, and the layers built from it.
+
+``em.open()`` returns a ``Session``. Its methods follow the data flow: ``list`` and
+``fetch``/``ingest`` fill the archive, ``build_raw`` and ``build_core`` write the
+layers, ``raw(table)`` and ``core(table)`` read them.
+"""
 
 from __future__ import annotations
 
@@ -16,10 +21,10 @@ import requests
 
 from .config import Identity, load_identity
 from .products import Product, get_product
-from .retry import retrying
+from .sources.retry import retrying
 from .sources.ews import ERCOT_TZ, EwsClient, EwsError, RemoteDoc
-from .store import archive
-from .store.catalog import Catalog
+from .archive import store
+from .archive.catalog import Catalog
 
 # Columns that embed the participant DUNS (ERCOT's file names) or point at the
 # participant's download servlet. They stay in the catalog and never leave it.
@@ -96,7 +101,7 @@ class Probe:
     documents: pl.DataFrame
 
 
-class Mis:
+class Session:
     """A local ercot-mis data folder plus the clients that fill it.
 
     The catalog is a DuckDB file that allows one writer at a time. ``Mis`` reads it
@@ -113,9 +118,9 @@ class Mis:
         self._catalog: Catalog | None = None
 
     def __repr__(self) -> str:
-        return f"Mis({str(self.data_dir)!r})"
+        return f"Session({str(self.data_dir)!r})"
 
-    def __enter__(self) -> Mis:
+    def __enter__(self) -> Session:
         return self
 
     def __exit__(self, *exc) -> None:
@@ -277,7 +282,7 @@ class Mis:
         for file in files:
             spec = get_product(product) if product is not None else _product_from_name(file.name)
             with file.open("rb") as handle:
-                blob = self._archive(spec, iter(lambda: handle.read(archive.CHUNK), b""), file.suffix)
+                blob = self._archive(spec, iter(lambda: handle.read(store.CHUNK), b""), file.suffix)
             with self._writer() as writer:
                 doc_id = writer.doc_id_for_name(spec.emil_id, file.name)
                 writer.add_source(blob.sha256, spec.emil_id, doc_id, "ingest", file.name)
@@ -291,30 +296,34 @@ class Mis:
         """Parse every archived package of a product into raw Parquet, skipping what is built.
 
         One file per package and table under ``raw/<table>/emil_id=<EMIL>/``, every row
-        carrying its source identity. See ``ercot_mis.build``. Returns one row per package.
+        carrying its source identity. See ``ercot_mis.raw.build``. Returns one row per package.
         """
-        from .build import build_raw
+        from .raw.build import build
 
-        return pl.DataFrame(build_raw(self, product, workers=workers, limit=limit), schema=BUILD_SCHEMA)
+        return pl.DataFrame(build(self, product, workers=workers, limit=limit), schema=BUILD_SCHEMA)
 
     def build_core(self, *, limit: int | None = None) -> pl.DataFrame:
         """Write ``core.snapshot`` and ``core.node`` from the raw layer. See ``ercot_mis.core.build``."""
-        from .core.build import build_core
+        from .core.build import build
 
-        return pl.DataFrame(build_core(self, limit=limit), schema=BUILD_SCHEMA)
+        return pl.DataFrame(build(self, limit=limit), schema=BUILD_SCHEMA)
 
-    def snapshots(self) -> pl.DataFrame:
-        """``core.snapshot`` as last built."""
-        return pl.read_parquet(self.data_dir / "core" / "snapshot.parquet")
-
-    def nodes(self) -> pl.LazyFrame:
-        """A lazy scan over ``core.node`` for every built package."""
-        return pl.scan_parquet(str(self.data_dir / "core" / "node" / "**" / "*.parquet"), hive_partitioning=True)
+    # ----------------------------------------------------------------- reading
 
     def raw(self, table: str) -> pl.LazyFrame:
         """A lazy scan over every raw artifact of a table (``emil_id`` comes from the path)."""
-        pattern = self.data_dir / "raw" / table / "**" / "*.parquet"
-        return pl.scan_parquet(str(pattern), hive_partitioning=True)
+        return self._scan("raw", table)
+
+    def core(self, table: str) -> pl.LazyFrame:
+        """A lazy scan over a core table: ``snapshot`` (one file) or ``node`` (one file per package)."""
+        return self._scan("core", table)
+
+    def _scan(self, layer: str, table: str) -> pl.LazyFrame:
+        folder = self.data_dir / layer / table
+        single = folder.with_suffix(".parquet")
+        if single.is_file():
+            return pl.scan_parquet(str(single))
+        return pl.scan_parquet(str(folder / "**" / "*.parquet"), hive_partitioning=True)
 
     def _start_run(self, command: str) -> str:
         with self._writer() as writer:
@@ -329,16 +338,16 @@ class Mis:
             writer.add_artifacts(*args)
 
     def _archive(self, spec: Product, chunks: Iterable[bytes], suffix: str,
-                 expected_size: int | None = None) -> archive.StoredBlob:
+                 expected_size: int | None = None) -> store.StoredBlob:
         """Stream bytes into the archive and index them; the catalog is locked only for the index."""
-        blob = archive.store(self.data_dir, spec.emil_id, chunks, suffix)
+        blob = store.put(self.data_dir, spec.emil_id, chunks, suffix)
         if expected_size and blob.size_bytes != expected_size:
             if blob.created:
-                archive.discard(self.data_dir, blob)
+                store.discard(self.data_dir, blob)
             raise DownloadError(f"received {blob.size_bytes:,} bytes but the listing says {expected_size:,}")
         with self._writer() as writer:
             if not writer.has_blob(blob.sha256):
-                writer.add_blob(blob, spec, archive.index_members(self.data_dir / blob.path))
+                writer.add_blob(blob, spec, store.index_members(self.data_dir / blob.path))
         return blob
 
 

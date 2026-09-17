@@ -9,14 +9,13 @@ distribution, contingency definitions).
 ## Source and capture
 EWS, ECEII. Report type 13070. Display window 31 days and **no archive beyond it**, so
 every day is captured daily by `scripts/daily_pull.py` (decision: capture every day for
-now). One package per operating day, posted the day before, ~29 MB zipped, ~240 MB
-unzipped, ~10 GB a year.
+now). One package per operating day, posted the day before; `scripts/probe.py` reports
+sizes.
 
 ## Package layout
 Flat. Per hour `HHH` (`001`-`024`): `DAM<mmddyyyy>_<HHH>.RAW` and
 `DAM<mmddyyyy>_<Kind>_<HHH>.csv` for `Ctg`, `Gn`, `Hb`, `Ld`, `Ln`, `Sp`, `Xf`. Once per
 day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.txt`.
-195 members on a normal day.
 
 ## What we parse
 `parsers/dam.py`: `dam_contingencies`, `dam_generators`, `dam_hub_buses`, `dam_loads`,
@@ -52,9 +51,9 @@ day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.
   (defaults FALSE/TRUE); see identity-and-matching.md for the working reading.
 
 ## Validation
-All 768 hourly models across 32 days parse with no problems, 2026-09-15. In every hour
-the RAW's branch, transformer, load and generator counts equal the `Ln`, `Xf`, `Ld`,
-`Gn` CSV row counts.
+`scripts/validate_parsers.py`: every hourly model parses, and in every hour the RAW's
+branch, transformer, load and generator counts equal the `Ln`, `Xf`, `Ld`, `Gn` CSV
+row counts.
 
 ## Open questions
 - Hour numbering and timestamps on DST days (verify on 2026-11-01, the long day).

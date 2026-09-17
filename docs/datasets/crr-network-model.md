@@ -7,10 +7,9 @@ transmission constraints (GTCs), source/sink definitions, and a workbook mapping
 element names to Network Operations Model names (the key for CRR <-> DAM matching).
 
 ## Source and capture
-EWS, ECEII. Report types 11204 (annual) and 11205 (monthly). Display window 365 days
-and **no archive beyond it**. Annual: ~17 documents a year (six sequences per auction
-plus `_Upd` revisions), ~43 MB zipped each. Monthly: 12 a year, ~20 MB.
-Captured by `scripts/daily_pull.py`.
+EWS, ECEII. Report types 11204 (annual) and 11205 (monthly). Display window one year
+and **no archive beyond it**. Annual: several documents a year (six sequences per
+auction plus `_Upd` revisions); monthly: one a month. Captured by `scripts/daily_pull.py`.
 
 ## Package layout
 - **Annual**: one folder per month of the term,
@@ -41,24 +40,24 @@ DynamicRatings (small; semantics not yet reviewed).
 - Device-type spelling differs by file: contingency CSV `LINE`/`XFMR`; monitored CSV
   `Line`/`XFMR`; GTC CSV and all XML `Line`/`Transformer`. Normalize in core.
 - GTC CSV header has spaces after commas.
-- About 15 of ~1,000 sources/sinks (load zones, hubs) carry MW-scale weights instead
-  of fractions summing to 1. Normalize in core.
+- A few sources/sinks (load zones, hubs) carry MW-scale weights instead of fractions
+  summing to 1. Normalize in core.
 - Mapping-workbook `From #`/`To #` cells hold a text placeholder for unmatched rows.
 - Monthly outages are pipe-delimited with 28 columns; annual `_None` outage files are a
   comma-separated header with no rows.
-- Only a PeakWD RAW ships, while ratings carry PeakWD, PeakWE and Off-peak (identical
-  across the three blocks in 2026-09).
-- `BaseCaseRating` is 0.90 × the RAW rate A for every monitored line (2026-09).
+- Only a PeakWD RAW ships, while ratings carry PeakWD, PeakWE and Off-peak (which can
+  be identical for a month).
+- `BaseCaseRating` is a fixed fraction of the RAW rate A on every monitored line.
 - Transformer names in the contingency, monitored and GTC CSVs are the `Autos` sheet's
   `CRR Name`, not anything in the RAW; lines use the RAW comment.
 - `Operations_Name` never equals a DAM branch name exactly; see identity-and-matching.md.
-- 351 `Lines` rows share one placeholder `Operations_Name`; 2,250 RAW lines (mostly
-  zero-impedance ties) have no workbook row.
+- Some `Lines` rows share one placeholder `Operations_Name`; RAW lines that are
+  zero-impedance ties mostly have no workbook row.
 - In `_Upd` annual packages, month folders and some file names gain `_Upd`/`_Upd<n>`.
 
 ## Validation
-All 29 archived packages (17 annual, 12 monthly) parse with no problems, 2026-09-15:
-every member kind recognized, RAW record counts consistent.
+`scripts/validate_parsers.py`: every member kind recognized, RAW record counts
+consistent, on every archived package.
 
 ## Open questions
 - DynamicRatings: parse, and how it modifies monitored ratings.

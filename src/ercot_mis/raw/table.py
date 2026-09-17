@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+VERSION = 1  # bump when reading or casting changes what every parser produces
+
 import io
 import re
 from collections.abc import Sequence

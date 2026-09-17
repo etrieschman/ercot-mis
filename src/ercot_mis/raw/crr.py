@@ -13,6 +13,10 @@ The CSVs are canonical: checked against the XML twins, they carry the same value
 
 from __future__ import annotations
 
+# Bump when the tables this parser produces change (columns, types, values). The raw
+# layer's cache key includes it, so every artifact built with an older version is rebuilt.
+VERSION = 1
+
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -20,7 +24,7 @@ from datetime import date
 import pyarrow as pa
 
 from . import psse
-from ._common import F, I, Column, read_delimited, read_sheet
+from .table import F, I, Column, read_delimited, read_sheet
 
 MONTHS = {m: n for n, m in enumerate(
     ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"), start=1)}

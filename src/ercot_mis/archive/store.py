@@ -41,7 +41,7 @@ def blob_path(emil_id: str, sha256: str, suffix: str) -> Path:
     return Path("archive") / emil_id / f"{sha256}{suffix}"
 
 
-def store(data_dir: Path, emil_id: str, chunks: Iterable[bytes], suffix: str) -> StoredBlob:
+def put(data_dir: Path, emil_id: str, chunks: Iterable[bytes], suffix: str) -> StoredBlob:
     """Stream bytes into the archive; nothing appears at the final path until complete."""
     partial = data_dir / "archive" / ".partial"
     partial.mkdir(mode=0o700, parents=True, exist_ok=True)

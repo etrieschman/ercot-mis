@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 import polars as pl
 import pytest
 
-from ercot_mis import BudgetError, Mis
+from ercot_mis import BudgetError, Session
 from ercot_mis.sources.ews import EwsError, RemoteDoc
 
 NOW = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
@@ -58,7 +58,7 @@ def payloads():
 
 
 def _mis(tmp_path, source):
-    mis = Mis(tmp_path)
+    mis = Session(tmp_path)
     mis._ews = source
     return mis
 

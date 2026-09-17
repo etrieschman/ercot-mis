@@ -4,14 +4,15 @@ import zipfile
 import polars as pl
 import pytest
 
-from ercot_mis import Mis, build
-from ercot_mis.parsers import dam as dam_parser
+from ercot_mis import Session
+from ercot_mis.raw import build
+from ercot_mis.raw import dam as dam_parser
 
 from test_psse import MARKED, to_bare
 
 CTG = b"Contingency,DeviceName,DeviceType,Action\r\nCTG_1,1 ALPHA 2 BRAVO 1,LINE,OPN\r\n"
 DAM_LINES = (
-    ", ".join(c.header for c in __import__("ercot_mis.parsers.dam", fromlist=["LINES"]).LINES)
+    ", ".join(c.header for c in dam_parser.LINES)
     + "\n1, 1, 2, 1, IN-SERVICE, No, Yes, ALPHA, 138, BRAVO, 138, LINE_A, 0.001, 0.01, 0.02, 100, 110, 120\n"
 ).encode()
 
@@ -23,7 +24,7 @@ def _headers(columns) -> bytes:
 def _workbook() -> bytes:
     from openpyxl import Workbook
 
-    from ercot_mis.parsers import crr as crr_parser
+    from ercot_mis.raw import crr as crr_parser
 
     book = Workbook()
     lines = book.active
@@ -71,7 +72,7 @@ def _dam(tmp_path):
 
 
 def test_build_raw_writes_identity_columns_and_provenance(tmp_path):
-    with Mis(tmp_path / "data") as mis:
+    with Session(tmp_path / "data") as mis:
         mis.ingest(_monthly(tmp_path))
         result = mis.build_raw("NP7-800-M")
         assert result["status"].to_list() == ["built"] and result["tables"][0] == 15  # 11 psse + ctg + sources + 2 workbook sheets
@@ -95,7 +96,7 @@ def test_build_raw_writes_identity_columns_and_provenance(tmp_path):
 
 
 def test_build_raw_skips_built_packages_and_rebuilds_on_parser_change(tmp_path, monkeypatch):
-    with Mis(tmp_path / "data") as mis:
+    with Session(tmp_path / "data") as mis:
         mis.ingest(_monthly(tmp_path))
         first = mis.build_raw("NP7-800-M")
         again = mis.build_raw("NP7-800-M")
@@ -110,7 +111,7 @@ def test_build_raw_skips_built_packages_and_rebuilds_on_parser_change(tmp_path, 
 
 
 def test_build_raw_dam_keeps_the_files_hour_and_adds_it_to_raw_tables(tmp_path):
-    with Mis(tmp_path / "data") as mis:
+    with Session(tmp_path / "data") as mis:
         mis.ingest(_dam(tmp_path))
         result = mis.build_raw("NP4-500-SG", workers=1)
         assert result["status"][0] == "built"
@@ -122,7 +123,7 @@ def test_build_raw_dam_keeps_the_files_hour_and_adds_it_to_raw_tables(tmp_path):
 
 
 def test_build_raw_reports_a_broken_package_without_stopping(tmp_path):
-    with Mis(tmp_path / "data") as mis:
+    with Session(tmp_path / "data") as mis:
         mis.ingest(_monthly(tmp_path))
         broken = tmp_path / "man.00011205.x.20260801.broken.zip"
         broken.write_bytes(_zip({"2026.AUG.Monthly.Auction.Contingencies.CSV": b"Wrong,Header\n1,2\n"}))
@@ -132,17 +133,17 @@ def test_build_raw_reports_a_broken_package_without_stopping(tmp_path):
         assert "header does not match" in result.filter(pl.col("status") == "failed")["error"][0]
 
 
-def test_parser_id_tracks_parser_source():
+def test_parser_id_names_the_versions_that_matter():
     assert build.parser_id("NP7-800-M") != build.parser_id("NP4-500-SG")
-    assert len(build.parser_id("NP4-500-SG")) == 64
+    assert build.parser_id("NP4-500-SG") == "ercot-mis=0.0.1|table=1|psse=1|dam=1"
     with pytest.raises(ValueError, match="no raw-layer parser"):
         build.parser_id("SYS-608-CD")
 
 
 def test_build_core_snapshots_and_nodes(tmp_path):
-    from ercot_mis.core.build import snapshots
+    from ercot_mis.core.snapshot import snapshots
 
-    with Mis(tmp_path / "data") as mis:
+    with Session(tmp_path / "data") as mis:
         mis.ingest(_monthly(tmp_path))
         mis.ingest(_dam(tmp_path))
         mis.build_raw("NP7-800-M", workers=1)
@@ -152,7 +153,7 @@ def test_build_core_snapshots_and_nodes(tmp_path):
 
         result = mis.build_core()
         assert result["status"].to_list() == ["built", "built"], result["error"].to_list()
-        nodes = mis.nodes().collect()
+        nodes = mis.core("node").collect()
         assert set(nodes["snapshot_id"]) == set(snaps["snapshot_id"])
         dam_nodes = nodes.filter(pl.col("snapshot_id").str.starts_with("dam"))
         assert dam_nodes.filter(pl.col("hour") == 1)["node_key"].to_list() == dam_nodes.filter(pl.col("hour") == 2)["node_key"].to_list() if "hour" in dam_nodes.columns else True
@@ -160,16 +161,16 @@ def test_build_core_snapshots_and_nodes(tmp_path):
         h2 = set(dam_nodes.filter(pl.col("snapshot_id").str.contains("he02"))["node_key"])
         assert h1 == h2 and len(h1) == 2
         assert mis.build_core()["status"].to_list() == ["skipped", "skipped"]
-        assert mis.snapshots().height == 3
+        assert mis.core("snapshot").collect().height == 3
 
 
 def test_snapshot_revisions_order_packages_by_posting_time(tmp_path):
     from datetime import datetime, timezone
 
-    from ercot_mis.core.build import snapshots
+    from ercot_mis.core.snapshot import snapshots
     from ercot_mis.sources.ews import RemoteDoc
 
-    with Mis(tmp_path / "data") as mis:
+    with Session(tmp_path / "data") as mis:
         (tmp_path / "later").mkdir()
         first, second = _monthly(tmp_path), _monthly(tmp_path / "later", b"\r\n")
         for path in (first, second):

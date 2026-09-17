@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from ercot_mis.parsers import ParseError, crr, dam, snake_case
+from ercot_mis.raw import ParseError, crr, dam, snake_case
 
 
 def test_snake_case():

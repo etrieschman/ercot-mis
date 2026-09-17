@@ -23,6 +23,7 @@ import re
 
 import polars as pl
 
+VERSION = 1  # bump when keys or the contraction rule change; every core.node artifact is rebuilt
 TIE_REACTANCE = 1e-4  # |x| at or below this is a bus tie (breaker, switch, jumper)
 
 # ``core.node`` columns, the same for both models. ``station`` is the DAM station name or

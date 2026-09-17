@@ -6,9 +6,10 @@ identity of its source: ``emil_id``, ``doc_id``, ``blob_sha256``, ``member_sha25
 ``member_path``, plus the package metadata parsed from member names (CRR: auction,
 term, sequence, month, time_of_use; DAM: operating_date, hour).
 
-An artifact's key is a hash of the parser's source code, the package version, the
-package bytes and the table name. If the key is in the catalog and the file exists,
-the package is skipped; change a parser and every artifact it produced is rebuilt.
+An artifact's key is a hash of the parser versions (``VERSION`` in each parser
+module, bumped when its output changes), the package version, the package bytes and
+the table name. If the key is in the catalog and the file exists, the package is
+skipped; bump a version and every artifact it produced is rebuilt.
 Parsing happens in worker processes (a DAM day is 24 models, ~12 s serial); the
 catalog is written by the main process only.
 """
@@ -16,7 +17,6 @@ catalog is written by the main process only.
 from __future__ import annotations
 
 import hashlib
-import inspect
 import os
 import tempfile
 import time
@@ -29,8 +29,8 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .parsers import _common, crr, dam, psse
-from .products import Product, get_product
+from ..products import Product, get_product
+from . import crr, dam, psse, table
 
 LAYER = "raw"
 COMPRESSION = "zstd"
@@ -38,16 +38,14 @@ _MODULES = {"NP7-801-M": (crr,), "NP7-800-M": (crr,), "NP4-500-SG": (dam,)}
 
 
 def parser_id(emil_id: str) -> str:
-    """Hash of the parser source that produces a product's raw tables, plus the package version."""
-    from . import __version__
+    """Identity of the code that produces a product's raw tables: package and parser versions."""
+    from .. import __version__
 
     modules = _MODULES.get(emil_id)
     if modules is None:
         raise ValueError(f"{emil_id} has no raw-layer parser")
-    digest = hashlib.sha256(__version__.encode())
-    for module in (_common, psse, *modules):
-        digest.update(inspect.getsource(module).encode())
-    return digest.hexdigest()
+    parts = [f"ercot-mis={__version__}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (table, psse, *modules)]
+    return "|".join(parts)
 
 
 def artifact_key(parser: str, blob_sha256: str, table: str) -> str:
@@ -138,21 +136,21 @@ def build_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str
     return PackageResult(blob_sha256, tuple(written), time.perf_counter() - started)
 
 
-def build_raw(mis, product: str | int, *, workers: int | None = None, limit: int | None = None) -> list[dict]:
+def build(session, product: str | int, *, workers: int | None = None, limit: int | None = None) -> list[dict]:
     """Write the raw tables of every archived package of a product that is not built yet.
 
     Returns one record per package: ``status`` is ``built``, ``skipped`` or ``failed``.
     """
     spec: Product = get_product(product)
     parser = parser_id(spec.emil_id)
-    packages = mis.catalog.packages(spec.emil_id)
+    packages = session.catalog.packages(spec.emil_id)
     if limit is not None:
         packages = packages[:limit]
-    existing = mis.catalog.artifact_keys(LAYER)
+    existing = session.catalog.artifact_keys(LAYER)
     todo, results = [], []
     for package in packages:
-        keys = {artifact_key(parser, package["sha256"], t) for t in mis.catalog.artifact_tables(LAYER, package["sha256"])}
-        if keys and keys <= existing and all((mis.data_dir / p).is_file() for p in mis.catalog.artifact_paths(keys)):
+        keys = {artifact_key(parser, package["sha256"], t) for t in session.catalog.artifact_tables(LAYER, package["sha256"])}
+        if keys and keys <= existing and all((session.data_dir / p).is_file() for p in session.catalog.artifact_paths(keys)):
             results.append({"emil_id": spec.emil_id, "doc_id": package["doc_id"], "blob_sha256": package["sha256"],
                             "status": "skipped", "tables": len(keys), "rows": None, "seconds": 0.0, "error": None})
             continue
@@ -160,10 +158,10 @@ def build_raw(mis, product: str | int, *, workers: int | None = None, limit: int
     if not todo:
         return results
 
-    run_id = mis._start_run(f"build_raw {spec.emil_id}")
-    tmp_dir = mis.data_dir / LAYER / ".partial"
+    run_id = session._start_run(f"build_raw {spec.emil_id}")
+    tmp_dir = session.data_dir / LAYER / ".partial"
     tmp_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    jobs = {p["sha256"]: (mis.data_dir / p["path"], spec.emil_id, p["doc_id"], p["sha256"], p["members"], tmp_dir) for p in todo}
+    jobs = {p["sha256"]: (session.data_dir / p["path"], spec.emil_id, p["doc_id"], p["sha256"], p["members"], tmp_dir) for p in todo}
     by_sha = {p["sha256"]: p for p in todo}
 
     def finish(result: PackageResult) -> None:
@@ -175,12 +173,12 @@ def build_raw(mis, product: str | int, *, workers: int | None = None, limit: int
             placed = []
             for artifact in result.artifacts:
                 rel = artifact_path(artifact.table, spec.emil_id, result.blob_sha256)
-                dest = mis.data_dir / rel
+                dest = session.data_dir / rel
                 dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 os.chmod(artifact.tmp_path, 0o600)
                 os.replace(artifact.tmp_path, dest)
                 placed.append((artifact_key(parser, result.blob_sha256, artifact.table), artifact, rel))
-            mis._add_artifacts(run_id, LAYER, spec.emil_id, result.blob_sha256, parser, placed)
+            session._add_artifacts(run_id, LAYER, spec.emil_id, result.blob_sha256, parser, placed)
         results.append(record)
 
     workers = workers or (1 if len(todo) == 1 else min(os.cpu_count() or 2, 6))
@@ -192,5 +190,5 @@ def build_raw(mis, product: str | int, *, workers: int | None = None, limit: int
             futures = [pool.submit(build_package, *args) for args in jobs.values()]
             for future in as_completed(futures):
                 finish(future.result())
-    mis._finish_run(run_id, failed=sum(1 for r in results if r["status"] == "failed"))
+    session._finish_run(run_id, failed=sum(1 for r in results if r["status"] == "failed"))
     return results

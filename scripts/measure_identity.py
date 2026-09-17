@@ -1,8 +1,10 @@
 """Measure how the keys in CRR and DAM packages line up, on real archived data.
 
-Reads the archive only and writes nothing. Prints counts and *masked* name patterns
-(letters -> A, digits -> 9), never names or values, so the output is safe to share and
-belongs in docs/datasets/identity-and-matching.md whenever a new month arrives.
+Reads the archive and writes one JSON report per run to ``data/reports/identity/``
+(``<crr month>_<dam day>_he<hour>.json``). Prints and records counts and *masked* name
+patterns (letters -> A, digits -> 9), never names or values. The dataset notes describe
+what these measurements mean; the numbers live here, dated, and are re-measured when a
+new CRR month or DAM day arrives.
 
 Checks, for one monthly CRR package and one DAM hour:
   * CRR: which files name lines by the RAW comment, which name transformers by the
@@ -13,23 +15,24 @@ Checks, for one monthly CRR package and one DAM hour:
   * stability: DAM bus numbering across hours and days, CRR across months, and
     whether equipment names give a stable (station, kV) identity.
 
-    uv run python scripts/probe_keys.py                       # latest month and day
-    uv run python scripts/probe_keys.py --month 2026-09 --day 2026-09-15 --hour 12
+    uv run python scripts/measure_identity.py                       # latest month and day
+    uv run python scripts/measure_identity.py --month 2026-09 --day 2026-09-15 --hour 12
 """
 
 from __future__ import annotations
 
 import argparse
 import collections
+import json
 import re
 import zipfile
-from datetime import date
+from datetime import date, datetime, timezone
 
 import polars as pl
 
 import ercot_mis as em
-from ercot_mis.core import identity
-from ercot_mis.parsers import crr, dam
+from ercot_mis.core import node
+from ercot_mis.raw import crr, dam
 
 # ------------------------------------------------------------------ helpers
 
@@ -66,7 +69,17 @@ def either(k: set[tuple]) -> set[tuple]:
     return k | {(b, a, c) for a, b, c in k}
 
 
+REPORT: dict[str, dict] = {}
+_SECTION = [""]
+
+
+def section(title: str) -> None:
+    _SECTION[0] = title
+    print(f"\n== {title}")
+
+
 def show(title: str, **counts) -> None:
+    REPORT.setdefault(_SECTION[0], {})[title] = {k: (list(v) if isinstance(v, (set, tuple)) else v) for k, v in counts.items()}
     print(f"  {title}: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
 
 
@@ -77,7 +90,7 @@ def numeric(column: str) -> pl.Expr:
 # ------------------------------------------------------------------ loading
 
 
-def package_paths(mis: em.Mis, emil_id: str) -> list:
+def package_paths(mis: em.Session, emil_id: str) -> list:
     rows = mis.catalog.con.execute(
         """SELECT b.path FROM archive_blob b JOIN archive_source s USING (sha256)
            LEFT JOIN remote_doc d ON d.emil_id = s.emil_id AND d.doc_id = s.doc_id
@@ -87,7 +100,7 @@ def package_paths(mis: em.Mis, emil_id: str) -> list:
     return [mis.data_dir / path for (path,) in rows]
 
 
-def crr_package(mis: em.Mis, month: date | None):
+def crr_package(mis: em.Session, month: date | None):
     for path in package_paths(mis, "NP7-800-M"):
         with zipfile.ZipFile(path) as z:
             months = {m.month for n in z.namelist() if (m := crr.classify_member(n)) and m.month}
@@ -96,7 +109,7 @@ def crr_package(mis: em.Mis, month: date | None):
     raise SystemExit(f"no archived monthly CRR package for {month}")
 
 
-def dam_package(mis: em.Mis, day: date | None):
+def dam_package(mis: em.Session, day: date | None):
     for path in package_paths(mis, "NP4-500-SG"):
         with zipfile.ZipFile(path) as z:
             days = {m.operating_date for n in z.namelist() if (m := dam.classify_member(n)) and m.operating_date}
@@ -136,7 +149,7 @@ def bus_identity(tables) -> dict[int, tuple[str | None, float]]:
 
 
 def crr_internal(C: dict[str, pl.DataFrame]) -> None:
-    print("\n== CRR internal")
+    section("CRR internal")
     bus, br, xf = C["psse_bus"], C["psse_branch"], C["psse_transformer"]
     show("bus", n=bus.height, distinct_name=bus["name"].n_unique(), distinct_name_kv=bus.select("name", "basekv").n_unique(),
          distinct_comment=bus["comment"].n_unique(), isolated_ide4=int((bus["ide"] == 4).sum()),
@@ -209,7 +222,7 @@ def crr_internal(C: dict[str, pl.DataFrame]) -> None:
 
 
 def dam_internal(D: dict[str, pl.DataFrame]) -> None:
-    print("\n== DAM internal (one hour)")
+    section("DAM internal (one hour)")
     bus, br, xf = D["psse_bus"], D["psse_branch"], D["psse_transformer"]
     groups = bus.group_by("name", "basekv").len()
     show("bus", n=bus.height, distinct_name=bus["name"].n_unique(), distinct_name_kv=groups.height,
@@ -251,7 +264,7 @@ def dam_internal(D: dict[str, pl.DataFrame]) -> None:
 
 
 def cross(C: dict[str, pl.DataFrame], D: dict[str, pl.DataFrame]) -> None:
-    print("\n== CRR vs DAM")
+    section("CRR vs DAM")
     c_bus, d_bus = bus_identity(C), bus_identity(D)
     shared = set(c_bus) & set(d_bus)
     show("bus numbers", crr=len(c_bus), dam=len(d_bus), shared=len(shared),
@@ -283,8 +296,8 @@ def cross(C: dict[str, pl.DataFrame], D: dict[str, pl.DataFrame]) -> None:
     show("gtc", crr_gtcs=C["crr_non_thermal_constraints"]["name"].n_unique(), dam_gtc_tables=[t for t in D if "constraint" in t])
 
 
-def stability(mis: em.Mis, dam_path, day: date, hour: int, D, C, crr_month: date) -> None:
-    print("\n== Stability of identity")
+def stability(mis: em.Session, dam_path, day: date, hour: int, D, C, crr_month: date) -> None:
+    section("Stability of identity")
 
     def compare(label: str, a: dict, b: dict) -> None:
         shared = set(a) & set(b)
@@ -329,13 +342,13 @@ def stability(mis: em.Mis, dam_path, day: date, hour: int, D, C, crr_month: date
             break
 
 
-def node_identity(mis: em.Mis, dam_path, hour: int, D, C) -> None:
-    """How stable the equipment-based node keys are (core/identity.py)."""
-    print("\n== Node identity (equipment-based keys)")
+def node_identity(mis: em.Session, dam_path, hour: int, D, C) -> None:
+    """How stable the equipment-based node keys are (core/node.py)."""
+    section("Node identity (equipment-based keys)")
     kinds = {"network_model", "generators", "loads", "settlement_points", "lines", "transformers"}
 
     def dam_keys(tables) -> pl.DataFrame:
-        return identity.dam_nodes(tables["psse_bus"], tables["dam_lines"], tables["dam_transformers"], tables["dam_generators"],
+        return node.dam_nodes(tables["psse_bus"], tables["dam_lines"], tables["dam_transformers"], tables["dam_generators"],
                                   tables["dam_loads"], tables["dam_settlement_points"])
 
     def compare(label: str, a: pl.DataFrame, b: pl.DataFrame) -> None:
@@ -351,7 +364,7 @@ def node_identity(mis: em.Mis, dam_path, hour: int, D, C) -> None:
     show("DAM attachments per node", quantiles=[int(here["n_attachments"].quantile(q)) for q in (0, 0.25, 0.5, 0.75, 1)],
          nodes_with_settlement_point=int(here["attachments"].str.contains("S:").sum()))
 
-    crr = identity.crr_nodes(C["psse_bus"], C["psse_branch"], C["psse_transformer"], C["crr_mapping_autos"], C["crr_sources_and_sinks"])
+    crr = node.crr_nodes(C["psse_bus"], C["psse_branch"], C["psse_transformer"], C["crr_mapping_autos"], C["crr_sources_and_sinks"])
     groups = crr.filter(pl.col("is_tie_member")).group_by("node_group").len()
     show("CRR contraction", buses=crr.height, nodes=crr["node_group"].n_unique(), tie_groups=groups.height,
          buses_in_tie_groups=int(groups["len"].sum()), largest_group=int(groups["len"].max()) if groups.height else 0,
@@ -361,7 +374,7 @@ def node_identity(mis: em.Mis, dam_path, hour: int, D, C) -> None:
             months = {m.month for n in z.namelist() if (m := crr.classify_member(n)) and m.month} if False else None
         other = load_crr(path, {"network_model", "mapping_document", "sources_and_sinks"})
         if other["psse_bus"].height != C["psse_bus"].height or not other["psse_bus"]["name"].equals(C["psse_bus"]["name"]):
-            other_nodes = identity.crr_nodes(other["psse_bus"], other["psse_branch"], other["psse_transformer"], other["crr_mapping_autos"], other["crr_sources_and_sinks"])
+            other_nodes = node.crr_nodes(other["psse_bus"], other["psse_branch"], other["psse_transformer"], other["crr_mapping_autos"], other["crr_sources_and_sinks"])
             ka, kb = set(crr["node_key"]), set(other_nodes["node_key"])
             show("CRR nodes vs another month", nodes_a=crr["node_group"].n_unique(), nodes_b=other_nodes["node_group"].n_unique(), keys_shared=len(ka & kb))
             break
@@ -384,6 +397,13 @@ def main() -> None:
         cross(C, D)
         stability(mis, dam_path, day, args.hour, D, C, month)
         node_identity(mis, dam_path, args.hour, D, C)
+        out = mis.data_dir / "reports" / "identity"
+        out.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path = out / f"{month:%Y-%m}_{day}_he{args.hour:02d}.json"
+        path.write_text(json.dumps({"measured_at": datetime.now(timezone.utc).isoformat(), "crr_month": f"{month:%Y-%m}",
+                                    "dam_day": str(day), "hour": args.hour, "sections": REPORT}, indent=1, default=str))
+        path.chmod(0o600)
+        print(f"\nreport written to {path.relative_to(mis.data_dir.parent)}")
 
 
 if __name__ == "__main__":

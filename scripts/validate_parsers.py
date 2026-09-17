@@ -18,7 +18,7 @@ import time
 import zipfile
 
 import ercot_mis as em
-from ercot_mis.parsers import ParseError, crr, dam, psse
+from ercot_mis.raw import ParseError, crr, dam, psse
 
 
 def packages(mis, emil_id, limit=None):

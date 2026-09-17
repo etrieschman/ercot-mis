@@ -14,6 +14,10 @@ values in the RAW are zero.
 
 from __future__ import annotations
 
+# Bump when the tables this parser produces change (columns, types, values). The raw
+# layer's cache key includes it, so every artifact built with an older version is rebuilt.
+VERSION = 1
+
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -21,7 +25,7 @@ from datetime import date
 import pyarrow as pa
 
 from . import psse
-from ._common import F, I, Column, read_delimited
+from .table import F, I, Column, read_delimited
 
 _HOURLY = re.compile(r"^DAM(\d{8})_(?:([A-Za-z]+)_)?(\d{3})\.(raw|csv)$", re.IGNORECASE)
 _DAILY = re.compile(r"^DAM(\d{8})_(SpCtg|SpNb)\.csv$", re.IGNORECASE)

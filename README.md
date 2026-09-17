@@ -23,11 +23,11 @@ Everything is driven from Python:
 ```python
 import ercot_mis as em
 
-with em.open() as mis:                               # ./data in this repo, or $ERCOT_MIS_DATA
-    docs = mis.list("NP7-800-M")                     # what EWS offers, with archive status
-    result = mis.fetch("NP7-800-M", max_gb=1)        # download what isn't archived yet
-    mis.fetch("NP4-500-SG", operating_dates=["2026-09-14"])
-    mis.ingest("~/Downloads/ercot")                  # adopt zips downloaded elsewhere
+with em.open() as session:                           # ./data in this repo, or $ERCOT_MIS_DATA
+    docs = session.list("NP7-800-M")                 # what EWS offers, with archive status
+    result = session.fetch("NP7-800-M", max_gb=1)    # download what isn't archived yet
+    session.fetch("NP4-500-SG", operating_dates=["2026-09-14"])
+    session.ingest("~/Downloads/ercot")              # adopt zips downloaded elsewhere
 ```
 
 Documents are stored once, by content hash, under `data/archive/`, and never edited.
@@ -35,11 +35,11 @@ Documents are stored once, by content hash, under `data/archive/`, and never edi
 zip member, how each arrived, and every table built from them.
 
 ```python
-with em.open() as mis:
-    mis.build_raw("NP4-500-SG")                      # parsed rows, one Parquet per package and table
-    mis.build_core()                                 # snapshots and equipment-based node keys
-    buses = mis.raw("psse_bus").filter(pl.col("operating_date") == "2026-09-15").collect()
-    nodes = mis.nodes().filter(pl.col("snapshot_id") == "dam:2026-09-15:he12:r1").collect()
+with em.open() as session:
+    session.build_raw("NP4-500-SG")                  # parsed rows, one Parquet per package and table
+    session.build_core()                             # snapshots and equipment-based node keys
+    buses = session.raw("psse_bus").filter(pl.col("operating_date") == "2026-09-15").collect()
+    nodes = session.core("node").filter(pl.col("snapshot_id") == "dam:2026-09-15:he12:r1").collect()
 ```
 
 Run builds from a script or notebook (the process pool needs an importable `__main__`).

@@ -27,7 +27,7 @@ import polars as pl
 if TYPE_CHECKING:
     from ..products import Product
     from ..sources.ews import RemoteDoc
-    from .archive import Member, StoredBlob
+    from .store import Member, StoredBlob
 
 SCHEMA = (
     # Every document a source has listed, refreshed each time it is listed again.

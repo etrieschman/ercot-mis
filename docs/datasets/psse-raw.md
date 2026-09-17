@@ -11,8 +11,8 @@ on its own. Read straight from the archived zip.
 
 ## Package layout
 - CRR: `...Common_NetworkModel_<MON>_<YYYY>_PeakWD.RAW` (annual) or
-  `<YYYY>.<MON>.Monthly.Auction.NetworkModel_PeakWD.raw` (monthly). About 3.8 MB.
-- DAM: `DAM<mmddyyyy>_<HHH>.RAW`, 24 per day. About 4 MB.
+  `<YYYY>.<MON>.Monthly.Auction.NetworkModel_PeakWD.raw` (monthly).
+- DAM: `DAM<mmddyyyy>_<HHH>.RAW`, one per hour.
 
 ## What we parse
 `parsers/psse.py` -> `psse_case`, `psse_bus`, `psse_load`, `psse_generator`,
@@ -55,12 +55,11 @@ accepted when whole.
 
 Bus numbers: CRR numbering is stable month to month; **DAM numbering is reassigned in
 every hourly model** and unrelated to CRR's. DAM bus names are station names shared by
-up to 16 buses. CRR has ~2,900 zero-impedance branches (bus ties); DAM has none.
+several buses. CRR has thousands of zero-impedance branches (bus ties); DAM has none.
 
 ## Validation
 `scripts/validate_parsers.py` checks parsed records against data lines per section
-(four lines per transformer). Clean on 114 CRR RAW files and 768 DAM RAW files,
-2026-09-15.
+(four lines per transformer) on every archived package.
 
 ## Open questions
 - Cross-check against PowerFlowData.jl (needs Julia).

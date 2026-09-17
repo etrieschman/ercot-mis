@@ -40,7 +40,7 @@ import requests
 from lxml import etree
 
 from ..config import Identity
-from ..retry import retrying
+from .retry import retrying
 
 if TYPE_CHECKING:
     from ..products import Product
