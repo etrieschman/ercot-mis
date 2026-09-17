@@ -49,7 +49,8 @@ DynamicRatings (small; semantics not yet reviewed).
   be identical for a month).
 - `BaseCaseRating` is a fixed fraction of the RAW rate A on every monitored line.
 - Transformer names in the contingency, monitored and GTC CSVs are the `Autos` sheet's
-  `CRR Name`, not anything in the RAW; lines use the RAW comment.
+  `CRR Name`, not anything in the RAW; lines use the RAW comment. The sheet's `From #`
+  and `To #` are swapped relative to the RAW for about half the rows.
 - `Operations_Name` never equals a DAM branch name exactly; see identity-and-matching.md.
 - Some `Lines` rows share one placeholder `Operations_Name`; RAW lines that are
   zero-impedance ties mostly have no workbook row.

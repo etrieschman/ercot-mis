@@ -25,7 +25,9 @@ named in the `Ln` CSV, keyed to the RAW by (from, to, ckt).
 
 **Transformers.** CRR RAW transformers carry **no** comment. Their CRR name lives
 only in the mapping workbook's `Autos` sheet, which reaches the RAW by (from, to,
-ckt); the CSVs use the `Autos` name. DAM transformers are named in the `Xf` CSV.
+ckt) **in either orientation** (about half the sheet's rows list from and to swapped
+relative to the RAW); the CSVs use the `Autos` name. DAM transformers are named in
+the `Xf` CSV.
 
 **Topology level.** CRR RAWs hold thousands of zero-impedance branches (bus ties,
 breakers, jumpers), a share of them monitored; DAM RAWs hold none. CRR is closer to
