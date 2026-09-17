@@ -59,3 +59,19 @@ def test_match_nodes_by_settlement_point_then_branch_endpoints():
     assert dam_only["dam_node_key"].to_list() == ["d9"] and dam_only["match_method"][0] == "unmatched"
     assert result.filter(pl.col("match_method") != "unmatched")["dam_node_key"].is_unique().all()
     assert list(result.columns) == list(match.NODE_COLUMNS)
+
+
+def test_match_contingencies_by_name_then_by_translated_branch_set():
+    crr_out = pl.DataFrame({"contingency_id": ["C1", "C1", "C2", "C3"], "branch_id": ["L1", "L2", "L3", "L9"]})
+    dam_out = pl.DataFrame({"contingency_id": ["c1", "c1", "c1", "X2", "D4"], "element_kind": ["branch", "branch", "load", "branch", "branch"],
+                            "operation": ["outage", "outage", "outage", "outage", "split_bus"], "branch_id": ["DL1", "DL9", None, "DL3", "DL7"]})
+    branches = pl.DataFrame({"crr_branch_id": ["L1", "L2", "L3"], "dam_branch_id": ["DL1", "DL2", "DL3"], "match_method": ["exact", "prefix", "exact"]})
+    result = match.match_contingencies(crr_out, dam_out, branches)
+    by = {r["crr_contingency_id"]: r for r in result.to_dicts() if r["crr_contingency_id"]}
+    c1 = by["C1"]
+    assert (c1["dam_contingency_id"], c1["match_method"], c1["n_crr_branches"], c1["n_dam_branches"], c1["n_shared_branches"], c1["n_dam_other_rows"]) == ("c1", "name", 2, 2, 1, 1)
+    assert (by["C2"]["dam_contingency_id"], by["C2"]["match_method"]) == ("X2", "members")
+    assert by["C3"]["match_method"] == "unmatched" and by["C3"]["n_crr_branches"] == 1
+    d4 = result.filter(pl.col("dam_contingency_id") == "D4").to_dicts()[0]
+    assert d4["crr_contingency_id"] is None and d4["has_split_bus"] and d4["match_method"] == "unmatched"
+    assert list(result.columns) == list(match.CONTINGENCY_COLUMNS)

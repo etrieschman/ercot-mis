@@ -61,7 +61,8 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   the GTL workbook with `crr_gtc_id` from the manual crosswalk in
   `data/overrides/gtc_names.csv`, members empty), and `core.match_branch` /
   `core.match_node` per (CRR snapshot, DAM snapshot) via `session.match_branches` and
-  `session.match_nodes`.
+  `session.match_nodes`, and `core.match_contingency` via `session.match_contingencies`
+  (name, then translated branch set; member-set differences recorded).
   Planned:
   `core.contingency`, `core.contingency_outage`, `core.gtc`, `core.gtc_member`,
   `core.constraint`, `core.price_node_bus`, `core.settlement_point`,
@@ -185,8 +186,8 @@ src/ercot_mis/
     branch.py       core.branch and core.branch_rating (crr_branches, dam_branches)
     contingency.py  core.contingency and core.contingency_outage, resolved to branch/node keys
     gtc.py          core.gtc and core.gtc_member (CRR; DAM empty until NP3-766-M/NP3-770-M parse)
-    match.py        core.match_branch (exact -> ops+ckt -> prefix) and core.match_node
-                    (settlement point -> matched branch endpoints by vote)
+    match.py        core.match_branch (exact -> ops+ckt -> prefix), core.match_node (settlement
+                    point -> matched branch endpoints by vote), core.match_contingency (name -> members)
     build.py        writes every core table per package
 scripts/daily_pull.py        fetch pulled EWS products, list tracked ones; launchd template in scripts/launchd/
 scripts/probe.py             archive-depth probe over every EWS product
@@ -221,7 +222,10 @@ measurements live in the scripts that make them and the dated reports under
 
 ## Pick up here (next session)
 
-State at 2026-09-17: M0–M2 done; M3 half done (raw layer, snapshots, nodes). The
+State at 2026-09-17 (end of day): M0–M2 done; M3 mostly done (raw layer with
+provenance, snapshots, nodes, branches, ratings, contingencies, GTCs); M6's matchers
+exist for branches, nodes and contingencies. Not started: SQL runner, `out.network`,
+Public API client. The
 adversarial review of 2026-09-17 found that three locked assumptions were wrong (bus
 identity by name, number-keyed DAM snapshots, GTCs from every model) and they were
 replaced by measured facts: read `docs/datasets/identity-and-matching.md` first.
@@ -237,9 +241,10 @@ First, check health (2 min):
   report with the previous one.
 
 Then, in order:
-1. **Contingency matching** (`core.match_contingency`): by name, then member sets in
-   the matched branch/node vocabulary; report the split-bus rows separately.
-   Disambiguate branches with several DAM circuit candidates (endpoint stations, kV).
+1. **Matching quality**: disambiguate branches with several DAM circuit candidates
+   (endpoint stations, kV); explain matched nodes whose kV disagree; classify
+   name-matched contingencies with different branch sets (`scripts/measure_identity.py`
+   now reports all three matchers).
 2. **DAM GTC members**: NP3-770-M ships PDF/PPTX/database files; either parse the
    database or keep borrowing CRR member sets through `crr_gtc_id` and say so in
    `out.network`. Add NP3-766-M to `scripts/validate_parsers.py`.

@@ -380,6 +380,28 @@ def node_identity(mis: em.Session, dam_path, hour: int, D, C) -> None:
             break
 
 
+def matching(mis: em.Session, crr_month: date, day: date, hour: int) -> None:
+    """How the session's matchers do on the built core tables (needs build_core)."""
+    section("Matching (core.match_*)")
+    crr_id, dam_id = f"crr:monthly:{crr_month:%Y-%m}:r1", f"dam:{day}:he{hour:02d}:r1"
+    snaps = set(mis.core("snapshot").select("snapshot_id").collect()["snapshot_id"])
+    if crr_id not in snaps or dam_id not in snaps:
+        show("skipped", reason="core tables not built for these snapshots", crr=crr_id, dam=dam_id)
+        return
+    for name, frame, left, right in (("branches", mis.match_branches(crr_id, dam_id), "crr_branch_id", "dam_branch_id"),
+                                     ("nodes", mis.match_nodes(crr_id, dam_id), "crr_node_key", "dam_node_key"),
+                                     ("contingencies", mis.match_contingencies(crr_id, dam_id), "crr_contingency_id", "dam_contingency_id")):
+        counts = frame.group_by("match_method").agg(pl.len().alias("n"), pl.col(left).is_not_null().sum().alias("crr"), pl.col(right).is_not_null().sum().alias("dam")).sort("match_method")
+        show(name, **{f"{m}": f"{n} (crr {c}, dam {d})" for m, n, c, d in counts.rows()})
+    ctg = mis.match_contingencies(crr_id, dam_id).filter(pl.col("match_method") == "name")
+    show("name-matched contingencies", n=ctg.height, identical_branch_sets=int(((ctg["n_shared_branches"] == ctg["n_crr_branches"]) & (ctg["n_crr_branches"] == ctg["n_dam_branches"])).sum()),
+         no_shared_branch=int((ctg["n_shared_branches"] == 0).sum()), with_dam_load_gen_sp_rows=int((ctg["n_dam_other_rows"] > 0).sum()), split_bus=int(ctg["has_split_bus"].sum()))
+    nodes = mis.match_nodes(crr_id, dam_id).filter(pl.col("match_method") != "unmatched")
+    kv = (nodes.join(mis.core("node").filter(pl.col("snapshot_id") == crr_id).select("node_key", "kv").unique(subset=["node_key"]).collect(), left_on="crr_node_key", right_on="node_key")
+          .join(mis.core("node").filter(pl.col("snapshot_id") == dam_id).select("node_key", pl.col("kv").alias("dam_kv")).collect(), left_on="dam_node_key", right_on="node_key"))
+    show("matched nodes", n=nodes.height, same_kv=int((kv["kv"] == kv["dam_kv"]).sum()))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--month", type=lambda s: date.fromisoformat(s + "-01"), default=None, help="CRR monthly model, YYYY-MM")
@@ -397,6 +419,7 @@ def main() -> None:
         cross(C, D)
         stability(mis, dam_path, day, args.hour, D, C, month)
         node_identity(mis, dam_path, args.hour, D, C)
+        matching(mis, month, day, args.hour)
         out = mis.data_dir / "reports" / "identity"
         out.mkdir(mode=0o700, parents=True, exist_ok=True)
         path = out / f"{month:%Y-%m}_{day}_he{args.hour:02d}.json"

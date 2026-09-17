@@ -144,3 +144,77 @@ def match_nodes(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl
                 .select(pl.lit(None, pl.String).alias("crr_node_key"), "dam_node_key", pl.lit("unmatched").alias("match_method"),
                         pl.lit(None, pl.String).alias("settlement_point"), pl.lit(None, pl.UInt32).alias("n_votes"), pl.lit(0, pl.UInt32).alias("n_candidates")))
     return pl.concat([matched, rest_crr, rest_dam]).select(NODE_COLUMNS).sort("match_method", "crr_node_key", "dam_node_key")
+
+
+# ------------------------------------------------------------------ contingencies
+
+CONTINGENCY_COLUMNS = ("crr_contingency_id", "dam_contingency_id", "match_method", "n_crr_branches", "n_dam_branches",
+                       "n_shared_branches", "n_dam_other_rows", "has_split_bus", "n_candidates")
+
+
+def _branch_sets(outages: pl.DataFrame, column: str) -> pl.DataFrame:
+    return (outages.filter(pl.col(column).is_not_null()).group_by("contingency_id")
+            .agg(pl.col(column).unique().sort().alias("branches")))
+
+
+def match_contingencies(crr_outages: pl.DataFrame, dam_outages: pl.DataFrame, branch_matches: pl.DataFrame) -> pl.DataFrame:
+    """One row per CRR contingency with its DAM contingency, plus unmatched DAM contingencies.
+
+    CRR outages are translated into DAM branch ids through ``branch_matches`` before any
+    comparison. Methods, first that succeeds wins: ``name`` (same name, case and
+    whitespace ignored), then ``members`` (the translated CRR branch set equals exactly
+    one DAM contingency's branch set), else ``unmatched``. Every matched pair records
+    how many branches each side outages and how many they share, and how many DAM rows
+    are loads, generators or settlement points, which CRR never lists.
+    """
+    translate = branch_matches.filter(pl.col("match_method") != "unmatched").select("crr_branch_id", "dam_branch_id")
+    crr_dam = (crr_outages.filter(pl.col("branch_id").is_not_null())
+               .join(translate, left_on="branch_id", right_on="crr_branch_id", how="left"))
+    crr_sets = (crr_dam.group_by("contingency_id")
+                .agg(pl.col("branch_id").n_unique().alias("n_crr_branches"),
+                     pl.col("dam_branch_id").drop_nulls().unique().sort().alias("branches")))
+    dam_branch_rows = dam_outages.filter(pl.col("element_kind") == "branch")
+    dam_sets = (dam_outages.group_by("contingency_id")
+                .agg(pl.col("branch_id").drop_nulls().unique().sort().alias("branches"),
+                     (pl.col("element_kind") != "branch").sum().alias("n_dam_other_rows"),
+                     (pl.col("operation") == "split_bus").any().alias("has_split_bus")))
+    crr_names = crr_outages.select("contingency_id").unique().join(crr_sets, on="contingency_id", how="left").with_columns(
+        pl.col("contingency_id").str.to_uppercase().str.strip_chars().alias("_name"),
+        pl.col("branches").fill_null(pl.lit([], dtype=pl.List(pl.String))), pl.col("n_crr_branches").fill_null(0))
+    dam_names = dam_sets.with_columns(pl.col("contingency_id").str.to_uppercase().str.strip_chars().alias("_name"))
+
+    by_name = (crr_names.join(dam_names, on="_name", suffix="_dam")
+               .unique(subset=["contingency_id"], keep="first").unique(subset=["contingency_id_dam"], keep="first")
+               .with_columns(pl.lit("name").alias("match_method"), pl.lit(1, pl.UInt32).alias("n_candidates")))
+    rest = crr_names.filter(~pl.col("contingency_id").is_in(by_name["contingency_id"].implode()))
+    dam_rest = dam_names.filter(~pl.col("contingency_id").is_in(by_name["contingency_id_dam"].implode()))
+    dam_by_set = (dam_rest.filter(pl.col("branches").list.len() > 0)
+                  .with_columns(pl.col("branches").list.join("\x1f").alias("_set"))
+                  .group_by("_set").agg(pl.col("contingency_id").alias("_ids"), pl.col("branches").first(),
+                                        pl.col("n_dam_other_rows").first(), pl.col("has_split_bus").first()))
+    by_set = (rest.filter(pl.col("branches").list.len() > 0)
+              .with_columns(pl.col("branches").list.join("\x1f").alias("_set"))
+              .join(dam_by_set.rename({"branches": "branches_dam"}), on="_set", how="inner")
+              .with_columns(pl.col("_ids").list.len().cast(pl.UInt32).alias("n_candidates"))
+              .filter(pl.col("n_candidates") == 1)
+              .with_columns(pl.col("_ids").list.first().alias("contingency_id_dam"), pl.lit("members").alias("match_method")))
+    by_set = by_set.unique(subset=["contingency_id_dam"], keep="none")
+
+    def finish(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.select(
+            pl.col("contingency_id").alias("crr_contingency_id"), pl.col("contingency_id_dam").alias("dam_contingency_id"),
+            "match_method", pl.col("n_crr_branches").cast(pl.UInt32), pl.col("branches_dam").list.len().cast(pl.UInt32).alias("n_dam_branches"),
+            pl.col("branches").list.set_intersection(pl.col("branches_dam")).list.len().cast(pl.UInt32).alias("n_shared_branches"),
+            pl.col("n_dam_other_rows").cast(pl.UInt32), "has_split_bus", "n_candidates")
+
+    matched = pl.concat([finish(by_name), finish(by_set)])
+    rest = rest.filter(~pl.col("contingency_id").is_in(matched["crr_contingency_id"].implode())).select(
+        pl.col("contingency_id").alias("crr_contingency_id"), pl.lit(None, pl.String).alias("dam_contingency_id"),
+        pl.lit("unmatched").alias("match_method"), pl.col("n_crr_branches").cast(pl.UInt32), pl.lit(0, pl.UInt32).alias("n_dam_branches"),
+        pl.lit(0, pl.UInt32).alias("n_shared_branches"), pl.lit(0, pl.UInt32).alias("n_dam_other_rows"), pl.lit(False).alias("has_split_bus"),
+        pl.lit(0, pl.UInt32).alias("n_candidates"))
+    dam_rest = dam_names.filter(~pl.col("contingency_id").is_in(matched["dam_contingency_id"].implode())).select(
+        pl.lit(None, pl.String).alias("crr_contingency_id"), pl.col("contingency_id").alias("dam_contingency_id"),
+        pl.lit("unmatched").alias("match_method"), pl.lit(0, pl.UInt32).alias("n_crr_branches"), pl.col("branches").list.len().cast(pl.UInt32).alias("n_dam_branches"),
+        pl.lit(0, pl.UInt32).alias("n_shared_branches"), pl.col("n_dam_other_rows").cast(pl.UInt32), "has_split_bus", pl.lit(0, pl.UInt32).alias("n_candidates"))
+    return pl.concat([matched, rest, dam_rest]).select(CONTINGENCY_COLUMNS).sort("match_method", "crr_contingency_id", "dam_contingency_id")

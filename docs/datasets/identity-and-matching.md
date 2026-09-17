@@ -92,8 +92,14 @@ to one. Some DAM settlement points have no bus in a given hour.
   vote for both nodes and either has two agreeing branches or both nodes have a
   single matched branch; tied votes stay unmatched). Then `unmatched` with the number
   of competing candidates. Unmatched DAM nodes are listed with a null CRR side.
-- **Still to do**: contingencies by name, then member sets in the matched
-  vocabulary. Every match records `match_method`; every unmatched record is output.
+- **Contingency matching** (`session.match_contingencies`): CRR outages are
+  translated to DAM branch ids through the branch match first; then by name (case and
+  whitespace ignored), then by an identical translated branch set when it points at
+  exactly one DAM contingency. Every pair records how many branches each side
+  outages, how many they share, how many DAM rows are loads, generators or
+  settlement points (which CRR never lists) and whether the DAM side splits a bus.
+  Many name matches do not share the same branch set; that is a difference to study,
+  not to hide. Every match records `match_method`; every unmatched record is output.
 - **Ratings are facts**: store the CRR CSV ratings and RAW rate A/B/C both; the
   derate fraction is an observation the report checks, not a rule the code applies.
 
@@ -101,6 +107,10 @@ to one. Some DAM settlement points have no bus in a given hour.
 
 - Disambiguating branches with several DAM circuit candidates (parallel circuits
   where the CRR and DAM circuit ids disagree).
+- Matched nodes whose voltage levels disagree (a small share): wrong votes or
+  station-level keys on one side.
+- Name-matched contingencies with different branch sets: transformer vocabulary,
+  ties, or genuinely different definitions?
 - How to treat monitored bus ties in a contracted CRR model.
 - Verify the monitored/secured reading against binding constraints in `NP4-191-CD`.
 - Parse `NP3-766-M` (xls) and check its GTC names against the CRR GTC names.
