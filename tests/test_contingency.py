@@ -48,8 +48,20 @@ def test_crr_gtcs_and_empty_dam_gtcs():
     raw = pl.DataFrame({"name": ["G1", "G1", "G2"], "limit": [1500.0, 1500.0, 800.0], "device_name": ["L1", "X1", "NOPE"],
                         "device_type": ["Line", "Transformer", "Line"], "flow_direction": ["From-To", "To-From", "From-To"], "factor": [1.0, 0.5, 1.0]})
     gtcs, members = gtc.crr_gtcs(branches, raw)
-    assert gtcs.rows() == [("G1", 1500.0, 2, 0), ("G2", 800.0, 1, 1)]
+    assert gtcs.rows() == [("G1", "crr_csv", 1500.0, 2, 0, "G1"), ("G2", "crr_csv", 800.0, 1, 1, "G2")]
     assert members.filter(pl.col("gtc_id") == "G1")["factor"].to_list() == [1.0, 0.5]
     empty_gtcs, empty_members = gtc.no_gtcs()
     assert empty_gtcs.columns == gtcs.columns and empty_members.columns == members.columns
     assert pl.concat([members, empty_members], how="diagonal_relaxed").height == 3
+
+
+def test_dam_gtcs_from_gtl_rows_with_crosswalk(tmp_path):
+    gtl = pl.DataFrame({"hour_ending": [7, 7, 7], "gtc_name": ["North to Somewhere", "North to Somewhere", "Lonely"],
+                        "market": ["rt", "dam", "dam"], "limit_mw": [900.0, 850.0, 100.0]})
+    (tmp_path / "overrides").mkdir()
+    (tmp_path / "overrides" / "gtc_names.csv").write_text("# comment\ngtl_name,crr_gtc_id\nNorth to Somewhere,N_TO_S\n")
+    gtcs, members = gtc.dam_gtcs(gtl, gtc.name_crosswalk(tmp_path))
+    assert gtcs.rows() == [("Lonely", "gtl_dam", 100.0, 0, 0, None), ("North to Somewhere", "gtl_dam", 850.0, 0, 0, "N_TO_S")]
+    assert members.is_empty() and list(gtcs.columns) == list(gtc.GTC_COLUMNS)
+    assert gtc.name_crosswalk(tmp_path / "nowhere").is_empty()
+    assert gtc.dam_gtcs(gtl.clear(), gtc.name_crosswalk(tmp_path))[0].columns == list(gtc.GTC_COLUMNS)

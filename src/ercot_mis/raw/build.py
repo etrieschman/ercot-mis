@@ -29,11 +29,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ..products import Product, get_product
-from . import crr, dam, psse, table
+from . import crr, dam, gtl, psse, table
 
 LAYER = "raw"
 COMPRESSION = "zstd"
-_MODULES = {"NP7-801-M": (crr,), "NP7-800-M": (crr,), "NP4-500-SG": (dam,)}
+_MODULES = {"NP7-801-M": (crr,), "NP7-800-M": (crr,), "NP4-500-SG": (dam,), "NP3-766-M": (gtl,)}
 
 
 def parser_id(emil_id: str) -> str:
@@ -91,15 +91,26 @@ def _identity_columns(table: pa.Table, values: dict) -> pa.Table:
 
 
 def parse_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str,
-                  members: dict[str, str]) -> dict[str, tuple[pa.Table, list[str]]]:
+                  members: dict[str, str], operating_date=None) -> dict[str, tuple[pa.Table, list[str]]]:
     """Parse every parsed member of a package into per-table Arrow tables with identity columns.
 
     ``members`` maps member path to member sha256 (from the catalog). Returns
-    ``{table: (rows, member hashes that contributed)}``.
+    ``{table: (rows, member hashes that contributed)}``. A document that is not a zip
+    (the GTL workbook) is parsed whole; its identity is the listing's ``operating_date``.
     """
     module = _MODULES[emil_id][0]
     parts: dict[str, list[pa.Table]] = {}
     sources: dict[str, list[str]] = {}
+    if module is gtl:
+        data = path.read_bytes()
+        member = gtl.classify_document(path.name, data)
+        if member.is_parsed:
+            identity = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob_sha256, "member_sha256": blob_sha256,
+                        "member_path": "<document>", "operating_date": operating_date}
+            table_ = gtl.parse_gtl(data, f"GTL {operating_date}")
+            parts["gtl_hourly"] = [_identity_columns(table_, identity)]
+            sources["gtl_hourly"] = [blob_sha256]
+        return {table: (pa.concat_tables(chunks, promote_options="default"), sources[table]) for table, chunks in parts.items()}
     with zipfile.ZipFile(path) as package:
         for name in package.namelist():
             member = module.classify_member(name)
@@ -119,11 +130,11 @@ def parse_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str
 
 
 def build_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str,
-                  members: dict[str, str], tmp_dir: Path) -> PackageResult:
+                  members: dict[str, str], tmp_dir: Path, operating_date=None) -> PackageResult:
     """Worker entry point: parse one package and write each table to a temporary Parquet file."""
     started = time.perf_counter()
     try:
-        tables = parse_package(path, emil_id, doc_id, blob_sha256, members)
+        tables = parse_package(path, emil_id, doc_id, blob_sha256, members, operating_date)
         written = []
         for table, (rows, sources) in tables.items():
             handle, tmp = tempfile.mkstemp(dir=tmp_dir, suffix=".parquet")
@@ -160,7 +171,7 @@ def build(session, product: str | int, *, workers: int | None = None, limit: int
     run_id = session._start_run(f"build_raw {spec.emil_id}")
     tmp_dir = session.data_dir / LAYER / ".partial"
     tmp_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    jobs = {p["sha256"]: (session.data_dir / p["path"], spec.emil_id, p["doc_id"], p["sha256"], p["members"], tmp_dir) for p in todo}
+    jobs = {p["sha256"]: (session.data_dir / p["path"], spec.emil_id, p["doc_id"], p["sha256"], p["members"], tmp_dir, p["operating_date"]) for p in todo}
     by_sha = {p["sha256"]: p for p in todo}
 
     def finish(result: PackageResult) -> None:

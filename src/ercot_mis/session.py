@@ -335,6 +335,28 @@ class Session:
         path.chmod(0o600)
         return result
 
+    def match_nodes(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
+        """``core.match_node`` for one CRR model and one DAM hour: settlement points first, then
+        the endpoints of matched branches. Computed once and cached like ``match_branches``."""
+        from .core.match import NODE_COLUMNS, VERSION, match_nodes
+
+        key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
+        path = self.data_dir / "core" / "match_node" / f"v{VERSION}" / f"{key}.parquet"
+        if path.is_file():
+            return pl.read_parquet(path)
+        branches = self.match_branches(crr_snapshot_id, dam_snapshot_id)
+        crr_nodes = self.core("node").filter(pl.col("snapshot_id") == crr_snapshot_id).collect()
+        dam_nodes = self.core("node").filter(pl.col("snapshot_id") == dam_snapshot_id).collect()
+        crr_branch = self.core("branch").filter(pl.col("snapshot_id") == crr_snapshot_id).collect()
+        dam_branch = self.core("branch").filter(pl.col("snapshot_id") == dam_snapshot_id).collect()
+        result = match_nodes(crr_nodes, dam_nodes, crr_branch, dam_branch, branches).with_columns(
+            pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id")
+        ).select("crr_snapshot_id", "dam_snapshot_id", *NODE_COLUMNS)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        result.write_parquet(path, compression="zstd")
+        path.chmod(0o600)
+        return result
+
     # ----------------------------------------------------------------- reading
 
     def raw(self, table: str) -> pl.LazyFrame:

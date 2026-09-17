@@ -168,6 +168,8 @@ def test_build_core_snapshots_and_nodes(tmp_path):
         matched = mis.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
         assert set(matched["match_method"]) <= {"exact", "ops+ckt", "prefix", "unmatched"} and matched.height >= 2
         assert mis.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1").equals(matched)  # cached
+        nodes_matched = mis.match_nodes("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
+        assert set(nodes_matched["match_method"]) <= {"settlement_point", "branch_endpoints", "unmatched"}
         nodes = mis.core("node").collect()
         assert set(nodes["snapshot_id"]) == set(snaps["snapshot_id"])
         dam_nodes = nodes.filter(pl.col("snapshot_id").str.starts_with("dam"))

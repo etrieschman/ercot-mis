@@ -48,10 +48,11 @@ some rows are *split-bus* operations that change topology rather than remove an
 element.
 
 **GTCs.** The CRR package ships its GTCs (name, limit, members with factor and
-direction). The DAM package has no GTC file. Per Nodal Protocols 3.10.7.6 the
-definitions and day-ahead limits are ECEII products: `NP3-766-M` Generic Transmission
-Limits (daily) and `NP3-770-M` GTC Methodology. Each GTL is enforced as a base-case
-constraint in CRR, DAM and real time, one DAM limit per operating day.
+direction) under short codes. The DAM package has no GTC file; the daily GTL workbook
+(`NP3-766-M`, see generic-transmission-limits.md) gives hourly day-ahead and
+real-time limits under human-readable names, and nothing links the two name sets, so
+a manual crosswalk lives in `data/overrides/gtc_names.csv`. Each GTL is enforced as a
+base-case constraint in CRR, DAM and real time.
 
 **Monitored flags.** DAM `Monitored?` and `Monitored and Secured?` are the CIM branch
 flags `DAM Monitored` / `DAM Secured` (NMMS modeling guidelines; defaults FALSE/TRUE,
@@ -85,10 +86,14 @@ to one. Some DAM settlement points have no bus in a given hour.
   CRR circuit id); `prefix` (exactly one DAM name is the operations name plus at
   most two characters); otherwise `unmatched`, with the number of candidates. Every
   CRR branch is listed once; unmatched DAM branches are listed with a null CRR side.
-- **Remaining matching order**: settlement points and generator/load names for
-  nodes, then buses through matched branch endpoints, then contingencies by name
-  with member sets compared in the matched vocabulary. Every match records
-  `match_method`; every unmatched record is output.
+- **Node matching** (`session.match_nodes`): a settlement point attached to exactly
+  one node on each side (zones and hubs touch many CRR buses and are skipped), then
+  the endpoints of matched branches by vote (a pair is accepted when it is the top
+  vote for both nodes and either has two agreeing branches or both nodes have a
+  single matched branch; tied votes stay unmatched). Then `unmatched` with the number
+  of competing candidates. Unmatched DAM nodes are listed with a null CRR side.
+- **Still to do**: contingencies by name, then member sets in the matched
+  vocabulary. Every match records `match_method`; every unmatched record is output.
 - **Ratings are facts**: store the CRR CSV ratings and RAW rate A/B/C both; the
   derate fraction is an observation the report checks, not a rule the code applies.
 

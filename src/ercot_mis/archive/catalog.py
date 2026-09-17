@@ -275,6 +275,7 @@ class Catalog:
         """Archived packages of a product, newest posting first, each with its member hashes."""
         rows = self.con.execute(
             """SELECT b.sha256, b.path, any_value(s.doc_id) AS doc_id, max(d.posted_at) AS posted_at,
+                      try_cast(any_value(d.operating_date) AS DATE) AS operating_date,
                       list(m.member_path ORDER BY m.member_path) AS member_paths,
                       list(m.member_sha256 ORDER BY m.member_path) AS member_hashes
                FROM archive_blob b
@@ -286,8 +287,9 @@ class Catalog:
                ORDER BY posted_at DESC NULLS LAST, b.sha256""",
             [emil_id],
         ).fetchall()
-        return [{"sha256": sha, "path": path, "doc_id": doc_id, "posted_at": posted,
-                 "members": dict(zip(paths or [], hashes or []))} for sha, path, doc_id, posted, paths, hashes in rows]
+        return [{"sha256": sha, "path": path, "doc_id": doc_id, "posted_at": posted, "operating_date": operating_date,
+                 "members": {p: h for p, h in zip(paths or [], hashes or []) if p is not None}}
+                for sha, path, doc_id, posted, operating_date, paths, hashes in rows]
 
     def artifact_keys(self, layer: str) -> set[str]:
         return {k for (k,) in self.con.execute("SELECT artifact_key FROM artifact WHERE layer = ?", [layer]).fetchall()}

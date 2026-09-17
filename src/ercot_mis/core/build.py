@@ -22,7 +22,7 @@ LAYER = "core"
 DAM_PRODUCT = snapshot.DAM_PRODUCT
 
 # Bump when the set of tables or how they are assembled changes.
-VERSION = 3
+VERSION = 4
 TABLES = ("node", "branch", "branch_rating", "contingency", "contingency_outage", "gtc", "gtc_member")
 
 
@@ -45,6 +45,18 @@ CRR_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "crr_mapping_autos"
               "crr_monitored_lines_and_transformers", "crr_contingencies", "crr_non_thermal_constraints")
 
 
+def _gtl_for_day(session, day) -> pl.DataFrame:
+    """The latest GTL workbook rows for a delivery date, or an empty frame when none is archived."""
+    folder = session.data_dir / "raw" / "gtl_hourly"
+    if not folder.is_dir():
+        return pl.DataFrame(schema={"hour_ending": pl.Int64, "gtc_name": pl.String, "market": pl.String, "limit_mw": pl.Float64})
+    rows = session.raw("gtl_hourly").filter(pl.col("delivery_date") == day).collect()
+    if rows.is_empty():
+        return rows.select("hour_ending", "gtc_name", "market", "limit_mw")
+    latest = rows.filter(pl.col("doc_id") == rows.sort("doc_id")["doc_id"][-1])  # doc IDs grow with posting time
+    return latest.select("hour_ending", "gtc_name", "market", "limit_mw")
+
+
 def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame) -> dict[str, pl.DataFrame]:
     """Core tables for every snapshot of one package, read from its raw artifacts."""
     names = DAM_TABLES if emil_id == DAM_PRODUCT else CRR_TABLES
@@ -52,6 +64,10 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame)
     missing = [t for t, v in raw.items() if v is None]
     if missing:
         raise FileNotFoundError(f"raw tables not built for this package: {missing}")
+    if emil_id == DAM_PRODUCT:
+        day = snaps["operating_date"][0]
+        gtl = _gtl_for_day(session, day)
+        crosswalk = gtc.name_crosswalk(session.data_dir)
     parts: dict[str, list[pl.DataFrame]] = {t: [] for t in TABLES}
     for snap in snaps.iter_rows(named=True):
         if emil_id == DAM_PRODUCT:
@@ -59,7 +75,7 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame)
             nodes = node.dam_nodes(r["psse_bus"], r["dam_lines"], r["dam_transformers"], r["dam_generators"], r["dam_loads"], r["dam_settlement_points"])
             branches, ratings = branch.dam_branches(nodes, r["psse_branch"], r["psse_transformer"], r["dam_lines"], r["dam_transformers"])
             contingencies, outages = contingency.dam_contingencies(branches, nodes, r["dam_contingencies"])
-            gtcs, members = gtc.no_gtcs()
+            gtcs, members = gtc.dam_gtcs(gtl.filter(pl.col("hour_ending") == snap["hour"]), crosswalk)
         else:
             r = {t: raw[t].filter(pl.col("month") == snap["month"]) for t in names}
             if r["psse_bus"].is_empty():
