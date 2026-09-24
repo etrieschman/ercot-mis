@@ -61,7 +61,7 @@ def test_contracted_network_drops_ties_loops_islands_and_out_of_service():
     dropped = dict(net.dropped_branches.select("branch_id", "reason").rows())
     assert dropped == {"T": "contracted_tie", "P": "loop", "X": "out_of_service", "I": "island"}
     assert dict(net.dropped_nodes.rows()) == {"D": "isolated", "E": "island", "F": "island"}
-    assert net.slack_node_id == "B" and net.nodes.filter(pl.col("is_slack"))["node_id"].to_list() == ["B"]
+    assert net.slack_node_id == "B" and net.slack_source == "ercot" and net.nodes.filter(pl.col("is_slack"))["node_id"].to_list() == ["B"]
     # endpoints as dense indexes
     l1 = net.branches.filter(pl.col("branch_id") == "L1").row(0, named=True)
     assert (l1["from_index"], l1["to_index"]) == (0, 1) and l1["tap_ratio"] == 1.0
@@ -88,14 +88,27 @@ def test_raw_ratings_treat_zero_as_unlimited_and_limits_option_widens():
     assert base.branches.filter(pl.col("branch_id") == "L1")["contingency_limit_mw"][0] == 100.0
 
 
-def test_contingencies_become_index_sets_with_drop_and_unresolved_counts():
+def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons():
     net = build_network("crr:monthly:2026-10:r1", _core())
     by = {r["contingency_id"]: r for r in net.contingencies.to_dicts()}
+    assert sorted(by) == ["C1", "C4"]
     assert by["C1"]["branch_ids"] == ["L1"] and by["C1"]["n_dropped"] == 1  # the tie outage is a no-op after contraction
     assert by["C1"]["branch_indexes"] == [0]
-    assert by["C2"]["is_empty"] and by["C2"]["n_unresolved"] == 1
-    assert by["C3"]["is_empty"] and by["C3"]["n_dropped"] == 1  # X is out of service
     assert by["C4"]["branch_ids"] == ["L3"] and by["C4"]["n_other_rows"] == 1
+    dropped = {r["contingency_id"]: r for r in net.dropped_contingencies.to_dicts()}
+    assert dropped["C2"]["reason"] == "empty" and dropped["C2"]["n_unresolved"] == 1
+    assert dropped["C3"]["reason"] == "empty" and dropped["C3"]["n_dropped"] == 1  # X is out of service
+    assert net.summary()["dropped_contingencies"] == {"empty": 2}
+    kept = build_network("crr:monthly:2026-10:r1", _core(), Options(drop_empty_contingencies=False))
+    assert kept.contingencies.height == 4 and kept.contingencies.filter(pl.col("is_empty"))["contingency_id"].to_list() == ["C2", "C3"]
+    assert kept.dropped_contingencies.is_empty()
+
+
+def test_slack_falls_back_to_the_busiest_node_when_no_swing_bus_survives():
+    core = _core()
+    node = core.node.with_columns(pl.when(pl.col("psse_bus_number") == 3).then(1).otherwise(pl.col("bus_type")).alias("bus_type"))
+    net = build_network("crr:monthly:2026-10:r1", CoreTables(node, core.branch, core.branch_rating, core.contingency, core.contingency_outage, core.gtc, core.gtc_member))
+    assert net.slack_source == "fallback" and net.slack_node_id == "B"  # B still has the most branches
 
 
 def test_gtc_members_are_signed_and_counted():

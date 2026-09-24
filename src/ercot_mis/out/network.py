@@ -16,9 +16,11 @@ What the assembly does, in order:
    no flow in a DC model and is dropped. Nodes with no branch left, and any component
    smaller than the largest one, are dropped with the branches inside them. Every
    drop is listed in ``dropped_branches`` / ``dropped_nodes`` with its reason.
-   The slack is the type-3 (swing) node with the most branches, then the highest
-   voltage; DAM marks one, CRR several. Negative reactances (series capacitors) are
-   kept as written.
+   The slack is ERCOT's: the swing bus (type 3) the RAW marks inside the kept
+   network. The CRR RAW marks one per island, so after the islands are dropped one
+   remains; if several remained the busiest would be taken, and if none, the busiest
+   node, with ``slack_source`` saying which case applied. Negative reactances (series
+   capacitors) are kept as written.
 3. **Limits.** ``base_limit_mw`` applies in the base case, ``contingency_limit_mw``
    under every contingency; both are ``+inf`` where the model does not enforce the
    branch (``limits``). CRR limits come from the monitored-element CSV for one
@@ -27,8 +29,10 @@ What the assembly does, in order:
 4. **Contingencies.** Every contingency of the model, as the indexes of the branches
    it removes that are in the network. Outages of dropped branches (a breaker in a
    contracted CRR node), unresolved device names, and DAM's load, generator,
-   settlement-point and split-bus rows are counted, not applied; a contingency whose
-   set comes out empty is kept and flagged so it can be skipped or reported.
+   settlement-point and split-bus rows are counted, not applied. A contingency whose
+   set comes out empty (every element it removes is already out of service, a
+   contracted tie, or unknown to the RAW) constrains nothing beyond the base case; it
+   is dropped and listed in ``dropped_contingencies`` (``drop_empty_contingencies``).
 5. **GTCs.** Each member's factor is signed with the branch's from-to orientation.
    DAM GTCs carry limits and the CRR id from the manual crosswalk but no members
    (see docs/datasets/generic-transmission-limits.md).
@@ -74,6 +78,10 @@ class Options:
     keep_out_of_service: bool = False
     """Keep branches the RAW marks out of service (they still count as topology)."""
 
+    drop_empty_contingencies: bool = True
+    """Drop contingencies that remove no branch of the network (listed in
+    ``dropped_contingencies``); with False they stay, flagged ``is_empty``."""
+
 
 @dataclass(frozen=True)
 class Network:
@@ -82,6 +90,9 @@ class Network:
     snapshot_id: str
     options: Options
     slack_node_id: str | None
+    slack_source: str
+    """``"ercot"`` when the slack is a swing bus the RAW marks, ``"fallback"`` when none
+    survived and the busiest node stands in."""
     nodes: pl.DataFrame
     """``index, node_id, station, kv, n_buses, psse_bus_number, is_slack``."""
     branches: pl.DataFrame
@@ -99,6 +110,8 @@ class Network:
     ``loop``, ``island``."""
     dropped_nodes: pl.DataFrame
     """``node_id, reason``; reasons ``isolated`` (no branch) and ``island``."""
+    dropped_contingencies: pl.DataFrame
+    """``contingency_id, reason, n_dropped, n_unresolved, n_other_rows``; reason ``empty``."""
 
     @property
     def n_nodes(self) -> int:
@@ -114,6 +127,8 @@ class Network:
             "snapshot_id": self.snapshot_id, "nodes": self.n_nodes, "branches": self.n_branches,
             "limited_branches": int(self.branches["is_limited"].sum()),
             "contingencies": self.contingencies.height, "empty_contingencies": int(self.contingencies["is_empty"].sum()),
+            "dropped_contingencies": {r: n for r, n in self.dropped_contingencies.group_by("reason").len().sort("reason").rows()},
+            "slack": {"node_id": self.slack_node_id, "source": self.slack_source},
             "gtcs": self.gtcs.height, "gtc_members": self.gtc_members.height,
             "dropped_branches": {r: n for r, n in self.dropped_branches.group_by("reason").len().sort("reason").rows()},
             "dropped_nodes": {r: n for r, n in self.dropped_nodes.group_by("reason").len().sort("reason").rows()},
@@ -242,7 +257,9 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
              .sort("node_id").with_row_index("index"))
     degree = pl.concat([kept.select(pl.col("from_node_id").alias("node_id")), kept.select(pl.col("to_node_id").alias("node_id"))]).group_by("node_id").len()
     nodes = nodes.join(degree, on="node_id", how="left").with_columns(pl.col("len").fill_null(0))
-    candidates = nodes.filter(pl.col("_slack")) if nodes["_slack"].any() else nodes
+    marked = nodes.filter(pl.col("_slack"))
+    slack_source = "ercot" if marked.height else "fallback"
+    candidates = marked if marked.height else nodes
     slack = candidates.sort("len", "kv", "node_id", descending=[True, True, False])["node_id"][0] if candidates.height else None
     nodes = nodes.with_columns((pl.col("node_id") == slack).alias("is_slack")).select(
         "index", "node_id", "station", "kv", "n_buses", "psse_bus_number", "is_slack")
@@ -276,6 +293,10 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
                      .with_columns((pl.col("n_outages") == 0).alias("is_empty"))
                      .select("contingency_id", "branch_ids", "branch_indexes", "n_outages", "n_dropped", "n_unresolved", "n_other_rows", "has_split_bus", "is_empty")
                      .sort("contingency_id"))
+    empty = contingencies.filter(pl.col("is_empty")) if options.drop_empty_contingencies else contingencies.clear()
+    dropped_contingencies = empty.select("contingency_id", pl.lit("empty").alias("reason"), "n_dropped", "n_unresolved", "n_other_rows")
+    if options.drop_empty_contingencies:
+        contingencies = contingencies.filter(~pl.col("is_empty"))
 
     # GTCs: factor signed with the branch orientation; members outside the network are unresolved.
     sign = pl.when(pl.col("flow_direction").str.to_uppercase().str.starts_with("TO")).then(-1.0).otherwise(1.0)
@@ -287,7 +308,8 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
             .with_columns(pl.col("n_members").fill_null(0), pl.col("n_unresolved").fill_null(0))
             .select("gtc_id", "source", "limit_mw", "n_members", "n_unresolved", "crr_gtc_id").sort("gtc_id"))
 
-    return Network(snapshot_id, options, slack, nodes, branches, contingencies, gtcs, gtc_members, dropped_branches, dropped_nodes.sort("node_id"))
+    return Network(snapshot_id, options, slack, slack_source, nodes, branches, contingencies, gtcs, gtc_members,
+                   dropped_branches, dropped_nodes.sort("node_id"), dropped_contingencies)
 
 
 def core_tables(session, snapshot_id: str) -> CoreTables:

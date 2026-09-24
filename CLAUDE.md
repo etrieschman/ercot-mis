@@ -269,9 +269,15 @@ Then, in order:
    decide it there before writing the case.
 
 Open decisions for the user: keep capturing every DAM day (see `scripts/probe.py` and
-the catalog for sizes)? Install Julia for the PowerFlowData.jl cross-check? Which
-contingencies count as empty in `out.network` (CRR breaker-only outages after
-contraction are kept and flagged `is_empty`; skip them or report them)?
+the catalog for sizes)? Install Julia for the PowerFlowData.jl cross-check?
+
+Decided 2026-09-24 with the user: the slack is ERCOT's swing bus (`slack_source`
+records a fallback); empty contingencies are dropped and listed in
+`dropped_contingencies`, never silently; the audit lives on the `Network` (and later
+in an `out` table), not in a log file. Contingency matching is many-to-one in places:
+the report shows many unmatched CRR contingencies whose outage set sits inside exactly
+one DAM contingency that another CRR contingency already matched by name, so a
+`subset` method with an explicit many-to-one flag is the next matcher change.
 
 ## EWS facts learned the hard way (keep)
 

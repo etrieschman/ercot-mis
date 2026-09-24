@@ -23,19 +23,29 @@ and its contingency keys from `branch_indexes`.
   in-service branch (type 4 and others) and occasionally a small component apart
   from the main grid. A DC model needs one connected component; the largest is kept
   and the rest listed in `dropped_nodes` (`isolated`, `island`) with their branches.
-- **Slack.** The DAM RAW marks one slack bus; the CRR RAW marks several (type 3). The
-  slack node is the type-3 node with the most branches, then the highest voltage, else
-  the busiest node. The choice does not change DC flows; it is recorded in
-  `slack_node_id` and `is_slack`.
+- **Slack is ERCOT's.** The DAM RAW marks one swing bus (type 3). The CRR RAW marks
+  one per island, and all but one of those islands are generator terminal buses cut
+  off from the grid that month, so after islands are dropped one swing bus remains
+  and it is the slack. If several remained the busiest would be taken; if none, the
+  busiest node stands in. `slack_source` says which case applied (`ercot` or
+  `fallback`), `slack_node_id` and `is_slack` say which node. The choice does not
+  change DC flows.
 - **Negative reactances** (series capacitors) are kept as written in both models.
 - **DAM contingencies** have rows a topology model cannot apply: load, generator and
   settlement-point outages (injection changes, not topology) and split-bus operations
   (topology changes that are not element removals). They are counted per contingency
   (`n_other_rows`, `has_split_bus`) and the branch outages are applied.
-- **CRR breaker outages** vanish under contraction: a tie inside a contracted node is
-  not a branch of the network, so the contingency's `n_dropped` counts it and the
-  contingency may come out empty (`is_empty`). Empty contingencies are kept so the
-  consumer can decide to skip or report them.
+- **Empty contingencies are dropped and listed.** A contingency is empty when none
+  of the elements it removes is a branch of the network: the equipment is already out
+  of service in that month's RAW (the most common case), it is a breaker or switch
+  that contraction folded into a node, or the RAW does not know the name. Removing an
+  absent element constrains nothing beyond the base case, so the contingency is
+  dropped (`drop_empty_contingencies`) and listed in `dropped_contingencies` with its
+  counts, the same way dropped branches and nodes are.
+- **The audit travels with the network.** `dropped_branches`, `dropped_nodes` and
+  `dropped_contingencies` are frames on the `Network`, and `summary()` gives the
+  counts by reason. No log file: when `out/` is written to disk the same frames become
+  an audit table per snapshot, queryable like any other.
 - **GTC member factors are signed** with the branch's from-to orientation (`To-From`
   negates). DAM GTC rows carry the GTL limit and the crosswalked CRR id but no
   members until NP3-770-M is parsed (docs/datasets/generic-transmission-limits.md).
