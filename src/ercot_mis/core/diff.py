@@ -1,4 +1,5 @@
-"""``core.diff_branch``: how matched CRR and DAM branches differ.
+"""``core.diff_branch`` and ``core.diff_settlement_point``: how the two models' descriptions
+of one element differ.
 
 ``core.match_*`` records identity; this module records the differences between the
 two descriptions of one element, side by side and never smoothed over. One row per
@@ -14,6 +15,12 @@ model enforces, plus ``same_*`` verdicts:
 
 CRR ratings are the monitored-element CSV block for one time of use (null where the
 CRR does not monitor the branch); DAM ratings are the RAW rate A and B.
+
+``diff_settlement_point`` compares, per settlement point name (identical in both
+models), the node sets the two models put it on: the CRR nodes are translated to DAM
+node keys through ``core.match_node`` and compared with the DAM nodes, with the
+weight they share. ``same_nodes`` is true when the translated CRR set equals the DAM
+set; ``n_crr_nodes_unmatched`` says how much of the CRR side could not be translated.
 """
 
 from __future__ import annotations
@@ -61,3 +68,30 @@ def diff_branches(matches: pl.DataFrame, crr_branch: pl.DataFrame, crr_nodes: pl
                           reactance_agrees(pl.col("crr_x_pu"), pl.col("dam_x_pu")).alias("same_reactance"),
                           ((pl.col("crr_kv_lo") == pl.col("dam_kv_lo")) & (pl.col("crr_kv_hi") == pl.col("dam_kv_hi"))).alias("same_kv"))
             .select(COLUMNS).sort("crr_branch_id", "dam_branch_id"))
+
+
+SP_COLUMNS = ("settlement_point_id", "crr_kind", "dam_kind", "same_kind", "n_crr_nodes", "n_dam_nodes", "n_crr_nodes_unmatched",
+              "n_shared_nodes", "shared_weight_crr", "shared_weight_dam", "same_nodes")
+
+
+def diff_settlement_points(crr_points: pl.DataFrame, crr_point_nodes: pl.DataFrame, dam_points: pl.DataFrame,
+                           dam_point_nodes: pl.DataFrame, node_matches: pl.DataFrame) -> pl.DataFrame:
+    """One row per settlement point present in both snapshots (``core.settlement_point[_node]`` rows)."""
+    translate = node_matches.filter(pl.col("match_method") != "unmatched").select(pl.col("crr_node_key").alias("node_key"), pl.col("dam_node_key").alias("_dam"))
+    crr = (crr_point_nodes.filter(pl.col("is_resolved")).join(translate, on="node_key", how="left")
+           .select("settlement_point_id", pl.col("_dam").alias("node_key"), pl.col("weight").alias("_w_crr")))
+    dam = dam_point_nodes.filter(pl.col("is_resolved")).select("settlement_point_id", "node_key", pl.col("weight").alias("_w_dam"))
+    both = (crr_points.select("settlement_point_id", pl.col("kind").alias("crr_kind"))
+            .join(dam_points.select("settlement_point_id", pl.col("kind").alias("dam_kind")), on="settlement_point_id", how="inner"))
+    crr_counts = crr.group_by("settlement_point_id").agg(pl.len().cast(pl.UInt32).alias("n_crr_nodes"), pl.col("node_key").is_null().sum().cast(pl.UInt32).alias("n_crr_nodes_unmatched"))
+    dam_counts = dam.group_by("settlement_point_id").agg(pl.len().cast(pl.UInt32).alias("n_dam_nodes"))
+    shared = (crr.filter(pl.col("node_key").is_not_null()).join(dam, on=["settlement_point_id", "node_key"], how="inner")
+              .group_by("settlement_point_id").agg(pl.len().cast(pl.UInt32).alias("n_shared_nodes"), pl.col("_w_crr").sum().alias("shared_weight_crr"),
+                                                   pl.col("_w_dam").sum().alias("shared_weight_dam")))
+    return (both.join(crr_counts, on="settlement_point_id", how="left").join(dam_counts, on="settlement_point_id", how="left")
+            .join(shared, on="settlement_point_id", how="left")
+            .with_columns(pl.col("n_crr_nodes").fill_null(0), pl.col("n_dam_nodes").fill_null(0), pl.col("n_crr_nodes_unmatched").fill_null(0),
+                          pl.col("n_shared_nodes").fill_null(0), pl.col("shared_weight_crr").fill_null(0.0), pl.col("shared_weight_dam").fill_null(0.0))
+            .with_columns((pl.col("crr_kind") == pl.col("dam_kind")).alias("same_kind"),
+                          ((pl.col("n_shared_nodes") == pl.col("n_crr_nodes")) & (pl.col("n_shared_nodes") == pl.col("n_dam_nodes")) & (pl.col("n_shared_nodes") > 0)).alias("same_nodes"))
+            .select(SP_COLUMNS).sort("settlement_point_id"))

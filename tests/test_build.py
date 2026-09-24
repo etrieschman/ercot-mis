@@ -69,7 +69,7 @@ def _dam(tmp_path):
         "README_DAM09152026.txt": b"notes",
         **{f"DAM09152026_{kind}_{hour}.csv": _headers(columns) for hour in ("001", "002") for kind, columns in
            (("Xf", dam_parser.TRANSFORMERS), ("Gn", dam_parser.GENERATORS), ("Ld", dam_parser.LOADS), ("Sp", dam_parser.SETTLEMENT_POINTS),
-            ("Ctg", dam_parser.CONTINGENCIES))},
+            ("Hb", dam_parser.HUB_BUSES), ("Ctg", dam_parser.CONTINGENCIES))},
     }))
     return package
 

@@ -32,3 +32,19 @@ def test_diff_branches_compares_kind_reactance_kv_and_ratings_side_by_side():
     c3 = by["C3"]
     assert (c3["same_kind"], c3["same_kv"], c3["crr_in_service"], c3["dam_in_service"]) == (False, False, False, True)
     assert c3["crr_base_mw"] is None  # only the CRR CSV block counts as a CRR rating here
+
+
+def test_diff_settlement_points_translates_crr_nodes_and_compares_sets():
+    crr_p = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H", "RN_ONLY_CRR"], "kind": ["resource_node", "hub", "resource_node"]})
+    crr_n = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H", "HB_H", "HB_H"], "node_key": ["c1", "c1", "c2", "c3"],
+                          "weight": [1.0, 0.5, 0.25, 0.25], "is_resolved": [True] * 4})
+    dam_p = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H"], "kind": ["resource_node", "hub"]})
+    dam_n = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H", "HB_H"], "node_key": ["d1", "d1", "d2"], "weight": [1.0, 0.6, 0.4], "is_resolved": [True] * 3})
+    matches = pl.DataFrame({"crr_node_key": ["c1", "c2", "c3"], "dam_node_key": ["d1", "d2", None], "match_method": ["settlement_point", "branch_endpoints", "unmatched"]})
+    result = diff.diff_settlement_points(crr_p, crr_n, dam_p, dam_n, matches)
+    assert list(result.columns) == list(diff.SP_COLUMNS) and result["settlement_point_id"].to_list() == ["HB_H", "RN_A"]
+    by = {r["settlement_point_id"]: r for r in result.to_dicts()}
+    assert by["RN_A"]["same_nodes"] and by["RN_A"]["n_shared_nodes"] == 1
+    hub = by["HB_H"]
+    assert (hub["n_crr_nodes"], hub["n_dam_nodes"], hub["n_crr_nodes_unmatched"], hub["n_shared_nodes"], hub["same_nodes"]) == (3, 2, 1, 2, False)
+    assert (round(hub["shared_weight_crr"], 3), round(hub["shared_weight_dam"], 3)) == (0.75, 1.0)

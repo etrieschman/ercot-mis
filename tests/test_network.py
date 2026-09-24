@@ -50,7 +50,10 @@ def _core():
     gtc = pl.DataFrame({"gtc_id": ["G1"], "source": ["crr_csv"], "limit_mw": [500.0], "crr_gtc_id": ["G1"]})
     member = pl.DataFrame({"gtc_id": ["G1", "G1", "G1"], "branch_id": ["L1", "L3", "X"], "factor": [1.0, 0.5, 1.0],
                            "flow_direction": ["From-To", "To-From", "From-To"], "is_resolved": [True, True, True]})
-    return CoreTables(node, branch, rating, contingency, outage, gtc, member)
+    points = pl.DataFrame({"settlement_point_id": ["RN_1", "HB_X", "RN_ISLAND"], "kind": ["resource_node", "hub", "resource_node"]})
+    point_nodes = pl.DataFrame({"settlement_point_id": ["RN_1", "HB_X", "HB_X", "HB_X", "RN_ISLAND"], "node_key": ["A", "A", "C", "E", "E"],
+                                "weight": [1.0, 0.5, 0.25, 0.25, 1.0], "is_resolved": [True] * 5})
+    return CoreTables(node, branch, rating, contingency, outage, gtc, member, points, point_nodes)
 
 
 def test_contracted_network_drops_ties_loops_islands_and_out_of_service():
@@ -115,6 +118,19 @@ def test_gtc_members_are_signed_and_counted():
     net = build_network("crr:monthly:2026-10:r1", _core())
     assert net.gtcs.to_dicts()[0] == {"gtc_id": "G1", "source": "crr_csv", "limit_mw": 500.0, "n_members": 2, "n_unresolved": 1, "crr_gtc_id": "G1"}
     assert {r["branch_id"]: r["factor"] for r in net.gtc_members.to_dicts()} == {"L1": 1.0, "L3": -0.5}
+
+
+def test_settlement_points_are_renormalized_over_kept_nodes():
+    net = build_network("crr:monthly:2026-10:r1", _core())
+    by = {r["settlement_point_id"]: r for r in net.settlement_points.to_dicts()}
+    assert (by["RN_1"]["n_nodes"], by["RN_1"]["weight_dropped"]) == (1, 0.0)
+    assert (by["HB_X"]["n_nodes"], by["HB_X"]["weight_dropped"]) == (2, 0.25)  # node E is in a dropped island
+    assert (by["RN_ISLAND"]["n_nodes"], by["RN_ISLAND"]["weight_dropped"]) == (0, 1.0)
+    hub = {r["node_id"]: (r["node_index"], round(r["weight"], 4)) for r in net.settlement_point_nodes.filter(pl.col("settlement_point_id") == "HB_X").to_dicts()}
+    assert hub == {"A": (0, round(2 / 3, 4)), "C": (2, round(1 / 3, 4))}
+    loose = build_network("crr:monthly:2026-10:r1", _core(), Options(contract_ties=False))
+    rn = {r["node_id"]: r["weight"] for r in loose.settlement_point_nodes.filter(pl.col("settlement_point_id") == "RN_1").to_dicts()}
+    assert rn == {"A@1": 0.5, "A@2": 0.5}  # spread over the group's buses
 
 
 def test_without_contraction_ties_are_branches_between_their_own_buses():

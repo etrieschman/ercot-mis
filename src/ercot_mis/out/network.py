@@ -36,6 +36,9 @@ What the assembly does, in order:
 5. **GTCs.** Each member's factor is signed with the branch's from-to orientation.
    DAM GTCs carry limits and the CRR id from the manual crosswalk but no members
    (see docs/datasets/generic-transmission-limits.md).
+6. **Settlement points.** Each settlement point's node weights (``core.
+   settlement_point_node``) restricted to the kept nodes and renormalized; the weight
+   that fell on dropped nodes is recorded per point as ``weight_dropped``.
 
 Nothing here decides which contingencies island the network: that depends on the
 consumer's connectivity check, as in ``ftr_align``. Nothing is written to disk yet;
@@ -105,6 +108,10 @@ class Network:
     """``gtc_id, source, limit_mw, n_members, n_unresolved, crr_gtc_id``."""
     gtc_members: pl.DataFrame
     """``gtc_id, branch_id, branch_index, factor`` (signed with the branch orientation)."""
+    settlement_points: pl.DataFrame
+    """``settlement_point_id, kind, n_nodes, weight_dropped``."""
+    settlement_point_nodes: pl.DataFrame
+    """``settlement_point_id, node_id, node_index, weight`` (weights sum to one per point)."""
     dropped_branches: pl.DataFrame
     """``branch_id, reason, is_monitored``; reasons ``out_of_service``, ``contracted_tie``,
     ``loop``, ``island``."""
@@ -130,6 +137,8 @@ class Network:
             "dropped_contingencies": {r: n for r, n in self.dropped_contingencies.group_by("reason").len().sort("reason").rows()},
             "slack": {"node_id": self.slack_node_id, "source": self.slack_source},
             "gtcs": self.gtcs.height, "gtc_members": self.gtc_members.height,
+            "settlement_points": self.settlement_points.height,
+            "settlement_points_without_node": int((self.settlement_points["n_nodes"] == 0).sum()),
             "dropped_branches": {r: n for r, n in self.dropped_branches.group_by("reason").len().sort("reason").rows()},
             "dropped_nodes": {r: n for r, n in self.dropped_nodes.group_by("reason").len().sort("reason").rows()},
             "options": asdict(self.options),
@@ -153,6 +162,9 @@ class CoreTables:
         schema={"gtc_id": pl.String, "source": pl.String, "limit_mw": pl.Float64, "crr_gtc_id": pl.String}))
     gtc_member: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(
         schema={"gtc_id": pl.String, "branch_id": pl.String, "factor": pl.Float64, "flow_direction": pl.String, "is_resolved": pl.Boolean}))
+    settlement_point: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(schema={"settlement_point_id": pl.String, "kind": pl.String}))
+    settlement_point_node: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(
+        schema={"settlement_point_id": pl.String, "node_key": pl.String, "weight": pl.Float64, "is_resolved": pl.Boolean}))
 
 
 def is_dam(snapshot_id: str) -> bool:
@@ -308,8 +320,28 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
             .with_columns(pl.col("n_members").fill_null(0), pl.col("n_unresolved").fill_null(0))
             .select("gtc_id", "source", "limit_mw", "n_members", "n_unresolved", "crr_gtc_id").sort("gtc_id"))
 
+    # Settlement points on the kept nodes. Without contraction a CRR point's node_key is a group key;
+    # its buses are the group members, so weights are spread over them equally.
+    point_rows = core.settlement_point_node.filter(pl.col("is_resolved")).select("settlement_point_id", "node_key", "weight")
+    if options.contract_ties:
+        point_rows = point_rows.with_columns(pl.col("node_key").alias("node_id"))
+    else:
+        members = buses.group_by("node_key").agg(pl.col("node_id"))
+        point_rows = (point_rows.join(members, on="node_key", how="left").explode("node_id")
+                      .with_columns((pl.col("weight") / pl.col("node_id").count().over("settlement_point_id", "node_key")).alias("weight")))
+    point_rows = point_rows.join(index_of.rename({"index": "node_index"}), on="node_id", how="left")
+    kept_weight = point_rows.group_by("settlement_point_id").agg(pl.col("weight").filter(pl.col("node_index").is_not_null()).sum().alias("_kept"),
+                                                                 pl.col("weight").filter(pl.col("node_index").is_null()).sum().alias("weight_dropped"))
+    settlement_point_nodes = (point_rows.filter(pl.col("node_index").is_not_null()).join(kept_weight, on="settlement_point_id")
+                              .with_columns((pl.col("weight") / pl.col("_kept")).alias("weight"))
+                              .select("settlement_point_id", "node_id", "node_index", "weight").sort("settlement_point_id", "node_id"))
+    settlement_points = (core.settlement_point.select("settlement_point_id", "kind").join(kept_weight, on="settlement_point_id", how="left")
+                         .join(settlement_point_nodes.group_by("settlement_point_id").len().rename({"len": "n_nodes"}), on="settlement_point_id", how="left")
+                         .with_columns(pl.col("n_nodes").fill_null(0).cast(pl.UInt32), pl.col("weight_dropped").fill_null(0.0))
+                         .select("settlement_point_id", "kind", "n_nodes", "weight_dropped").sort("settlement_point_id"))
+
     return Network(snapshot_id, options, slack, slack_source, nodes, branches, contingencies, gtcs, gtc_members,
-                   dropped_branches, dropped_nodes.sort("node_id"), dropped_contingencies)
+                   settlement_points, settlement_point_nodes, dropped_branches, dropped_nodes.sort("node_id"), dropped_contingencies)
 
 
 def core_tables(session, snapshot_id: str) -> CoreTables:
@@ -320,4 +352,5 @@ def core_tables(session, snapshot_id: str) -> CoreTables:
     node = rows("node")
     if node.is_empty():
         raise KeyError(f"no core rows for {snapshot_id!r}; run build_core()")
-    return CoreTables(node, rows("branch"), rows("branch_rating"), rows("contingency"), rows("contingency_outage"), rows("gtc"), rows("gtc_member"))
+    return CoreTables(node, rows("branch"), rows("branch_rating"), rows("contingency"), rows("contingency_outage"), rows("gtc"), rows("gtc_member"),
+                      rows("settlement_point"), rows("settlement_point_node"))

@@ -86,9 +86,16 @@ on some branches), and each model enforces some branches the other does not;
 `core.diff_branch` lists them all.
 
 **Settlement points.** Every CRR source/sink name appears among the DAM settlement
-points; CRR `BusName` is "number name", matching the RAW bus comment. A minority of
-source/sink names (zones, hubs) carry MW-scale weights instead of fractions summing
-to one. Some DAM settlement points have no bus in a given hour.
+points (the DAM has more: logical and PUN resource nodes, DC-tie zones); CRR
+`BusName` is "number name", matching the RAW bus comment, and `PriceNode` is the
+electrical bus. In the CRR file a resource node is one bus with factor one, while the
+hubs (`HB_`) and load zones (`LZ_`) spread over many buses with MW-scale weights. In
+the DAM the `Sp` file gives one bus per resource node (none for hubs and zones, and
+none for logical resource nodes, which point at a combined-cycle settlement point),
+the `Hb` file gives the hub buses, and the `Ld` file gives each load's zone and MW
+distribution factor (summing to one for some zones and to MW for others). Two DAM hubs
+are averages of the others (names ending `AVG`). Some DAM resource nodes have no bus in
+a given hour.
 
 ## Decisions
 
@@ -112,8 +119,20 @@ to one. Some DAM settlement points have no bus in a given hour.
   name-based methods: the report counts matched pairs whose reactance, kind and
   voltage level agree, and nearly all do once the floor is allowed for; the few that
   do not are for `diff_branch`, not for the matcher to hide.
-- **Node matching** (`session.match_nodes`): a settlement point attached to exactly
-  one node on each side (zones and hubs touch many CRR buses and are skipped), then
+- **Settlement points are one table in both models** (`core/settlement_point.py`):
+  `core.settlement_point` (kind from the DAM type or, in CRR, from the `HB_`/`LZ_`/`DC`
+  prefixes) and `core.settlement_point_node` (weights normalized to sum to one, the
+  raw weight kept). DAM hubs take their `Hb` buses at equal weight, the two average
+  hubs are derived (bus average: every hub bus equally; hub average: each hub
+  equally, then its buses), load zones take their in-service loads weighted by LDF,
+  logical resource nodes borrow their combined-cycle point's bus. Cross-model
+  identity is the name; `core.diff_settlement_point` (`session.diff_settlement_points`)
+  translates the CRR nodes through the node match and records whether the node sets
+  agree and how much weight they share.
+- **Node matching** (`session.match_nodes`): settlement points attached to exactly
+  one node on each side vote for (CRR node, DAM node) pairs, and a pair is accepted
+  when every point on either node agrees (zones and hubs touch many CRR buses and are
+  skipped), then
   the endpoints of matched branches by vote (a pair is accepted when it is the top
   vote for both nodes and either has two agreeing branches or both nodes have a
   single matched branch; tied votes stay unmatched). Then `unmatched` with the number
@@ -143,6 +162,12 @@ to one. Some DAM settlement points have no bus in a given hour.
   in `diff_branch` before deciding.
 - Name-matched contingencies whose branch sets differ for reasons other than
   matching coverage (the small remainder the report isolates).
+- Settlement points the two models put on different nodes: a small share of resource
+  nodes, and every hub and load zone, since the CRR spreads hubs and zones over far
+  more buses than the DAM's hub-bus file and load list (the report gives the shared
+  weight). Whether the difference is definition or bus resolution is open.
+- DAM settlement points with no bus in the hour (de-energized resource nodes and
+  logical resource nodes without a combined-cycle point) stay unresolved.
 - How to treat monitored bus ties in a contracted CRR model.
 - Verify the monitored/secured reading against binding constraints in `NP4-191-CD`.
 - The GTL workbook's GTC names against the CRR GTC codes: the crosswalk is manual

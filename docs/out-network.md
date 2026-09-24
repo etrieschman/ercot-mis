@@ -49,6 +49,11 @@ and its contingency keys from `branch_indexes`.
 - **GTC member factors are signed** with the branch's from-to orientation (`To-From`
   negates). DAM GTC rows carry the GTL limit and the crosswalked CRR id but no
   members until NP3-770-M is parsed (docs/datasets/generic-transmission-limits.md).
+- **Settlement points ride along.** `settlement_point_nodes` gives each settlement
+  point's weights over the kept nodes, renormalized to one, and `settlement_points`
+  records the weight that fell on dropped nodes (`weight_dropped`). This is the matrix
+  that maps injections at settlement points (awards, bids) onto nodes. Without
+  contraction a CRR point's weight is spread equally over its group's buses.
 - **Islanding contingencies are not screened here.** Whether removing an outage set
   disconnects the network depends on the consumer's connectivity check, as in
   `ftr_align.network.is_connected`.

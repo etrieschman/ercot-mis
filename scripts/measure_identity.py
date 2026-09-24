@@ -452,6 +452,19 @@ def matching(mis: em.Session, crr_month: date, day: date, hour: int) -> None:
     ratio = both["crr_base_mw"] / both["dam_base_mw"]
     show("  enforced on both sides: CRR base over DAM rate A", n=both.height, quantiles=[round(ratio.quantile(q), 3) for q in (0.05, 0.25, 0.5, 0.75, 0.95)],
          within_1pct=int(((ratio - 1).abs() <= 0.01).sum()))
+    # Settlement points: where each model puts them, and whether the two agree through the node match.
+    for sid, label in ((crr_id, "CRR"), (dam_id, "DAM")):
+        pts = mis.core("settlement_point").filter(pl.col("snapshot_id") == sid).collect()
+        show(f"settlement points {label}", n=pts.height, **{f"{k}": n for k, n in pts.group_by("kind").len().sort("kind").rows()},
+             without_node=int((pts["n_nodes"] == 0).sum()), with_unresolved_rows=int((pts["n_unresolved"] > 0).sum()),
+             multi_node=int((pts["n_nodes"] > 1).sum()), max_nodes=int(pts["n_nodes"].max()))
+    spd = mis.diff_settlement_points(crr_id, dam_id)
+    show("settlement points in both", n=spd.height, same_kind=int(spd["same_kind"].sum()), same_nodes=int(spd["same_nodes"].sum()),
+         with_untranslatable_crr_nodes=int((spd["n_crr_nodes_unmatched"] > 0).sum()),
+         **{f"same_nodes_{k}": f"{ok} of {n}" for k, ok, n in spd.group_by("dam_kind").agg(pl.col("same_nodes").sum(), pl.len()).sort("dam_kind").rows()})
+    hubs = spd.filter(pl.col("dam_kind").is_in(["hub", "load_zone"]))
+    show("  hubs and zones: shared weight", crr_side_quantiles=[round(hubs["shared_weight_crr"].quantile(q), 3) for q in (0, 0.5, 1)],
+         dam_side_quantiles=[round(hubs["shared_weight_dam"].quantile(q), 3) for q in (0, 0.5, 1)])
 
 
 def main() -> None:

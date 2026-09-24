@@ -401,6 +401,26 @@ class Session:
         path.chmod(0o600)
         return result
 
+    def diff_settlement_points(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
+        """``core.diff_settlement_point``: per settlement point name, the node sets the two models
+        put it on, compared through ``core.match_node``. See ``ercot_mis.core.diff``. Cached."""
+        from .core.diff import VERSION, diff_settlement_points
+
+        key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
+        path = self.data_dir / "core" / "diff_settlement_point" / f"v{VERSION}" / f"{key}.parquet"
+        if path.is_file():
+            return pl.read_parquet(path)
+        by = lambda table, sid: self.core(table).filter(pl.col("snapshot_id") == sid).collect()
+        result = diff_settlement_points(by("settlement_point", crr_snapshot_id), by("settlement_point_node", crr_snapshot_id),
+                                        by("settlement_point", dam_snapshot_id), by("settlement_point_node", dam_snapshot_id),
+                                        self.match_nodes(crr_snapshot_id, dam_snapshot_id))
+        result = result.with_columns(pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id"))
+        result = result.select("crr_snapshot_id", "dam_snapshot_id", pl.exclude("crr_snapshot_id", "dam_snapshot_id"))
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        result.write_parquet(path, compression="zstd")
+        path.chmod(0o600)
+        return result
+
     def network(self, snapshot_id: str, options=None):
         """One snapshot as a DC model reads it: ``out.network``, computed on demand.
 

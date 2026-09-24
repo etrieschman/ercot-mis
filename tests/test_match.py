@@ -73,7 +73,7 @@ def test_match_nodes_by_settlement_point_then_branch_endpoints():
     matches = pl.DataFrame({"crr_branch_id": ["L1", "L2"], "dam_branch_id": ["DL1", "DL2"], "match_method": ["exact", "prefix"]})
     result = match.match_nodes(crr_nodes, dam_nodes, crr_branch, dam_branch, matches)
     by = {r["crr_node_key"]: r for r in result.to_dicts() if r["crr_node_key"]}
-    assert (by["c1"]["dam_node_key"], by["c1"]["match_method"], by["c1"]["settlement_point"]) == ("d1", "settlement_point", "SP_A")
+    assert (by["c1"]["dam_node_key"], by["c1"]["match_method"], by["c1"]["settlement_point"], by["c1"]["n_votes"]) == ("d1", "settlement_point", "SP_A", 1)
     assert (by["c2"]["dam_node_key"], by["c2"]["match_method"], by["c2"]["n_votes"]) == ("d2", "branch_endpoints", 2)
     assert (by["c3"]["dam_node_key"], by["c3"]["match_method"]) == ("d3", "branch_endpoints")  # degree 1 on both sides
     assert by["c4"]["match_method"] == "unmatched" and by["c4"]["n_candidates"] == 0
@@ -97,3 +97,16 @@ def test_match_contingencies_by_name_then_by_translated_branch_set():
     d4 = result.filter(pl.col("dam_contingency_id") == "D4").to_dicts()[0]
     assert d4["crr_contingency_id"] is None and d4["has_split_bus"] and d4["match_method"] == "unmatched"
     assert list(result.columns) == list(match.CONTINGENCY_COLUMNS)
+
+
+def test_several_settlement_points_on_one_node_agree_or_block():
+    # c1 hosts SP_A and SP_B, both on d1 in DAM: one match with two votes.
+    # c2 hosts SP_C (on d2) and SP_D (on d3): the points disagree, so c2 stays unmatched by this method.
+    crr_nodes = _nodes(["c1", "c2"], ["S:SP_A|S:SP_B", "S:SP_C|S:SP_D"])
+    dam_nodes = _nodes(["d1", "d2", "d3"], ["S:SP_A|S:SP_B", "S:SP_C", "S:SP_D"])
+    empty = pl.DataFrame(schema={"branch_id": pl.String, "from_node_key": pl.String, "to_node_key": pl.String})
+    matches = pl.DataFrame({"crr_branch_id": [], "dam_branch_id": [], "match_method": []}, schema={"crr_branch_id": pl.String, "dam_branch_id": pl.String, "match_method": pl.String})
+    result = match.match_nodes(crr_nodes, dam_nodes, empty, empty, matches)
+    by = {r["crr_node_key"]: r for r in result.to_dicts() if r["crr_node_key"]}
+    assert (by["c1"]["dam_node_key"], by["c1"]["n_votes"]) == ("d1", 2)
+    assert by["c2"]["match_method"] == "unmatched"

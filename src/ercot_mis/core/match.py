@@ -24,7 +24,7 @@ import re
 
 import polars as pl
 
-VERSION = 2
+VERSION = 3
 
 COLUMNS = ("crr_branch_id", "dam_branch_id", "match_method", "operations_name", "n_candidates")
 
@@ -126,8 +126,11 @@ def match_nodes(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl
 
     Methods, first that succeeds wins:
 
-    1. ``settlement_point``: one settlement point name attached to exactly one node
-       on each side (zones and hubs attach to many CRR buses and are skipped);
+    1. ``settlement_point``: settlement point names attached to exactly one node on
+       each side (zones and hubs attach to many CRR buses and are skipped) vote for a
+       (CRR node, DAM node) pair; a pair is accepted when every point on either node
+       agrees on it, so several resource nodes on one bus count as one match with
+       ``n_votes`` points behind it;
     2. ``branch_endpoints``: over the matched branches, count how often a CRR node
        and a DAM node sit at the same end (either orientation); accept a pair when it
        is the top vote for both nodes and either has at least two votes or both nodes
@@ -139,10 +142,13 @@ def match_nodes(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl
 
     crr_sp = _settlement_points(crr_nodes).group_by("settlement_point").agg(pl.col("node_key").unique().alias("k")).filter(pl.col("k").list.len() == 1).with_columns(pl.col("k").list.first())
     dam_sp = _settlement_points(dam_nodes).group_by("settlement_point").agg(pl.col("node_key").unique().alias("k")).filter(pl.col("k").list.len() == 1).with_columns(pl.col("k").list.first())
-    by_sp = (crr_sp.join(dam_sp, on="settlement_point", suffix="_dam")
-             .select(pl.col("k").alias("crr_node_key"), pl.col("k_dam").alias("dam_node_key"), "settlement_point")
-             .unique(subset=["crr_node_key"], keep="first").unique(subset=["dam_node_key"], keep="first")
-             .with_columns(pl.lit("settlement_point").alias("match_method"), pl.lit(None, pl.UInt32).alias("n_votes"), pl.lit(1, pl.UInt32).alias("n_candidates")))
+    sp_pairs = (crr_sp.join(dam_sp, on="settlement_point", suffix="_dam")
+                .select(pl.col("k").alias("crr_node_key"), pl.col("k_dam").alias("dam_node_key"), "settlement_point"))
+    agreed = (sp_pairs.group_by("crr_node_key", "dam_node_key").agg(pl.col("settlement_point").sort().first(), pl.len().alias("n_votes")))
+    one_dam = agreed.group_by("crr_node_key").len().filter(pl.col("len") == 1)["crr_node_key"]
+    one_crr = agreed.group_by("dam_node_key").len().filter(pl.col("len") == 1)["dam_node_key"]
+    by_sp = (agreed.filter(pl.col("crr_node_key").is_in(one_dam.implode()) & pl.col("dam_node_key").is_in(one_crr.implode()))
+             .with_columns(pl.lit("settlement_point").alias("match_method"), pl.col("n_votes").cast(pl.UInt32), pl.lit(1, pl.UInt32).alias("n_candidates")))
 
     # Endpoint votes from matched branches.
     ends = (branch_matches.filter(pl.col("match_method") != "unmatched").select("crr_branch_id", "dam_branch_id")

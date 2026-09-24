@@ -60,14 +60,16 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   `core.gtc` + `core.gtc_member` (CRR from its CSV with members; DAM hourly limits from
   the GTL workbook with `crr_gtc_id` from the manual crosswalk in
   `data/overrides/gtc_names.csv`, members empty), and `core.match_branch` /
+  `core.settlement_point` + `core.settlement_point_node` (kind, node weights summing to
+  one from CRR participation factors or DAM `Sp`/`Hb`/`Ld`), and `core.match_branch` /
   `core.match_node` per (CRR snapshot, DAM snapshot) via `session.match_branches` and
   `session.match_nodes`, and `core.match_contingency` via `session.match_contingencies`
   (name, then translated branch set; member-set differences recorded).
-  Planned: `core.constraint`, `core.price_node_bus`, `core.settlement_point`,
-  `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_award`,
+  Planned: `core.constraint`, `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_award`,
   `core.hourly_shadow_price`, `core.tou_hours`. `core.diff_branch`
   (`session.diff_branches`) puts matched branches' kind, reactance, voltage levels,
-  service and ratings side by side with `same_*` verdicts; more `diff_*` to come.
+  service and ratings side by side with `same_*` verdicts; `core.diff_settlement_point`
+  (`session.diff_settlement_points`) does the same for settlement point node sets.
 - `out` — what consumers read: `out.network` (`session.network(snapshot_id, Options)`,
   computed on demand, conventions in `docs/out-network.md`), `out.hourly_injection` (q).
 - Layer = folder = DuckDB schema. No PUDL-style `layer_source__type` names.
@@ -192,11 +194,13 @@ src/ercot_mis/
     gtc.py          core.gtc and core.gtc_member (CRR members; DAM hourly limits + crosswalk)
     match.py        core.match_branch (exact -> ops+ckt -> prefix -> prefix+x), core.match_node (settlement
                     point -> matched branch endpoints by vote), core.match_contingency (name -> members)
-    diff.py         core.diff_branch: matched branches side by side (kind, reactance, kV, service, ratings)
+    settlement_point.py  core.settlement_point and core.settlement_point_node (kind, node weights; both models)
+    diff.py         core.diff_branch and core.diff_settlement_point: matched elements side by side
     build.py        writes every core table per package
   out/              layer 3: what consumers read
     network.py      Network for one snapshot: contracted nodes, branches with limits, contingency
-                    index sets, signed GTC members, dropped elements with reasons; Options = judgment calls
+                    index sets, signed GTC members, settlement point weights, dropped elements with
+                    reasons; Options = judgment calls
 scripts/daily_pull.py        fetch pulled EWS products, list tracked ones, then build_raw + build_core; launchd template in scripts/launchd/
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs, GTL hours)
@@ -253,8 +257,9 @@ Then, in order:
    them; decide what an unmatched node or branch becomes (kept in its own model
    only, with the row's `match_method` carried along).
 2. **`diff_node` and `diff_contingency`** on the pattern of `core/diff.py`, then the
-   scorecard from the three diff tables; read `diff_branch` rows where
-   `same_reactance` or `same_kind` is false before deciding what they are.
+   scorecard from the diff tables; read `diff_branch` rows where `same_reactance` or
+   `same_kind` is false, and `diff_settlement_point` rows where `same_nodes` is false,
+   before deciding what they are. A `subset` contingency method (many-to-one) too.
 3. **DAM GTC members**: NP3-770-M ships PDF/PPTX/database files; either parse the
    database or borrow CRR member sets through `crr_gtc_id` inside `out.network`
    (translating branch ids through `match_branch`) and say so in the note.
