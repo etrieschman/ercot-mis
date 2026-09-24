@@ -303,7 +303,12 @@ class Session:
         return pl.DataFrame(build(self, product, workers=workers, limit=limit), schema=BUILD_SCHEMA)
 
     def build_core(self, *, limit: int | None = None) -> pl.DataFrame:
-        """Write ``core.snapshot`` and ``core.node`` from the raw layer. See ``ercot_mis.core.build``."""
+        """Write every core table from the raw layer, skipping packages already built.
+
+        ``core/snapshot.parquet`` is rewritten each time; per package, ``node``, ``branch``,
+        ``branch_rating``, ``contingency``, ``contingency_outage``, ``gtc`` and ``gtc_member``
+        are written under ``core/<table>/emil_id=<EMIL>/``. See ``ercot_mis.core.build``.
+        """
         from .core.build import build
 
         return pl.DataFrame(build(self, limit=limit), schema=BUILD_SCHEMA)
@@ -383,7 +388,7 @@ class Session:
         return self._scan("raw", table)
 
     def core(self, table: str) -> pl.LazyFrame:
-        """A lazy scan over a core table: ``snapshot`` (one file) or ``node`` (one file per package)."""
+        """A lazy scan over a core table: ``snapshot`` (one file) or any per-package table."""
         return self._scan("core", table)
 
     def _scan(self, layer: str, table: str) -> pl.LazyFrame:

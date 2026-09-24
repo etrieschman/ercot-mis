@@ -22,7 +22,7 @@ auction plus `_Upd` revisions); monthly: one a month. Captured by `scripts/daily
   (xlsx: `Lines`, `Autos`), `Outages`, `DynamicRatings`, one-line diagrams (KML, zip).
 
 ## What we parse
-`parsers/crr.py`: `crr_contingencies`, `crr_monitored_lines_and_transformers`,
+`raw/crr.py`: `crr_contingencies`, `crr_monitored_lines_and_transformers`,
 `crr_non_thermal_constraints`, `crr_sources_and_sinks`, `crr_mapping_lines`,
 `crr_mapping_autos`, `crr_outages`, plus the `psse_*` tables from the RAW.
 Archived, not parsed: the XML twins (CSV is canonical), one-line diagrams (images),
@@ -63,4 +63,5 @@ consistent, on every archived package.
 ## Open questions
 - DynamicRatings: parse, and how it modifies monitored ratings.
 - How annual `_Upd` revisions relate to their originals (which members change).
-- Snapshot ID rules for revisions (planned: order by posting time within a logical package).
+- Whether an `_Upd` revision should replace its original in `out` by default, or only
+  when asked (snapshots already order revisions by posting time within a logical package).

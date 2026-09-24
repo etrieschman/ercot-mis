@@ -15,7 +15,7 @@ on its own. Read straight from the archived zip.
 - DAM: `DAM<mmddyyyy>_<HHH>.RAW`, one per hour.
 
 ## What we parse
-`parsers/psse.py` -> `psse_case`, `psse_bus`, `psse_load`, `psse_generator`,
+`raw/psse.py` -> `psse_case`, `psse_bus`, `psse_load`, `psse_generator`,
 `psse_branch`, `psse_transformer`, `psse_area`, `psse_switched_shunt`,
 `psse_impedance_correction`, `psse_zone`, `psse_owner`. Column names follow the PSS/E
 manual (`i`, `j`, `ckt`, `ratea`, ...). Every table except `psse_case` ends with
@@ -55,7 +55,8 @@ accepted when whole.
 
 Bus numbers: CRR numbering is stable month to month; **DAM numbering is reassigned in
 every hourly model** and unrelated to CRR's. DAM bus names are station names shared by
-several buses. CRR has thousands of zero-impedance branches (bus ties); DAM has none.
+several buses. CRR has thousands of zero-impedance branches (bus ties, `x = 0.0001`);
+DAM clamps reactance at a floor of `0.0005` and holds no branch below it.
 
 ## Validation
 `scripts/validate_parsers.py` checks parsed records against data lines per section

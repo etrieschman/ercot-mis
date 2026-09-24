@@ -1,6 +1,6 @@
 """Build the core layer from raw: ``core/snapshot.parquet`` and, per package,
-``core/<table>/emil_id=<EMIL>/<blob16>.parquet`` for ``node``, ``branch`` and
-``branch_rating``.
+``core/<table>/emil_id=<EMIL>/<blob16>.parquet`` for every table in ``TABLES``
+(nodes, branches, ratings, contingencies and their outages, GTCs and their members).
 
 Each table is registered in the catalog like a raw artifact (key = ``VERSION``s, the
 package version and the blob). Tables are computed per snapshot (a DAM hour, a CRR
@@ -92,7 +92,7 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame)
 
 
 def build(session, *, limit: int | None = None) -> list[dict]:
-    """Write ``core/snapshot.parquet`` and ``core/node/...`` for every package with raw tables."""
+    """Write ``core/snapshot.parquet`` and every per-package core table for packages with raw tables."""
     snaps = snapshot.snapshots(session)
     core_dir = session.data_dir / LAYER
     core_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
