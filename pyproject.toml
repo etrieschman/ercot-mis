@@ -21,8 +21,10 @@ dependencies = [
 [dependency-groups]
 dev = [
     "cryptography>=43",
+    "numpy>=2.4.6",
     "openpyxl>=3.1",
     "pytest>=8",
+    "scipy>=1.17.1",
 ]
 
 [build-system]

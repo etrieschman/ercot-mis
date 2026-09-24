@@ -26,7 +26,8 @@ auction plus `_Upd` revisions); monthly: one a month. Captured by `scripts/daily
 `crr_non_thermal_constraints`, `crr_sources_and_sinks`, `crr_mapping_lines`,
 `crr_mapping_autos`, `crr_outages`, plus the `psse_*` tables from the RAW.
 Archived, not parsed: the XML twins (CSV is canonical), one-line diagrams (images),
-DynamicRatings (small; semantics not yet reviewed).
+DynamicRatings (one small sheet of monthly ambient-temperature assumptions behind the
+dynamic line ratings; the monitored CSV already carries the resulting ratings).
 
 ## Decisions
 - **CSV over XML.** Checked on a full monthly package: identical row counts and values;
@@ -35,6 +36,13 @@ DynamicRatings (small; semantics not yet reviewed).
   from member names (`classify_member`); the document's revision comes from the catalog.
 - **Exact header checks**: a changed or reordered header raises `ParseError`.
 - **Mapping-workbook bus numbers stay text** (see quirks).
+- **The Outages file is informational.** The RAW already reflects the outage
+  scheduler: every outage whose equipment name matches a workbook operations name is
+  out of service in the RAW (`scripts/measure_identity.py` does not measure this yet;
+  checked by hand on one month, see docs/assumptions.md). Core does not apply it.
+- **Transformer name orientation is recorded**: `core.branch.is_name_reversed` is
+  true when the `Autos` name lists the RAW's ends the other way round, so a CSV flow
+  direction, which refers to the name, can be turned into the RAW orientation.
 
 ## ERCOT quirks
 - Device-type spelling differs by file: contingency CSV `LINE`/`XFMR`; monitored CSV
@@ -61,7 +69,6 @@ DynamicRatings (small; semantics not yet reviewed).
 consistent, on every archived package.
 
 ## Open questions
-- DynamicRatings: parse, and how it modifies monitored ratings.
 - How annual `_Upd` revisions relate to their originals (which members change).
 - Whether an `_Upd` revision should replace its original in `out` by default, or only
   when asked (snapshots already order revisions by posting time within a logical package).

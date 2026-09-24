@@ -25,9 +25,11 @@ named in the `Ln` CSV, keyed to the RAW by (from, to, ckt).
 
 **Transformers.** CRR RAW transformers carry **no** comment. Their CRR name lives
 only in the mapping workbook's `Autos` sheet, which reaches the RAW by (from, to,
-ckt) **in either orientation** (about half the sheet's rows list from and to swapped
-relative to the RAW); the CSVs use the `Autos` name. DAM transformers are named in
-the `Xf` CSV.
+ckt) **in either orientation** (a large minority of the sheet's rows list from and to
+swapped relative to the RAW, and the CRR name follows the sheet's order); the CSVs
+use the `Autos` name, and their flow directions refer to it. `core.branch` records
+this as `is_name_reversed`. CRR line names always follow the RAW's order. DAM
+transformers are named in the `Xf` CSV.
 
 **Topology level.** CRR RAWs hold thousands of branches at PSS/E's minimum
 reactance (`x = 0.0001`, `r = 0`) joining two buses of the same station and voltage:
@@ -103,10 +105,14 @@ a given hour.
   from (station, kV, attached branch/generator/load/settlement-point names); PSS/E
   numbers are per-snapshot attributes kept for joins within the snapshot only. Buses
   with identical attachment sets (isolated buses at one station) get an ordinal
-  suffix and `is_ambiguous`.
-- **CRR bus ties are contracted** (in-service branches with |x| at or below
-  `TIE_REACTANCE`) before any PTDF; members and groups are recorded in `core.node`
-  so monitored ties can be reported, not silently dropped.
+  suffix and `is_ambiguous`; the suffix is not stable across snapshots, and does not
+  need to be, because such buses are never part of the solved network.
+- **CRR bus ties are contracted for identity, not for solving.** `core.node` groups
+  buses joined by in-service ties (|x| at or below `TIE_REACTANCE`) under one
+  `node_key`, which is what matching needs, since the DAM merges those buses. The
+  network handed to a solver keeps the ties as branches by default, as ERCOT's auction
+  does, and enforces the monitored ones; contraction is an option there
+  (`docs/out-network.md`, measured by `scripts/check_network.py`).
 - **Branch matching** (`core/match.py`, `session.match_branches`): compare names
   with punctuation and case removed, in this order, recording the first method that
   succeeds as `match_method`: `exact`; `ops+ckt` (operations name followed by the

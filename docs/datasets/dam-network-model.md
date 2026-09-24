@@ -39,9 +39,16 @@ day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.
 
 ## ERCOT quirks
 - The RAW is the blank-separated dialect with no VSC DC section (see psse-raw.md).
-- The README states: lossless DC power flow; RAW includes scheduled outages; bus shunt,
-  load and generator MW/MVAr in the RAW are all zero; it names the slack bus; 23 or 25
-  hourly files on DST days, the extra hour being the third.
+- The README states: lossless DC power flow; the RAW already incorporates the outage
+  scheduler (a branch with status OUT is either normally open or on outage); bus shunt,
+  load and generator MW/MVAr in the RAW are all zero; it names the MMS-DAM slack bus
+  (the RAW's type-3 bus); a blank or "De-energized" settlement point status means
+  de-energized; 23 or 25 hourly files on DST days, the extra hour being the third.
+- **Contingency files differ by hour** (a few names come and go across a day), so
+  each hour is its own snapshot with its own contingency set.
+- `SpCtg` lists, for all hours, the single-bus settlement points a contingency
+  disconnects: which resource nodes a contingency islands. Parsed
+  (`dam_settlement_point_contingencies`), not yet used by core.
 - The load CSV header ends with a trailing comma its rows lack.
 - Split-bus bus-number columns in the contingency CSV sometimes hold a note instead of a
   number; kept as text.

@@ -9,8 +9,12 @@ named option in :class:`Options` defaulting to ERCOT practice.
 
 What the assembly does, in order:
 
-1. **Nodes.** CRR buses joined by in-service bus ties are one node (``contract_ties``;
-   ``core.node`` already carries the grouping). DAM buses are nodes as they are.
+1. **Nodes.** By default every RAW bus is a node, as ERCOT's engines solve it: the CRR
+   auction keeps its bus ties (closed breakers at the minimum reactance) as branches
+   and enforces the ones it monitors. ``contract_ties`` merges CRR buses joined by
+   in-service ties into one node instead (``core.node`` carries the grouping); that is
+   an analysis choice, measured to move PTDF entries by small amounts and to drop the
+   monitored ties' limits. DAM RAWs have no ties, so the option does nothing there.
 2. **Branches.** Out-of-service branches are dropped. A branch whose two ends are the
    same node (a contracted tie, or a real branch in parallel with a tie group) carries
    no flow in a DC model and is dropped. Nodes with no branch left, and any component
@@ -33,7 +37,10 @@ What the assembly does, in order:
    set comes out empty (every element it removes is already out of service, a
    contracted tie, or unknown to the RAW) constrains nothing beyond the base case; it
    is dropped and listed in ``dropped_contingencies`` (``drop_empty_contingencies``).
-5. **GTCs.** Each member's factor is signed with the branch's from-to orientation.
+5. **GTCs.** Each member's factor is signed with the branch's from-to orientation as
+   the RAW lists it. The CSV's flow direction refers to the member's *name*, and CRR
+   transformer names run the other way for a large minority (``is_name_reversed`` on
+   ``core.branch``), so the sign is flipped for those.
    DAM GTCs carry limits and the CRR id from the manual crosswalk but no members
    (see docs/datasets/generic-transmission-limits.md).
 6. **Settlement points.** Each settlement point's node weights (``core.
@@ -61,8 +68,9 @@ INF = math.inf
 class Options:
     """The judgment calls, each defaulting to ERCOT practice for the model at hand."""
 
-    contract_ties: bool = True
-    """CRR: merge buses joined by in-service bus ties into one node. No effect on DAM."""
+    contract_ties: bool = False
+    """CRR: merge buses joined by in-service bus ties into one node (an analysis choice;
+    ERCOT solves with the ties and enforces the monitored ones). No effect on DAM."""
 
     rating_source: str | None = None
     """``"crr_monitored"`` (the CRR CSV; the CRR default) or ``"psse_raw"`` (RAW rates;
@@ -310,9 +318,14 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
     if options.drop_empty_contingencies:
         contingencies = contingencies.filter(~pl.col("is_empty"))
 
-    # GTCs: factor signed with the branch orientation; members outside the network are unresolved.
-    sign = pl.when(pl.col("flow_direction").str.to_uppercase().str.starts_with("TO")).then(-1.0).otherwise(1.0)
-    members = (core.gtc_member.join(branch_index, on="branch_id", how="left")
+    # GTCs: factor signed with the RAW orientation of the branch. "From-To" in the CSV refers to
+    # the member's name, which runs the other way for some transformers (is_name_reversed).
+    reversed_names = (kept.select("branch_id", pl.col("is_name_reversed").fill_null(False)) if "is_name_reversed" in kept.columns
+                      else kept.select("branch_id", pl.lit(False).alias("is_name_reversed")))
+    sign = (pl.when(pl.col("flow_direction").str.to_uppercase().str.starts_with("TO")).then(-1.0).otherwise(1.0)
+            * pl.when(pl.col("is_name_reversed")).then(-1.0).otherwise(1.0))
+    members = (core.gtc_member.join(branch_index, on="branch_id", how="left").join(reversed_names, on="branch_id", how="left")
+               .with_columns(pl.col("is_name_reversed").fill_null(False))
                .with_columns((pl.col("factor") * sign).alias("factor"), pl.col("branch_index").is_not_null().alias("_in")))
     gtc_members = members.filter(pl.col("_in")).select("gtc_id", "branch_id", "branch_index", "factor").sort("gtc_id", "branch_id")
     counts = members.group_by("gtc_id").agg(pl.col("_in").sum().cast(pl.UInt32).alias("n_members"), (~pl.col("_in")).sum().cast(pl.UInt32).alias("n_unresolved"))

@@ -46,9 +46,11 @@ and its contingency keys from `branch_indexes`.
   `dropped_contingencies` are frames on the `Network`, and `summary()` gives the
   counts by reason. No log file: when `out/` is written to disk the same frames become
   an audit table per snapshot, queryable like any other.
-- **GTC member factors are signed** with the branch's from-to orientation (`To-From`
-  negates). DAM GTC rows carry the GTL limit and the crosswalked CRR id but no
-  members until NP3-770-M is parsed (docs/datasets/generic-transmission-limits.md).
+- **GTC member factors are signed** with the branch's RAW orientation. The CSV's
+  `To-From` negates, and so does a transformer whose CRR name lists the ends the other
+  way round (`is_name_reversed`), because the CSV direction refers to the name. DAM GTC
+  rows carry the GTL limit and the crosswalked CRR id but no members until NP3-770-M
+  is parsed (docs/datasets/generic-transmission-limits.md).
 - **Settlement points ride along.** `settlement_point_nodes` gives each settlement
   point's weights over the kept nodes, renormalized to one, and `settlement_points`
   records the weight that fell on dropped nodes (`weight_dropped`). This is the matrix
@@ -62,12 +64,15 @@ and its contingency keys from `branch_indexes`.
 
 | option | default | meaning |
 |---|---|---|
-| `contract_ties` | `True` | CRR: buses joined by in-service bus ties are one node; the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`). With `False`, tie members are their own nodes (`<key>@<bus>`) and ties are branches at their RAW reactance. No effect on DAM. |
+| `contract_ties` | `False` | ERCOT's topology: every bus is a node and CRR bus ties are branches at their RAW reactance, monitored ones with their breaker ratings. With `True`, buses joined by in-service ties are one node; the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`) and their limits with them. The cost of contraction is measured by `scripts/check_network.py`. Tie members keep their group key in their id (`<key>@<bus>`). No effect on DAM. |
 | `rating_source` | model default | `crr_monitored` (CRR CSV, per time-of-use block) or `psse_raw` (RAW rate A/B). CRR defaults to the CSV, DAM to the RAW. |
 | `time_of_use` | `PeakWD` | The CRR CSV block; the CRR RAW is the PeakWD model. |
 | `limits` | `enforced` | Which branches get finite limits: `enforced` (CRR monitored, DAM secured), `monitored` (DAM monitored or secured), `all`. |
 | `contingency_rating` | `emergency` | Post-contingency limit: `emergency` (rate B / EmergencyRating) or `base`. |
 | `keep_out_of_service` | `False` | Keep branches the RAW marks out of service. |
+
+Every assumption behind these conventions, with its status, is in
+[docs/assumptions.md](assumptions.md).
 
 ## What is not in the first cut
 

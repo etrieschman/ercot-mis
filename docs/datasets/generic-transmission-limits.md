@@ -29,7 +29,9 @@ limits and all of NP3-770-M.
 ## Decisions
 - **The delivery date comes from the file**, not from the listing: the listing's
   operating date is the posting date, a couple of days earlier.
-- **Latest document per delivery date wins** when the core layer looks up a day.
+- **Latest posting per delivery date wins** when the core layer looks up a day. The
+  posting time comes from the catalog's listing: document IDs do not follow posting
+  time (measured), so they cannot be used to order revisions.
 - **Names are crosswalked by hand.** The workbook uses human-readable GTC names, the
   CRR CSV uses short codes, and nothing in either file links them. The crosswalk is a
   manual override in `data/overrides/gtc_names.csv` (`gtl_name,crr_gtc_id`), never

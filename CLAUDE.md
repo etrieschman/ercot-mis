@@ -31,7 +31,8 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | transport | own thin clients: EWS (certificate) and Public API (archive files, not JSON rows) |
 | transforms | Python parsers → `raw`; `.sql` files on DuckDB → `core`, `out` |
 | storage | Parquet on disk (zstd, hive-partitioned), Arrow in memory, DuckDB catalog + SQL engine, polars for reading. **Catalog writes are short-lived**: `Session` reads through a read-only connection and takes the writer only to record a listing, a blob or an artifact, never across a download or a parse |
-| node identity | **equipment-based `node_key`**, not PSS/E number or name (DAM renumbers every hour; names are station names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted first. `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `scripts/measure_identity.py` |
+| node identity | **equipment-based `node_key`**, not PSS/E number or name (DAM renumbers every hour; names are station names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `scripts/measure_identity.py` |
+| fidelity | **defaults do what ERCOT does; our analysis choices are named options.** `out.network` keeps CRR ties as branches and enforces the monitored breakers, as the auction does; contraction is `Options(contract_ties=True)`. Every assumption, its status and how it was checked lives in `docs/assumptions.md` (update it in the same commit as the code) |
 | data location | `data/` in this repo by default; `ERCOT_MIS_DATA` overrides |
 | network output | standardized tables + optional `ercot_mis.sensitivities` (base-case PTDF, LODF, GTC rows); no shift factors yet |
 | ratings | keep both: CRR monitored-element CSV (enforced, default) and PSS/E Rate A/B/C (MVA) |
@@ -102,8 +103,16 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   carries `match_method`; unmatched records are output. Manual overrides live in
   `data/overrides/` (gitignored), read by core when present.
 - **CRR is closer to node-breaker, DAM to bus-branch**: CRR RAWs hold thousands of
-  zero-impedance branches (some monitored), DAM none. Contract before any PTDF;
-  `core.node` records the contraction.
+  branches at PSS/E's minimum reactance (closed breakers; some monitored with real
+  breaker ratings), DAM none below its own floor of 0.0005 pu, where the CRR ties it
+  keeps sit. ERCOT's auction solves the CRR model with the ties; so does `out.network`
+  by default (`scripts/check_network.py` measures the cost of contracting instead).
+  `core.node` records the tie groups because matching needs them.
+- **Both RAWs already reflect outages** (DAM README; CRR measured against its Outages
+  file). Status OUT is the outage; the CRR Outages file is informational.
+- **Name orientation**: CRR line names follow the RAW's from/to; CRR transformer names
+  follow the `Autos` sheet, which is reversed for a large minority
+  (`core.branch.is_name_reversed`). CSV flow directions refer to the name.
 - **CRR transformer names are not in the RAW**: the contingency, monitored and GTC
   CSVs name transformers by the `Autos` workbook sheet, matched to the RAW by
   (from, to, ckt). Lines use the RAW comment.
@@ -138,7 +147,9 @@ quirks, validation, open questions). Read the relevant note before touching a
 parser; **update it in the same commit** whenever an import decision changes or a
 new quirk turns up. Notes are public: structure only, never names or values.
 Written so far: `psse-raw.md`, `crr-network-model.md`, `dam-network-model.md`,
-`identity-and-matching.md`, `generic-transmission-limits.md`.
+`identity-and-matching.md`, `generic-transmission-limits.md`. Beside them:
+`docs/out-network.md` (the conventions and options of the network handed to a solver)
+and `docs/assumptions.md` (the register of every assumption, checked or open).
 
 ### Provenance
 
@@ -205,14 +216,17 @@ scripts/daily_pull.py        fetch pulled EWS products, list tracked ones, then 
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs, GTL hours)
 scripts/measure_identity.py  key-matching and node-identity measurements -> data/reports/identity/*.json
+scripts/check_network.py     DC solve on assembled networks; contracted vs ERCOT topology -> data/reports/network/*.json
 tools/check_confidential.py  pre-commit guard (stdlib only; also blocks Keychain-stored secrets)
 .github/workflows/ci.yml     tests + guard on every push
 tests/                       synthetic-only tests; test_guard also scans every tracked file
 ```
 
-Cache keys use explicit `VERSION` constants (each raw parser, `core/node.py`,
-`core/build.py`): bump one when its output changes and every artifact it produced is
-rebuilt; cosmetic edits cost nothing.
+Cache keys use explicit `VERSION` constants (each raw parser, every `core/*.py` table
+module, `core/build.py`, `core/match.py`, `core/diff.py`): bump one when its output
+changes and every artifact it produced is rebuilt (a full core rebuild is a few
+minutes); cosmetic edits cost nothing. `numpy` and `scipy` are dev dependencies for
+the check scripts only; the package itself needs neither.
 
 **Numbers do not go in markdown.** Notes record process, decisions and quirks;
 measurements live in the scripts that make them and the dated reports under
@@ -226,63 +240,69 @@ measurements live in the scripts that make them and the dated reports under
 | M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS side done and running daily via launchd since 2026-09-15 (retries, status file, notification on failure); Public API client not started |
 | M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | parsers done (PSS/E both dialects, CRR, DAM, GTL workbook); `scripts/validate_parsers.py` clean on every archived package. Not yet: DynamicRatings, PowerFlowData.jl cross-check (needs Julia) |
 | M3 | core layer + SQL runner, cache skip, lineage, validation checks | 2026-09-17: raw writer with provenance (`build_raw`, process pool, cache skip, `run`/`artifact`/`lineage`); `build_core` writes snapshot, node, branch, branch_rating, contingency, contingency_outage, gtc, gtc_member for every archived package. 2026-09-24: both builds run at the end of the daily pull. Not yet: SQL runner, validation checks as code |
-| M4 | `out.network` + `ftr_align/cases/ercot.py` | 2026-09-24: `session.network()` first cut (per-snapshot, own vocabulary, `docs/out-network.md`). Not yet: on-disk `out/`, `ercot.py` (needs the sparse PTDF, item 6 below) |
+| M4 | `out.network` + `ftr_align/cases/ercot.py` | 2026-09-24: `session.network()` (per-snapshot, own vocabulary, ERCOT's topology by default, settlement point weights, audit frames, `docs/out-network.md`); `scripts/check_network.py` solves it. Not yet: on-disk `out/`, `ercot.py` (needs the sparse PTDF, see next steps) |
 | M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | |
-| M6 | CRR ↔ DAM matching + scorecard | matchers for branches, nodes and contingencies with `match_method` and unmatched rows (`session.match_*`); `scripts/measure_identity.py` reports their rates. 2026-09-24: `prefix+x` tie-break by reactance, `core.diff_branch`. Not yet: `diff_node`/`diff_contingency`, scorecard |
+| M6 | CRR ↔ DAM matching + scorecard | matchers for branches, nodes and contingencies with `match_method` and unmatched rows (`session.match_*`); `scripts/measure_identity.py` reports their rates. 2026-09-24: `prefix+x` tie-break by reactance, `core.diff_branch`, `core.settlement_point[_node]`, `core.diff_settlement_point`. Not yet: `diff_node`/`diff_contingency`, `subset` contingency method, scorecard |
 | M7 | `sensitivities` (restricted float32 PTDF/LODF, cache budget, cross-test vs `ftr_align.network.compute_ptdf`) | |
 | M8 | scheduled pulls (Python files), docs, first release | |
 
 ## Pick up here (next session)
 
-State at 2026-09-24 (end of day): M0–M3 done except the SQL runner; M4 has
-`session.network()`; M6 has the three matchers, a reactance tie-break and
-`core.diff_branch`. The daily pull now builds raw and core after the fetch. Two facts
-found on 2026-09-24 shape everything cross-model (details and decisions in
-`docs/datasets/identity-and-matching.md`): DAM clamps branch reactance at a floor of
-0.0005 pu (CRR ties and short lines sit at the floor in DAM, so compare reactance
-after raising both sides to it), and both RAWs use a tenths digit in base kV to tell
-buses of one station apart (compare voltage levels with the tenths dropped).
+State at 2026-09-24 (end of day). M0–M3 done except the SQL runner. M4 has
+`session.network()` in ERCOT's own topology with a DC-solve check script. M6 has the
+three matchers, a reactance tie-break, settlement point tables and two diff tables. The
+daily pull builds raw and core after the fetch. The day ended with an **assumptions
+audit**: `docs/assumptions.md` lists every place we could differ from ERCOT, with its
+status. Read it first; most rows are verified, and the open ones are the work below.
+
+Principle settled with the user on 2026-09-24: **defaults do what ERCOT does; our
+analysis choices are named options.** That flipped `contract_ties` to off, kept the
+monitored breakers' limits in the CRR network, and put ERCOT's swing bus in as the
+slack. Facts established the same day, all in the notes: both RAWs already reflect
+outages; DynamicRatings is temperature assumptions, not ratings; DAM clamps reactance at
+a floor of 0.0005 pu; both RAWs use a tenths digit in base kV to tell buses apart; CRR
+transformer names follow the `Autos` sheet's orientation, reversed for a large
+minority; GTL document IDs do not follow posting time; DAM contingency files differ by
+hour; the `SpCtg` file lists the settlement points a contingency islands.
 
 First, check health (2 min):
 - `tail -30 data/logs/daily_pull.log` and `cat data/logs/last_run.json` — `failed 0`;
-  the log now has `build_raw` and `build_core` lines per product.
+  the log has `build_raw` and `build_core` lines per product.
 - `launchctl list | grep ercot-mis` — last exit code 0. A failure also posts a
   macOS notification.
-- `uv run python scripts/measure_identity.py` after a new CRR month posts; compare the
-  report with the previous one (matched-branch agreement, matcher counts).
+- After a new CRR month posts: `uv run python scripts/measure_identity.py` and
+  `uv run python scripts/check_network.py`; compare the reports with the previous ones.
 
 Then, in order:
-1. **Cross-model network**: put a CRR and a DAM `Network` on one node set through
-   `core.match_node` / `core.match_branch` so `ftr_align`'s `intersection` can take
-   them; decide what an unmatched node or branch becomes (kept in its own model
-   only, with the row's `match_method` carried along).
-2. **`diff_node` and `diff_contingency`** on the pattern of `core/diff.py`, then the
-   scorecard from the diff tables; read `diff_branch` rows where `same_reactance` or
-   `same_kind` is false, and `diff_settlement_point` rows where `same_nodes` is false,
-   before deciding what they are. A `subset` contingency method (many-to-one) too.
-3. **DAM GTC members**: NP3-770-M ships PDF/PPTX/database files; either parse the
-   database or borrow CRR member sets through `crr_gtc_id` inside `out.network`
-   (translating branch ids through `match_branch`) and say so in the note.
-4. **SQL runner** for `models/core/*.sql` once the Python-built tables settle; then
-   an on-disk `out/` and the classification-aware `export()`.
-5. **Public API client** (`sources/public_api.py`): B2C ROPC token, subscription key,
+1. **Close the open rows of `docs/assumptions.md`** that need only reading or local
+   data: which RAW rate is the DAM's post-contingency limit (ERCOT rating
+   conventions; compare rate B with the CRR emergency rating on matched branches);
+   the protocol definitions of hubs and the average hubs; why CRR hubs and zones span
+   far more buses than the DAM's hub-bus file and load list (read
+   `diff_settlement_point`); what to do with `SpCtg` (contingencies that island a
+   settlement point) in `out.network`.
+2. **Public API client** (`sources/public_api.py`): B2C ROPC token, subscription key,
    paged archive listing, retry on 429; secrets via `load_secret()` (Keychain). Then
-   pull NP4-191-CD shadow prices and test the monitored/secured reading.
-6. `ftr_align/cases/ercot.py` needs a sparse PTDF (scipy `splu`) and a screened row
-   set: 11k elements × 10k nodes × 6.5k contingencies is not a dense `K`. That is a
-   design change in `ftr_align.network` (dense `A` and `np.linalg.inv` today), so
-   decide it there before writing the case.
+   NP4-191-CD shadow prices to test the secured-flag reading, and NP4-183/190 prices
+   and NP3-966-ER awards for the sum-to-zero and merchandising-surplus identities:
+   the only external test of the whole chain. This moved up because the register's
+   `external` rows all wait on it.
+3. **Cross-model network**: put a CRR and a DAM `Network` on one node set through
+   `core.match_node` / `core.match_branch` so `ftr_align`'s `intersection` can take
+   them. With ERCOT's topology as the default, a CRR tie group maps to one DAM node
+   or to two DAM nodes joined by a floor branch; decide the rule and record it.
+4. **`diff_node`, `diff_contingency`, a `subset` contingency method** (many-to-one,
+   flagged), then the scorecard from the diff tables.
+5. **DAM GTC members**: parse NP3-770-M or borrow CRR members through `crr_gtc_id`
+   inside `out.network`, translating branch ids through `match_branch`.
+6. **SQL runner**, on-disk `out/` (the audit frames become a table per snapshot) and
+   the classification-aware `export()`.
+7. `ftr_align/cases/ercot.py`: needs a sparse formulation (angles, or PTDF rows only
+   for screened constraints); `scripts/check_network.py` has the sparse DC solve to
+   start from. Decide in `ftr_align` first.
 
 Open decisions for the user: keep capturing every DAM day (see `scripts/probe.py` and
 the catalog for sizes)? Install Julia for the PowerFlowData.jl cross-check?
-
-Decided 2026-09-24 with the user: the slack is ERCOT's swing bus (`slack_source`
-records a fallback); empty contingencies are dropped and listed in
-`dropped_contingencies`, never silently; the audit lives on the `Network` (and later
-in an `out` table), not in a log file. Contingency matching is many-to-one in places:
-the report shows many unmatched CRR contingencies whose outage set sits inside exactly
-one DAM contingency that another CRR contingency already matched by name, so a
-`subset` method with an explicit many-to-one flag is the next matcher change.
 
 ## EWS facts learned the hard way (keep)
 

@@ -41,6 +41,7 @@ def test_crr_branches_name_lines_by_comment_transformers_by_autos_and_keep_both_
     assert not by["3 B 4 C 1"]["is_in_service"]
     xf = by["AUTO_A"]
     assert xf["kind"] == "transformer" and xf["tap_ratio"] == 1.05 and xf["is_monitored"]
+    assert xf["is_name_reversed"] and not line["is_name_reversed"]  # the Autos row lists the RAW's ends the other way round
     assert list(branches.columns) == list(branch.BRANCH_COLUMNS)
 
     r = ratings.filter(pl.col("branch_id") == "2 A2 3 B 1").sort("rating_source", "time_of_use")

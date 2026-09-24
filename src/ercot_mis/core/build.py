@@ -22,7 +22,7 @@ LAYER = "core"
 DAM_PRODUCT = snapshot.DAM_PRODUCT
 
 # Bump when the set of tables or how they are assembled changes.
-VERSION = 5
+VERSION = 6
 TABLES = ("node", "branch", "branch_rating", "contingency", "contingency_outage", "gtc", "gtc_member",
           "settlement_point", "settlement_point_node")
 
@@ -54,8 +54,13 @@ def _gtl_for_day(session, day) -> pl.DataFrame:
     rows = session.raw("gtl_hourly").filter(pl.col("delivery_date") == day).collect()
     if rows.is_empty():
         return rows.select("hour_ending", "gtc_name", "market", "limit_mw")
-    latest = rows.filter(pl.col("doc_id") == rows.sort("doc_id")["doc_id"][-1])  # doc IDs grow with posting time
-    return latest.select("hour_ending", "gtc_name", "market", "limit_mw")
+    # Document IDs do not follow posting time (measured), so the latest posting is looked up in the catalog.
+    posted = session.catalog.con.execute(
+        "SELECT doc_id, posted_at FROM remote_doc WHERE emil_id = 'NP3-766-M' AND doc_id IN (SELECT UNNEST(?))", [rows["doc_id"].unique().to_list()]
+    ).fetchall()
+    order = sorted(posted, key=lambda r: (r[1] is None, r[1] or 0, r[0]))
+    latest_id = order[-1][0] if order else rows.sort("doc_id")["doc_id"][-1]
+    return rows.filter(pl.col("doc_id") == latest_id).select("hour_ending", "gtc_name", "market", "limit_mw")
 
 
 def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame) -> dict[str, pl.DataFrame]:

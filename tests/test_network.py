@@ -31,6 +31,7 @@ def _core():
         "tap_ratio": [None, None, None, None, 1.05, None, None],
         "is_monitored": [True, True, False, True, True, False, True],
         "is_secured": [True, True, False, True, True, False, True],
+        "is_name_reversed": [False, False, False, False, True, False, False],
     })
     rating = pl.DataFrame({
         "branch_id": ["T", "L1", "L2", "L3", "X", "L1", "L3", "L1"],
@@ -56,8 +57,11 @@ def _core():
     return CoreTables(node, branch, rating, contingency, outage, gtc, member, points, point_nodes)
 
 
+CONTRACT = Options(contract_ties=True)
+
+
 def test_contracted_network_drops_ties_loops_islands_and_out_of_service():
-    net = build_network("crr:monthly:2026-10:r1", _core())
+    net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
     assert net.nodes["node_id"].to_list() == ["A", "B", "C"]
     assert net.nodes.filter(pl.col("node_id") == "A")["n_buses"][0] == 2
     assert net.branches["branch_id"].to_list() == ["L1", "L2", "L3"]
@@ -71,12 +75,12 @@ def test_contracted_network_drops_ties_loops_islands_and_out_of_service():
 
 
 def test_crr_limits_come_from_the_monitored_csv_block_and_unmonitored_is_unlimited():
-    net = build_network("crr:monthly:2026-10:r1", _core())
+    net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
     lim = {r["branch_id"]: (r["base_limit_mw"], r["contingency_limit_mw"], r["is_limited"]) for r in net.branches.to_dicts()}
     assert lim["L1"] == (90.0, 99.0, True)
     assert lim["L3"] == (120.0, 121.0, True)
     assert lim["L2"] == (INF := math.inf, INF, False)  # not monitored
-    off = build_network("crr:monthly:2026-10:r1", _core(), Options(time_of_use="Off-peak"))
+    off = build_network("crr:monthly:2026-10:r1", _core(), Options(contract_ties=True, time_of_use="Off-peak"))
     assert off.branches.filter(pl.col("branch_id") == "L1")["base_limit_mw"][0] == 80.0
     with pytest.raises(ValueError):
         build_network("crr:monthly:2026-10:r1", _core(), Options(time_of_use="Nope"))
@@ -92,7 +96,7 @@ def test_raw_ratings_treat_zero_as_unlimited_and_limits_option_widens():
 
 
 def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons():
-    net = build_network("crr:monthly:2026-10:r1", _core())
+    net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
     by = {r["contingency_id"]: r for r in net.contingencies.to_dicts()}
     assert sorted(by) == ["C1", "C4"]
     assert by["C1"]["branch_ids"] == ["L1"] and by["C1"]["n_dropped"] == 1  # the tie outage is a no-op after contraction
@@ -102,7 +106,7 @@ def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons
     assert dropped["C2"]["reason"] == "empty" and dropped["C2"]["n_unresolved"] == 1
     assert dropped["C3"]["reason"] == "empty" and dropped["C3"]["n_dropped"] == 1  # X is out of service
     assert net.summary()["dropped_contingencies"] == {"empty": 2}
-    kept = build_network("crr:monthly:2026-10:r1", _core(), Options(drop_empty_contingencies=False))
+    kept = build_network("crr:monthly:2026-10:r1", _core(), Options(contract_ties=True, drop_empty_contingencies=False))
     assert kept.contingencies.height == 4 and kept.contingencies.filter(pl.col("is_empty"))["contingency_id"].to_list() == ["C2", "C3"]
     assert kept.dropped_contingencies.is_empty()
 
@@ -110,31 +114,36 @@ def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons
 def test_slack_falls_back_to_the_busiest_node_when_no_swing_bus_survives():
     core = _core()
     node = core.node.with_columns(pl.when(pl.col("psse_bus_number") == 3).then(1).otherwise(pl.col("bus_type")).alias("bus_type"))
-    net = build_network("crr:monthly:2026-10:r1", CoreTables(node, core.branch, core.branch_rating, core.contingency, core.contingency_outage, core.gtc, core.gtc_member))
+    net = build_network("crr:monthly:2026-10:r1", CoreTables(node, core.branch, core.branch_rating, core.contingency, core.contingency_outage, core.gtc, core.gtc_member), CONTRACT)
     assert net.slack_source == "fallback" and net.slack_node_id == "B"  # B still has the most branches
 
 
 def test_gtc_members_are_signed_and_counted():
-    net = build_network("crr:monthly:2026-10:r1", _core())
+    net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
     assert net.gtcs.to_dicts()[0] == {"gtc_id": "G1", "source": "crr_csv", "limit_mw": 500.0, "n_members": 2, "n_unresolved": 1, "crr_gtc_id": "G1"}
     assert {r["branch_id"]: r["factor"] for r in net.gtc_members.to_dicts()} == {"L1": 1.0, "L3": -0.5}
+    # X is out of service above; put it in service: its name is reversed, so "From-To" means RAW to-from.
+    core = _core()
+    branch = core.branch.with_columns(pl.when(pl.col("branch_id") == "X").then(True).otherwise(pl.col("is_in_service")).alias("is_in_service"))
+    net = build_network("crr:monthly:2026-10:r1", CoreTables(branch=branch, **{k: v for k, v in core.__dict__.items() if k != "branch"}), CONTRACT)
+    assert {r["branch_id"]: r["factor"] for r in net.gtc_members.to_dicts()} == {"L1": 1.0, "L3": -0.5, "X": -1.0}
 
 
 def test_settlement_points_are_renormalized_over_kept_nodes():
-    net = build_network("crr:monthly:2026-10:r1", _core())
+    net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
     by = {r["settlement_point_id"]: r for r in net.settlement_points.to_dicts()}
     assert (by["RN_1"]["n_nodes"], by["RN_1"]["weight_dropped"]) == (1, 0.0)
     assert (by["HB_X"]["n_nodes"], by["HB_X"]["weight_dropped"]) == (2, 0.25)  # node E is in a dropped island
     assert (by["RN_ISLAND"]["n_nodes"], by["RN_ISLAND"]["weight_dropped"]) == (0, 1.0)
     hub = {r["node_id"]: (r["node_index"], round(r["weight"], 4)) for r in net.settlement_point_nodes.filter(pl.col("settlement_point_id") == "HB_X").to_dicts()}
     assert hub == {"A": (0, round(2 / 3, 4)), "C": (2, round(1 / 3, 4))}
-    loose = build_network("crr:monthly:2026-10:r1", _core(), Options(contract_ties=False))
+    loose = build_network("crr:monthly:2026-10:r1", _core())  # the default keeps every bus
     rn = {r["node_id"]: r["weight"] for r in loose.settlement_point_nodes.filter(pl.col("settlement_point_id") == "RN_1").to_dicts()}
     assert rn == {"A@1": 0.5, "A@2": 0.5}  # spread over the group's buses
 
 
-def test_without_contraction_ties_are_branches_between_their_own_buses():
-    net = build_network("crr:monthly:2026-10:r1", _core(), Options(contract_ties=False))
+def test_by_default_ties_are_branches_between_their_own_buses_as_ercot_solves_them():
+    net = build_network("crr:monthly:2026-10:r1", _core())
     assert net.nodes["node_id"].to_list() == ["A@1", "A@2", "B", "C"]
     assert "T" in net.branches["branch_id"].to_list() and "P" in net.branches["branch_id"].to_list()
     assert net.summary()["dropped_branches"] == {"island": 1, "out_of_service": 1}
