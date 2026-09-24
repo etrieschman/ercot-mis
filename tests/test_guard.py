@@ -52,6 +52,7 @@ def test_allows_synthetic_fixtures():
 def test_identifiers_include_duns_spellings_api_user_and_public_api_secrets(tmp_path, monkeypatch):
     for name in ("ERCOT_DUNS", "ERCOT_API_USER", *guard.SECRET_VARIABLES):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(guard, "keychain", lambda name: "")  # the developer's Keychain holds real secrets
     secret = "s3cret-" + "x" * 8
     (tmp_path / ".env").write_text(
         f"ERCOT_DUNS={DUNS_LIKE}\nERCOT_API_USER={API_LIKE}\n"
