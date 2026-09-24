@@ -4,8 +4,10 @@ Fetch, cache and standardize ERCOT Market Information System (MIS) data locally,
 with every table traceable to the bytes ERCOT published.
 
 **Status: pre-alpha.** EWS listing, fetching and the content-addressed archive work;
-the Public API client, parsers and data model are being built (see
-[CLAUDE.md](CLAUDE.md) for the design and milestones).
+CRR and DAM network models, the GTL workbook and their core tables build daily; the
+first cut of `out.network` and the CRR-to-DAM matchers exist. The Public API client
+and DAM prices are not started (see [CLAUDE.md](CLAUDE.md) for the design and
+milestones).
 
 ## What it is for
 
@@ -37,10 +39,15 @@ zip member, how each arrived, and every table built from them.
 ```python
 with em.open() as session:
     session.build_raw("NP4-500-SG")                  # parsed rows, one Parquet per package and table
-    session.build_core()                             # snapshots and equipment-based node keys
+    session.build_core()                             # snapshots, nodes, branches, ratings, contingencies, GTCs
     buses = session.raw("psse_bus").filter(pl.col("operating_date") == "2026-09-15").collect()
     nodes = session.core("node").filter(pl.col("snapshot_id") == "dam:2026-09-15:he12:r1").collect()
+    net = session.network("dam:2026-09-15:he12:r1")  # one snapshot as a DC model reads it
+    branches = session.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he12:r1")
 ```
+
+`docs/out-network.md` lists the conventions behind `network()` and its options;
+`docs/datasets/` has one note per ERCOT dataset.
 
 Run builds from a script or notebook (the process pool needs an importable `__main__`).
 

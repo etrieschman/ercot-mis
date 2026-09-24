@@ -80,6 +80,10 @@ enforced. The authoritative mapping is `PG7-116-M` (Certified).
 **Ratings.** CRR `BaseCaseRating` is a fixed fraction of the RAW rate A on every
 monitored line (the report records the fraction); `EmergencyRating` is at least the
 base rating with a long upper tail. Time-of-use blocks can be identical for a month.
+Against the DAM RAW's rate A on branches both models enforce, the CRR base rating is
+a somewhat wider band of fractions (the DAM's own rate A differs from the CRR RAW's
+on some branches), and each model enforces some branches the other does not;
+`core.diff_branch` lists them all.
 
 **Settlement points.** Every CRR source/sink name appears among the DAM settlement
 points; CRR `BusName` is "number name", matching the RAW bus comment. A minority of

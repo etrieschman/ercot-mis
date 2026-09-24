@@ -434,28 +434,24 @@ def matching(mis: em.Session, crr_month: date, day: date, hour: int) -> None:
           .join(mis.core("node").filter(pl.col("snapshot_id") == dam_id).select("node_key", pl.col("kv").alias("dam_kv")).collect(), left_on="dam_node_key", right_on="node_key"))
     show("matched nodes", n=nodes.height, same_kv=int((kv["kv"] == kv["dam_kv"]).sum()),
          same_kv_ignoring_tenths=int((kv["kv"].floor() == kv["dam_kv"].floor()).sum()))
-    # Do matched branches describe the same element? Reactance (allowing for the DAM floor), kind and voltage level.
-    crr_b = mis.core("branch").filter(pl.col("snapshot_id") == crr_id).collect()
-    dam_b = mis.core("branch").filter(pl.col("snapshot_id") == dam_id).collect()
-    kv_of = lambda sid: mis.core("node").filter(pl.col("snapshot_id") == sid).select("node_key", pl.col("kv").floor().alias("kv")).unique(subset=["node_key"]).collect()
-
-    def ends(b: pl.DataFrame, sid: str, prefix: str) -> pl.DataFrame:
-        k = kv_of(sid)
-        b = (b.join(k.rename({"node_key": "from_node_key", "kv": "_f"}), on="from_node_key", how="left")
-             .join(k.rename({"node_key": "to_node_key", "kv": "_t"}), on="to_node_key", how="left"))
-        return b.select(pl.col("branch_id").alias(f"{prefix}_branch_id"), pl.col("x_pu").alias(f"{prefix}_x"), pl.col("kind").alias(f"{prefix}_kind"),
-                        pl.col("is_tie").alias(f"{prefix}_tie"), pl.min_horizontal("_f", "_t").alias(f"{prefix}_lo"), pl.max_horizontal("_f", "_t").alias(f"{prefix}_hi"))
-
-    pairs = (mis.match_branches(crr_id, dam_id).filter(pl.col("match_method") != "unmatched")
-             .join(ends(crr_b, crr_id, "crr"), on="crr_branch_id").join(ends(dam_b, dam_id, "dam"), on="dam_branch_id")
-             .with_columns(match.reactance_agrees(pl.col("crr_x"), pl.col("dam_x")).alias("x_ok"),
-                           ((pl.col("crr_x") - pl.col("dam_x")).abs() / pl.max_horizontal(pl.col("crr_x").abs(), pl.col("dam_x").abs(), 1e-9) <= match.REACTANCE_TOLERANCE).alias("x_ok_raw"),
-                           ((pl.col("crr_lo") == pl.col("dam_lo")) & (pl.col("crr_hi") == pl.col("dam_hi"))).alias("kv_ok")))
-    show("matched branches", n=pairs.height, same_reactance=int(pairs["x_ok"].sum()), same_reactance_without_floor=int(pairs["x_ok_raw"].sum()),
-         same_kind=int((pairs["crr_kind"] == pairs["dam_kind"]).sum()), same_kv_ignoring_tenths=int(pairs["kv_ok"].sum()),
-         crr_ties_matched=int(pairs["crr_tie"].sum()), crr_ties_matched_to_dam_floor=int((pairs["crr_tie"] & (pairs["dam_x"].abs() == match.DAM_REACTANCE_FLOOR)).sum()),
-         crr_x_below_floor=int((pairs["crr_x"].abs() < match.DAM_REACTANCE_FLOOR).sum()))
-    show("  reactance agreement by method", **{m: f"{ok} of {n}" for m, ok, n in pairs.group_by("match_method").agg(pl.col("x_ok").sum(), pl.len()).sort("match_method").rows()})
+    # Do matched branches describe the same element? core.diff_branch puts both sides next to each other.
+    pairs = mis.diff_branches(crr_id, dam_id)
+    raw_ok = pairs.select(((pl.col("crr_x_pu") - pl.col("dam_x_pu")).abs() / pl.max_horizontal(pl.col("crr_x_pu").abs(), pl.col("dam_x_pu").abs(), 1e-9)
+                           <= match.REACTANCE_TOLERANCE).alias("ok"))["ok"]
+    ties = crr_b.select("branch_id", "is_tie").rename({"branch_id": "crr_branch_id"})
+    pairs = pairs.join(ties, on="crr_branch_id", how="left")
+    show("matched branches", n=pairs.height, same_reactance=int(pairs["same_reactance"].sum()), same_reactance_without_floor=int(raw_ok.sum()),
+         same_kind=int(pairs["same_kind"].sum()), same_kv_ignoring_tenths=int(pairs["same_kv"].sum()),
+         in_service_both=int((pairs["crr_in_service"] & pairs["dam_in_service"]).sum()), enforced_both=int((pairs["crr_enforced"] & pairs["dam_enforced"]).sum()),
+         enforced_crr_only=int((pairs["crr_enforced"] & ~pairs["dam_enforced"]).sum()), enforced_dam_only=int((~pairs["crr_enforced"] & pairs["dam_enforced"]).sum()),
+         crr_ties_matched=int(pairs["is_tie"].fill_null(False).sum()),
+         crr_ties_matched_to_dam_floor=int((pairs["is_tie"].fill_null(False) & (pairs["dam_x_pu"].abs() == match.DAM_REACTANCE_FLOOR)).sum()),
+         crr_x_below_floor=int((pairs["crr_x_pu"].abs() < match.DAM_REACTANCE_FLOOR).sum()))
+    show("  reactance agreement by method", **{m: f"{ok} of {n}" for m, ok, n in pairs.group_by("match_method").agg(pl.col("same_reactance").sum(), pl.len()).sort("match_method").rows()})
+    both = pairs.filter(pl.col("crr_enforced") & pl.col("dam_enforced") & pl.col("crr_base_mw").is_not_null() & (pl.col("dam_base_mw") > 0))
+    ratio = both["crr_base_mw"] / both["dam_base_mw"]
+    show("  enforced on both sides: CRR base over DAM rate A", n=both.height, quantiles=[round(ratio.quantile(q), 3) for q in (0.05, 0.25, 0.5, 0.75, 0.95)],
+         within_1pct=int(((ratio - 1).abs() <= 0.01).sum()))
 
 
 def main() -> None:

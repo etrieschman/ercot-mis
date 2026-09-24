@@ -381,6 +381,26 @@ class Session:
         path.chmod(0o600)
         return result
 
+    def diff_branches(self, crr_snapshot_id: str, dam_snapshot_id: str, time_of_use: str = "PeakWD") -> pl.DataFrame:
+        """``core.diff_branch``: matched branches' kind, reactance, voltage levels, service and
+        ratings side by side with ``same_*`` verdicts. See ``ercot_mis.core.diff``. Cached."""
+        from .core.diff import VERSION, diff_branches
+
+        key = f"{crr_snapshot_id}__{dam_snapshot_id}__{time_of_use}".replace(":", "-")
+        path = self.data_dir / "core" / "diff_branch" / f"v{VERSION}" / f"{key}.parquet"
+        if path.is_file():
+            return pl.read_parquet(path)
+        matches = self.match_branches(crr_snapshot_id, dam_snapshot_id)
+        by = lambda table, sid: self.core(table).filter(pl.col("snapshot_id") == sid).collect()
+        result = diff_branches(matches, by("branch", crr_snapshot_id), by("node", crr_snapshot_id), by("branch_rating", crr_snapshot_id),
+                               by("branch", dam_snapshot_id), by("node", dam_snapshot_id), by("branch_rating", dam_snapshot_id), time_of_use)
+        result = result.with_columns(pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id"))
+        result = result.select("crr_snapshot_id", "dam_snapshot_id", pl.exclude("crr_snapshot_id", "dam_snapshot_id"))
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        result.write_parquet(path, compression="zstd")
+        path.chmod(0o600)
+        return result
+
     def network(self, snapshot_id: str, options=None):
         """One snapshot as a DC model reads it: ``out.network``, computed on demand.
 
