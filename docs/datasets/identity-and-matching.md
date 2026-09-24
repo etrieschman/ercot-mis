@@ -35,9 +35,19 @@ closed breakers, disconnect switches and bus-section jumpers, exported from a
 node-breaker model. They are not alternative connections; they are the switching
 devices that make several bus sections one electrical node. Most carry the 9999
 placeholder rating, some carry a real breaker rating and appear in the monitored
-list, and some appear as contingency devices (a breaker opening). DAM RAWs hold none,
-so CRR-to-DAM bus mapping is many-to-one and a CRR breaker outage has no DAM
-counterpart.
+list, and some appear as contingency devices (a breaker opening). DAM RAWs hold no
+branch below a **reactance floor** of `x = 0.0005`: every DAM branch that would be
+shorter sits at exactly the floor, including the minority of CRR ties that the mapping
+workbook names (they match a DAM branch at the floor) and CRR lines with a reactance
+between the CRR minimum and the floor. So CRR-to-DAM bus mapping is many-to-one, a
+CRR breaker outage usually has no DAM counterpart, and a reactance comparison across
+models must raise both sides to the floor first.
+
+**Base kV.** Both RAWs occasionally give a bus a base kV with a tenths digit that is
+not a nominal level (`138.1`, `345.2`), more often in DAM than in CRR. It tells buses
+of one station apart; it is not a voltage. Compare voltage levels with the tenths
+dropped, and expect `node_key`s, which include the kV as written, to differ by it
+only within a model, never across hours or months.
 
 **Mapping workbook.** `Lines` maps every `CRR_Tag` (a RAW line comment) to an
 `Operations_Name`; ties mostly have no row, and a placeholder `Operations_Name` marks
@@ -90,8 +100,14 @@ to one. Some DAM settlement points have no bus in a given hour.
   with punctuation and case removed, in this order, recording the first method that
   succeeds as `match_method`: `exact`; `ops+ckt` (operations name followed by the
   CRR circuit id); `prefix` (exactly one DAM name is the operations name plus at
-  most two characters); otherwise `unmatched`, with the number of candidates. Every
-  CRR branch is listed once; unmatched DAM branches are listed with a null CRR side.
+  most two characters); `prefix+x` (several DAM names fit, but exactly one of those
+  not claimed by another CRR branch has the same reactance, both sides raised to the
+  DAM floor and compared within a relative tolerance); otherwise `unmatched`, with
+  the number of prefix candidates. Every CRR branch is listed once; unmatched DAM
+  branches are listed with a null CRR side. Reactance is also the check on the
+  name-based methods: the report counts matched pairs whose reactance, kind and
+  voltage level agree, and nearly all do once the floor is allowed for; the few that
+  do not are for `diff_branch`, not for the matcher to hide.
 - **Node matching** (`session.match_nodes`): a settlement point attached to exactly
   one node on each side (zones and hubs touch many CRR buses and are skipped), then
   the endpoints of matched branches by vote (a pair is accepted when it is the top
@@ -116,12 +132,14 @@ to one. Some DAM settlement points have no bus in a given hour.
 
 ## Open questions
 
-- Disambiguating branches with several DAM circuit candidates (parallel circuits
-  where the CRR and DAM circuit ids disagree).
-- Matched nodes whose voltage levels disagree (a small share): wrong votes or
-  station-level keys on one side.
-- Name-matched contingencies with different branch sets: transformer vocabulary,
-  ties, or genuinely different definitions?
+- Branches still ambiguous after `prefix+x`: every free candidate disagrees on
+  reactance, or two agree. Endpoint node matches could settle some.
+- Matched branches whose reactance, kind or voltage level disagree after the floor is
+  allowed for: series devices, re-conductored lines, or wrong matches? Record them
+  in `diff_branch` before deciding.
+- Name-matched contingencies whose branch sets differ for reasons other than
+  matching coverage (the small remainder the report isolates).
 - How to treat monitored bus ties in a contracted CRR model.
 - Verify the monitored/secured reading against binding constraints in `NP4-191-CD`.
-- Parse `NP3-766-M` (xls) and check its GTC names against the CRR GTC names.
+- The GTL workbook's GTC names against the CRR GTC codes: the crosswalk is manual
+  (generic-transmission-limits.md); nothing published links the two.

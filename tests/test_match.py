@@ -34,6 +34,28 @@ def test_prefix_match_when_unique():
     assert (row["dam_branch_id"], row["match_method"]) == ("LINE_ZA", "prefix")
 
 
+def test_prefix_with_several_candidates_is_settled_by_free_candidates_and_reactance():
+    # T1 claims LINE_Z1 by circuit. T2 has candidates LINE_Z1 (taken), LINE_Z2 (x agrees) and LINE_ZA (x differs).
+    # T3's only free candidates both disagree on x. T4 is a CRR tie (x = 1e-4) whose DAM twin sits at the floor.
+    crr = pl.DataFrame({"branch_id": ["T1", "T2", "T3", "T4"], "ckt": ["1", "7", "7", "9"], "x_pu": [0.01, 0.02, 0.05, 0.0001]})
+    lines = pl.DataFrame({"crr_tag": ["T1", "T2", "T3", "T4"], "operations_name": ["LINE_Z", "LINE_Z", "LINE_Y", "TIE_Q"]})
+    autos = pl.DataFrame({"crr_name": [], "operations_name": []}, schema={"crr_name": pl.String, "operations_name": pl.String})
+    dam = pl.DataFrame({"branch_id": ["LINE_Z1", "LINE_Z2", "LINE_ZA", "LINE_Y1", "LINE_Y2", "TIE_Q1", "TIE_Q2"],
+                        "x_pu": [0.01, 0.0201, 0.03, 0.01, 0.02, 0.0005, 0.003]})
+    result = match.match_branches(crr, lines, autos, dam)
+    by = {r["crr_branch_id"]: r for r in result.to_dicts() if r["crr_branch_id"]}
+    assert (by["T1"]["dam_branch_id"], by["T1"]["match_method"]) == ("LINE_Z1", "ops+ckt")
+    assert (by["T2"]["dam_branch_id"], by["T2"]["match_method"], by["T2"]["n_candidates"]) == ("LINE_Z2", "prefix+x", 3)
+    assert by["T3"]["match_method"] == "unmatched" and by["T3"]["n_candidates"] == 2
+    assert (by["T4"]["dam_branch_id"], by["T4"]["match_method"]) == ("TIE_Q1", "prefix+x")
+    assert result.filter(pl.col("match_method") != "unmatched")["dam_branch_id"].is_unique().all()
+
+
+def test_reactance_agreement_allows_for_the_dam_floor():
+    frame = pl.DataFrame({"c": [0.0001, 0.0003, 0.02, 0.02, -0.01], "d": [0.0005, 0.0005, 0.0201, 0.03, 0.01]})
+    assert frame.select(match.reactance_agrees(pl.col("c"), pl.col("d")))["c"].to_list() == [True, True, True, False, True]
+
+
 def _nodes(keys, attachments):
     return pl.DataFrame({"node_key": keys, "attachments": attachments})
 

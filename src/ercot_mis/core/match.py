@@ -9,8 +9,10 @@ order, and the first method that succeeds is recorded as ``match_method``:
 2. ``ops+ckt``: the DAM name is the operations name followed by the CRR circuit id;
 3. ``prefix``: exactly one DAM name is the operations name followed by at most two
    characters;
-4. ``unmatched``: the CRR branch has no operations name, a placeholder, or several
-   DAM candidates (``n_candidates`` says how many).
+4. ``prefix+x``: several DAM names fit, but exactly one of those not already matched
+   to another CRR branch has the same reactance (see ``reactance_agrees``);
+5. ``unmatched``: the CRR branch has no operations name, a placeholder, or several
+   DAM candidates (``n_candidates`` says how many fit the prefix).
 
 Every CRR branch appears once; DAM branches nothing matched appear with a null CRR
 side. Differences are never smoothed over: a match records identity only.
@@ -22,9 +24,25 @@ import re
 
 import polars as pl
 
-VERSION = 1
+VERSION = 2
 
 COLUMNS = ("crr_branch_id", "dam_branch_id", "match_method", "operations_name", "n_candidates")
+
+# The DAM model clamps every branch reactance to at least this (per unit): CRR bus ties
+# (|x| = 0.0001) and short branches below it appear in DAM at exactly the floor.
+DAM_REACTANCE_FLOOR = 5e-4
+REACTANCE_TOLERANCE = 0.01  # relative; measured on real packages by scripts/measure_identity.py
+
+
+def reactance_agrees(crr_x: pl.Expr, dam_x: pl.Expr, tolerance: float = REACTANCE_TOLERANCE) -> pl.Expr:
+    """Whether two reactances describe the same element, allowing for the DAM floor.
+
+    Both magnitudes are raised to ``DAM_REACTANCE_FLOOR`` before the relative difference
+    is taken, so a CRR tie matched to a DAM branch at the floor counts as agreeing.
+    """
+    a = pl.max_horizontal(crr_x.abs(), pl.lit(DAM_REACTANCE_FLOOR))
+    b = pl.max_horizontal(dam_x.abs(), pl.lit(DAM_REACTANCE_FLOOR))
+    return (a - b).abs() <= tolerance * pl.max_horizontal(a, b)
 
 
 def _key(expr: pl.Expr) -> pl.Expr:
@@ -65,6 +83,22 @@ def match_branches(crr_branch: pl.DataFrame, mapping_lines: pl.DataFrame, mappin
               .with_columns(pl.col("_cands").list.len().fill_null(0).alias("n_candidates"))
               .with_columns(pl.when(pl.col("n_candidates") == 1).then(pl.col("_cands").list.first()).otherwise(None).alias("dam_branch_id"),
                             pl.when(pl.col("n_candidates") == 1).then(pl.lit("prefix")).otherwise(pl.lit("unmatched")).alias("match_method")))
+
+    # Several candidates: keep the ones no other CRR branch has claimed, and accept a
+    # single survivor whose reactance agrees. Needs ``x_pu`` on both sides.
+    if "x_pu" in crr_branch.columns and "x_pu" in dam_branch.columns:
+        taken = pl.concat([exact["dam_branch_id"], by_ckt["dam_branch_id"], prefix["dam_branch_id"].drop_nulls()])
+        several = (prefix.filter(pl.col("n_candidates") > 1).select("crr_branch_id", pl.col("_cands").alias("dam_branch_id")).explode("dam_branch_id")
+                   .filter(~pl.col("dam_branch_id").is_in(taken.implode()))
+                   .join(crr_branch.select(pl.col("branch_id").alias("crr_branch_id"), pl.col("x_pu").alias("_cx")), on="crr_branch_id")
+                   .join(dam_branch.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("x_pu").alias("_dx")).unique(subset=["dam_branch_id"]), on="dam_branch_id")
+                   .filter(reactance_agrees(pl.col("_cx"), pl.col("_dx")))
+                   .group_by("crr_branch_id").agg(pl.col("dam_branch_id")).filter(pl.col("dam_branch_id").list.len() == 1)
+                   .with_columns(pl.col("dam_branch_id").list.first()))
+        several = several.unique(subset=["dam_branch_id"], keep="none")  # two CRR branches agreeing on one DAM branch stay unmatched
+        prefix = (prefix.join(several.rename({"dam_branch_id": "_by_x"}), on="crr_branch_id", how="left")
+                  .with_columns(pl.coalesce(pl.col("dam_branch_id"), pl.col("_by_x")).alias("dam_branch_id"),
+                                pl.when(pl.col("_by_x").is_not_null()).then(pl.lit("prefix+x")).otherwise(pl.col("match_method")).alias("match_method")))
 
     matched = pl.concat([f.select("crr_branch_id", "dam_branch_id", "match_method", "operations_name", pl.lit(1, pl.UInt32).alias("n_candidates"))
                          for f in (exact, by_ckt)] + [prefix.select("crr_branch_id", "dam_branch_id", "match_method", "operations_name", pl.col("n_candidates").cast(pl.UInt32))])
