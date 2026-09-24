@@ -381,6 +381,17 @@ class Session:
         path.chmod(0o600)
         return result
 
+    def network(self, snapshot_id: str, options=None):
+        """One snapshot as a DC model reads it: ``out.network``, computed on demand.
+
+        ``options`` is an ``ercot_mis.out.network.Options`` (or keyword-free defaults):
+        tie contraction, rating source and time-of-use block, which branches get
+        limits, the post-contingency rating. See ``ercot_mis.out.network``.
+        """
+        from .out.network import build_network, core_tables
+
+        return build_network(snapshot_id, core_tables(self, snapshot_id), options)
+
     # ----------------------------------------------------------------- reading
 
     def raw(self, table: str) -> pl.LazyFrame:
