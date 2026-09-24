@@ -36,6 +36,11 @@ COMPRESSION = "zstd"
 _MODULES = {"NP7-801-M": (crr,), "NP7-800-M": (crr,), "NP4-500-SG": (dam,), "NP3-766-M": (gtl,)}
 
 
+def parsed_products() -> tuple[str, ...]:
+    """The EMIL IDs that have a raw-layer parser, in build order."""
+    return tuple(_MODULES)
+
+
 def parser_id(emil_id: str) -> str:
     """Identity of the code that produces a product's raw tables: package and parser versions."""
     from .. import __version__
