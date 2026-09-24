@@ -6,9 +6,11 @@ values, so the output is safe to share.
 Checks:
   * every member ERCOT ships is recognized (no "unknown" kinds);
   * PSS/E record counts match the data lines in each section (four per transformer);
-  * DAM: RAW branches, transformers, loads and generators match the hour's CSVs.
+  * DAM: RAW branches, transformers, loads and generators match the hour's CSVs;
+  * GTL: every workbook parses, each delivery day has one row per hour and market
+    for every GTC, and the day-ahead and real-time columns pair up.
 
-    uv run python scripts/validate_parsers.py              # every CRR package, latest 2 DAM days
+    uv run python scripts/validate_parsers.py              # every CRR and GTL document, latest 2 DAM days
     uv run python scripts/validate_parsers.py --dam-days 32
 """
 
@@ -17,8 +19,10 @@ import collections
 import time
 import zipfile
 
+import polars as pl
+
 import ercot_mis as em
-from ercot_mis.raw import ParseError, crr, dam, psse
+from ercot_mis.raw import ParseError, crr, dam, gtl, psse
 
 
 def packages(mis, emil_id, limit=None):
@@ -116,6 +120,38 @@ def validate_dam(mis, days, problems):
         print(f"  rows {table_name:<40} {count:>10,}")
 
 
+def validate_gtl(mis, problems):
+    """NP3-766-M: one document per posting, not a zip; two shapes arrive under one format label."""
+    shapes, days, rows = collections.Counter(), set(), 0
+    started = time.perf_counter()
+    paths = packages(mis, "NP3-766-M")
+    for path in paths:
+        data = path.read_bytes()
+        member = gtl.classify_document(path.name, data)
+        shapes[(member.kind, member.format)] += 1
+        if not member.is_parsed:
+            continue
+        try:
+            table = gtl.parse_gtl(data, f"GTL document {len(days) + 1}")
+        except ParseError as error:
+            problems.append(str(error))
+            continue
+        frame = pl.from_arrow(table)
+        rows += frame.height
+        for day, part in frame.group_by("delivery_date"):
+            days.add(day[0])
+            hours = part["hour_ending"].n_unique()
+            if hours not in (23, 24, 25):
+                problems.append(f"GTL {day[0]}: {hours} hours")
+            per_gtc = part.group_by("gtc_name", "market").len()
+            if per_gtc["len"].n_unique() != 1 or per_gtc.height % 2:
+                problems.append(f"GTL {day[0]}: GTCs do not all have both markets for every hour")
+    print(f"\nNP3-766-M: {len(paths)} documents, {len(days)} delivery days in {time.perf_counter() - started:.1f}s")
+    for (kind, fmt), count in sorted(shapes.items()):
+        print(f"  {count:>4} {'parsed' if kind == 'gtl_hourly' else 'archived':<8} {kind}.{fmt}")
+    print(f"  rows {'gtl_hourly':<40} {rows:>10,}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dam-days", type=int, default=2)
@@ -125,6 +161,7 @@ def main():
         validate_crr(mis, "NP7-800-M", problems)
         validate_crr(mis, "NP7-801-M", problems)
         validate_dam(mis, args.dam_days, problems)
+        validate_gtl(mis, problems)
     print(f"\n{len(problems)} problems")
     for problem, count in collections.Counter(problems).most_common(30):
         print(f" - ({count}x) {problem[:300]}")

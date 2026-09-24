@@ -42,8 +42,9 @@ limits and all of NP3-770-M.
 - Hours are interval starts; `hour_ending` is derived as start hour + 1.
 
 ## Validation
-`scripts/validate_parsers.py` does not cover this product yet; `build_raw` fails
-loudly on a workbook whose columns do not pair up.
+`scripts/validate_parsers.py`: every archived document classifies as one of the two
+shapes, every workbook parses, each delivery day has one row per hour and market for
+every GTC. `build_raw` fails loudly on a workbook whose columns do not pair up.
 
 ## Open questions
 - Whether the DC-tie-limit documents are worth a table.
