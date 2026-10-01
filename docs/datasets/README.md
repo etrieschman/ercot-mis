@@ -19,7 +19,8 @@ of the last clean run belong to the scripts that measure them (`validate_parsers
 | [identity-and-matching.md](identity-and-matching.md) | keys across CRR and DAM | measured by `scripts/measure_identity.py` |
 | [generic-transmission-limits.md](generic-transmission-limits.md) | NP3-766-M, NP3-770-M | limits parsed; definitions archived |
 | _to write_ | NP4-160-SG, NP3-220-SG, NP5-615-SG | archived, not parsed |
-| _to write_ | NP4-190-CD, NP4-191-CD, NP4-183-CD, NP3-966-ER, NP4-159-CD | Public API client not built |
+| [dam-prices.md](dam-prices.md) | NP4-191-CD, NP4-183-CD, NP4-190-CD | parsed; tested by `scripts/check_prices.py` |
+| _to write_ | NP3-966-ER, NP4-159-CD | listed, not pulled yet |
 
 ## Template
 

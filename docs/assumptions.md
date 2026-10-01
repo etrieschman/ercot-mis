@@ -62,7 +62,7 @@ yet checked), `external` (needs data we do not pull yet).
 | NAM-02 | measured | CRR transformer names follow the `Autos` sheet, which is reversed relative to the RAW for a large minority; flow directions refer to the name | `core/branch.py` `is_name_reversed`, `out/network.py` GTC sign | The CSVs name transformers by the sheet | measured; sign flipped for reversed names | verified |
 | NAM-03 | stated | GTC member factors are signed From-To positive | `out/network.py` | CSV `FlowDirection` | by construction | verified |
 | NAM-04 | forced | DAM GTC limits are the GTL workbook's DAM column for the delivery day, latest posting wins | `core/build.py` | The workbook is reposted; the latest posting is ERCOT's final | document IDs do not follow posting time, so the catalog's posting time is used | verified |
-| NAM-05 | forced | DAM GTC members are not known; the CRR id comes from a manual crosswalk | `core/gtc.py` | NP3-770-M defines them | parse NP3-770-M or borrow CRR members | open |
+| NAM-05 | forced | DAM GTC members are not known; the CRR id comes from a manual crosswalk | `core/gtc.py` | NP3-770-M defines them; the DAM names a binding GTC by the CRR code | `scripts/check_prices.py` borrows the CRR members through `core.match_branch` and prices the binding GTCs with them; not yet in `out.network` | open (borrowing measured) |
 | NAM-06 | forced | Contingency matching is one-to-one | `core/match.py` | CRR splits what DAM lumps in places | many unmatched CRR contingencies sit inside one DAM contingency | open (a `subset` method) |
 | NAM-07 | forced | Settlement points a contingency disconnects are not special-cased | `raw/dam.py` parses `SpCtg`; core does not use it | The DAM knows which single-bus settlement points a contingency islands | table shape inspected; semantics from the README | open |
 | NAM-08 | stated | DST days: the extra hour is the third; GTL hour-ending is start hour plus one | `raw/dam.py`, `raw/gtl.py` | README states the DAM convention | verify on the November long day | open |
@@ -87,9 +87,18 @@ yet checked), `external` (needs data we do not pull yet).
 | MAT-04 | forced | Contingencies match by name (`name`), then by an identical set of translated branches (`members`) | `core/match.py` | Names are shared for most; member sets differ and the difference is recorded | `scripts/measure_identity.py`: rows per method; why name-matched member sets differ | verified (agreement measured; no independent key exists) |
 | MAT-05 | forced | Anything no method settles stays `unmatched` and is output; nothing is guessed | `core/match.py` | n/a | by construction; unmatched rows counted in the identity report | verified |
 
+## Prices (the external test)
+
+| id | type | assumption | where | ERCOT | check | status |
+|---|---|---|---|---|---|---|
+| PRC-01 | measured | A DAM price is the system price minus shadow price times shift factor, summed over the binding rows; no loss term | `scripts/check_prices.py` | ERCOT prices carry no marginal loss component | the residual at every settlement point, per DAM hour; both signs tried | verified (residual small against the spread; what is left is PRC-03 and NAM-05) |
+| PRC-02 | measured | A binding row's direction is its from and to station (voltages inside one station), not the model's from-to | `scripts/check_prices.py` | The published flow is unsigned | every binding branch row resolves to a direction | verified |
+| PRC-03 | forced | Under a contingency that cuts nodes off, the part still connected to the slack is solved and the rest gets no shift factor | `scripts/check_prices.py` | Unknown; the `SpCtg` file lists the settlement points a contingency islands (NAM-07) | residual of the price identity with and without those rows | open |
+
 ## Not yet built (the checks that would catch everything above)
 
-- DAM prices, settlement point prices, awards and shadow prices (Public API): the
-  sum-to-zero and merchandising-surplus identities are the only external test of the
-  whole chain.
+- The flow check: awards from the 60-day disclosure (NP3-966-ER) through the network
+  should put every binding constraint at its limit and nothing enforced above it. It
+  tests limits, the secured-flag reading (RAT-09) and the settlement point weights;
+  it waits for the first disclosure that overlaps the archived models.
 - The PSS/E parser has no cross-check against an independent reader.
