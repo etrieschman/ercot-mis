@@ -210,7 +210,7 @@ src/ercot_mis/
                     point -> matched branch endpoints by vote), core.match_contingency (name -> members)
     settlement_point.py  core.settlement_point and core.settlement_point_node (kind, node weights; both models)
     load.py         core.load: every load with its node, service status, MW; DAM zone, LDF and rollover flags
-    diff.py         core.diff_branch and core.diff_settlement_point: matched elements side by side
+    diff.py         core.diff_branch, core.diff_settlement_point and core.diff_load: both models side by side
     build.py        writes every core table per package
   out/              layer 3: what consumers read
     network.py      Network for one snapshot: contracted nodes, branches with limits, contingency
@@ -291,12 +291,11 @@ Then, in the order agreed:
    binding GTC whose CRR members are not all in the DAM network. Then move GTC
    borrowing from the script into `out.network` (NAM-05) and price buses too (needs
    the NP4-160-SG bus mapping parsed).
-2. **`core.diff_load`** (`core.load` is built; CRR and DAM share no load name, so
-   compare per matched node: loads, in-service MW and distribution factor on each
-   side), and label every open CRR tie as normally open or open for an outage from
-   the Outages file's normal-state and outage-state columns (first check its breaker
-   rows can be tied to RAW ties). A friend's example of a temporary load modeled open
-   in an annual model was confirmed in the tables; this makes it a measured class.
+2. **Tie labels**: label every open CRR tie as normally open or open for an outage
+   from the Outages file's normal-state and outage-state columns (first check its
+   breaker rows can be tied to RAW ties). `core.load` and `core.diff_load`
+   (`session.diff_loads`, per matched node since the models share no load name) are
+   built; add their counts to `measure_identity.py`.
 3. **Viewer**: one self-contained HTML per pair of snapshots (any two: annual, monthly,
    DAM hour) under `data/reports/`, never published. Two panes centred on one station,
    click a neighbour to recentre both, search box, the centred station at bus level

@@ -428,6 +428,24 @@ class Session:
         path.chmod(0o600)
         return result
 
+    def diff_loads(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
+        """``core.diff_load``: per node carrying a load in either model, both models' loads there
+        (count, in service, MW, DAM distribution factor), compared through ``core.match_node``. Cached."""
+        from .core.diff import VERSION, diff_loads
+
+        key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
+        path = self.data_dir / "core" / "diff_load" / f"v{VERSION}" / f"{key}.parquet"
+        if path.is_file():
+            return pl.read_parquet(path)
+        by = lambda sid: self.core("load").filter(pl.col("snapshot_id") == sid).collect()
+        result = diff_loads(by(crr_snapshot_id), by(dam_snapshot_id), self.match_nodes(crr_snapshot_id, dam_snapshot_id))
+        result = result.with_columns(pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id"))
+        result = result.select("crr_snapshot_id", "dam_snapshot_id", pl.exclude("crr_snapshot_id", "dam_snapshot_id"))
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        result.write_parquet(path, compression="zstd")
+        path.chmod(0o600)
+        return result
+
     def network(self, snapshot_id: str, options=None):
         """One snapshot as a DC model reads it: ``out.network``, computed on demand.
 

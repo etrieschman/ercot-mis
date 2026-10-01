@@ -48,3 +48,20 @@ def test_diff_settlement_points_translates_crr_nodes_and_compares_sets():
     hub = by["HB_H"]
     assert (hub["n_crr_nodes"], hub["n_dam_nodes"], hub["n_crr_nodes_unmatched"], hub["n_shared_nodes"], hub["same_nodes"]) == (3, 2, 1, 2, False)
     assert (round(hub["shared_weight_crr"], 3), round(hub["shared_weight_dam"], 3)) == (0.75, 1.0)
+
+
+def test_diff_loads_compares_per_matched_node_and_keeps_unmatched_sides():
+    crr = pl.DataFrame({"node_key": ["c1", "c1", "c2", "c9"], "is_in_service": [True, False, False, True], "mw": [10.0, 4.0, 6.0, 1.0]})
+    dam = pl.DataFrame({"node_key": ["d1", "d2", "d7"], "is_in_service": [True, True, False], "mw": [9.0, 5.0, 0.0],
+                        "mw_ldf": [0.5, 0.3, 0.2], "is_rollover_capable": [False, True, False]})
+    matches = pl.DataFrame({"crr_node_key": ["c1", "c2", "c9", None], "dam_node_key": ["d1", "d2", None, "d7"],
+                            "match_method": ["settlement_point", "branch_endpoints", "unmatched", "unmatched"]})
+    result = diff.diff_loads(crr, dam, matches)
+    assert list(result.columns) == list(diff.LOAD_COLUMNS) and result.height == 4
+    by = {(r["crr_node_key"], r["dam_node_key"]): r for r in result.to_dicts()}
+    one = by[("c1", "d1")]
+    assert (one["n_crr_loads"], one["n_crr_in_service"], one["crr_mw_out_of_service"], one["n_dam_loads"], one["same_n_loads"], one["same_n_in_service"]) == (2, 1, 4.0, 1, False, True)
+    two = by[("c2", "d2")]  # out of service in CRR, in service in DAM
+    assert (two["n_crr_in_service"], two["n_dam_in_service"], two["same_n_in_service"], two["dam_mw_ldf_in_service"], two["n_dam_rollover_capable"]) == (0, 1, False, 0.3, 1)
+    assert by[("c9", None)]["match_method"] == "unmatched" and by[("c9", None)]["n_dam_loads"] == 0
+    assert by[(None, "d7")]["n_crr_loads"] == 0 and by[(None, "d7")]["dam_mw_ldf_out_of_service"] == 0.2

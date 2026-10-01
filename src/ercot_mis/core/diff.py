@@ -1,4 +1,4 @@
-"""``core.diff_branch`` and ``core.diff_settlement_point``: how the two models' descriptions
+"""``core.diff_branch``, ``core.diff_settlement_point`` and ``core.diff_load``: how the two models' descriptions
 of one element differ.
 
 ``core.match_*`` records identity; this module records the differences between the
@@ -95,3 +95,41 @@ def diff_settlement_points(crr_points: pl.DataFrame, crr_point_nodes: pl.DataFra
             .with_columns((pl.col("crr_kind") == pl.col("dam_kind")).alias("same_kind"),
                           ((pl.col("n_shared_nodes") == pl.col("n_crr_nodes")) & (pl.col("n_shared_nodes") == pl.col("n_dam_nodes")) & (pl.col("n_shared_nodes") > 0)).alias("same_nodes"))
             .select(SP_COLUMNS).sort("settlement_point_id"))
+
+
+LOAD_COLUMNS = ("crr_node_key", "dam_node_key", "match_method", "n_crr_loads", "n_crr_in_service", "crr_mw_in_service", "crr_mw_out_of_service",
+                "n_dam_loads", "n_dam_in_service", "dam_mw_in_service", "dam_mw_ldf_in_service", "dam_mw_ldf_out_of_service",
+                "n_dam_rollover_capable", "same_n_loads", "same_n_in_service")
+
+
+def diff_loads(crr_loads: pl.DataFrame, dam_loads: pl.DataFrame, node_matches: pl.DataFrame) -> pl.DataFrame:
+    """One row per node that carries a load in either model (``core.load`` rows), the two sides next to each other.
+
+    The models share no load name (the CRR RAW names only the bus), so loads are compared
+    where they sit: per pair of matched nodes, how many loads each model has there, how
+    many are in service and their MW; for the DAM also the distribution factor in and out
+    of service and how many loads can roll over. A node with loads that has no match keeps
+    its row with the other side null. Nothing is reconciled: a load in service on one
+    side only is what this table is for.
+    """
+    crr = crr_loads.group_by(pl.col("node_key").alias("crr_node_key")).agg(
+        pl.len().cast(pl.UInt32).alias("n_crr_loads"), pl.col("is_in_service").sum().cast(pl.UInt32).alias("n_crr_in_service"),
+        pl.col("mw").filter(pl.col("is_in_service")).sum().alias("crr_mw_in_service"), pl.col("mw").filter(~pl.col("is_in_service")).sum().alias("crr_mw_out_of_service"))
+    dam = dam_loads.group_by(pl.col("node_key").alias("dam_node_key")).agg(
+        pl.len().cast(pl.UInt32).alias("n_dam_loads"), pl.col("is_in_service").sum().cast(pl.UInt32).alias("n_dam_in_service"),
+        pl.col("mw").filter(pl.col("is_in_service")).sum().alias("dam_mw_in_service"),
+        pl.col("mw_ldf").filter(pl.col("is_in_service")).sum().alias("dam_mw_ldf_in_service"), pl.col("mw_ldf").filter(~pl.col("is_in_service")).sum().alias("dam_mw_ldf_out_of_service"),
+        pl.col("is_rollover_capable").sum().cast(pl.UInt32).alias("n_dam_rollover_capable"))
+    pairs = node_matches.select("crr_node_key", "dam_node_key", "match_method")
+    matched = pairs.filter(pl.col("match_method") != "unmatched")
+    left = crr.join(matched, on="crr_node_key", how="left").with_columns(pl.col("match_method").fill_null("unmatched"))
+    both = left.filter(pl.col("dam_node_key").is_not_null()).join(dam, on="dam_node_key", how="left")
+    crr_only = left.filter(pl.col("dam_node_key").is_null())
+    seen = both["dam_node_key"].implode()
+    dam_only = (dam.filter(~pl.col("dam_node_key").is_in(seen)).join(matched, on="dam_node_key", how="left")
+                .with_columns(pl.col("match_method").fill_null("unmatched")))
+    zero = [pl.col(c).fill_null(0) for c in ("n_crr_loads", "n_crr_in_service", "n_dam_loads", "n_dam_in_service")]
+    return (pl.concat([both, crr_only, dam_only], how="diagonal_relaxed").with_columns(zero)
+            .with_columns((pl.col("n_crr_loads") == pl.col("n_dam_loads")).alias("same_n_loads"),
+                          (pl.col("n_crr_in_service") == pl.col("n_dam_in_service")).alias("same_n_in_service"))
+            .select(LOAD_COLUMNS).sort("crr_node_key", "dam_node_key", nulls_last=True))
