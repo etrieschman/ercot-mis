@@ -16,6 +16,7 @@ DAM_OPERATING_DATES there. Schedule it with launchd: see scripts/launchd/.
 import json
 import subprocess
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 
 import polars as pl
@@ -86,10 +87,11 @@ def main() -> int:
                 continue
             # The Public API keeps years of history; a daily run only looks at the last few days.
             since = None if spec.source == "ews" else date.today() - timedelta(days=PUBLIC_API_LOOKBACK_DAYS)
+            began = time.monotonic()
             try:
                 if spec.take == "track":
                     listed = mis.list(spec.emil_id)
-                    print(f"  {spec.emil_id}: tracked, {listed.height} listed")
+                    print(f"  {spec.emil_id}: tracked, {listed.height} listed, {time.monotonic() - began:.0f}s", flush=True)
                     continue
                 dates = DAM_OPERATING_DATES if spec.emil_id == "NP4-500-SG" else None
                 result = mis.fetch(spec.emil_id, since, operating_dates=dates, max_gb=MAX_GB)
@@ -100,7 +102,7 @@ def main() -> int:
             done = result.filter(pl.col("status") == "fetched")
             errors = result.filter(pl.col("status") == "failed")
             failed += errors.height
-            print(f"  {spec.emil_id}: fetched {done.height} ({done['size_bytes'].sum() / 1e6:.1f} MB), failed {errors.height}")
+            print(f"  {spec.emil_id}: fetched {done.height} ({done['size_bytes'].sum() / 1e6:.1f} MB), failed {errors.height}, {time.monotonic() - began:.0f}s", flush=True)
             for doc_id, error in errors.select("doc_id", "error").iter_rows():
                 print(f"    doc {doc_id}: {error}")
         failed += build_layers(mis)
