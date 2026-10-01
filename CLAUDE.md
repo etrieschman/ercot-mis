@@ -287,7 +287,9 @@ First, check health (2 min):
   `check_prices.py --day <a recent day>`; compare with the previous reports. The
   November model is archived and the first two have not been rerun on it.
 
-Then, in the order agreed:
+Then, in the order agreed. **The user's bar for the price identity (2026-10-01): any
+settlement point off by more than a couple of dollars is a problem.** Item 1 goes to
+the top of the list as soon as the rest of that day's list (2 to 5) is done:
 1. **Price identity, the rest of the residual.** Hours without a binding GTC now
    reproduce to about a dollar at worst (two fixes on 2026-10-01: direction read to the
    tenth of a kV; split-bus contingency rows applied). Hours with a binding GTC keep a
@@ -308,8 +310,13 @@ Then, in the order agreed:
    node (a display choice, documented in the module). **Look at it only on synthetic
    data** (`tests/fixtures/synthetic/viewer_data.json` into the template): a
    screenshot of a real page sends names off the machine, and so does the URL hash.
-   Next: the user's first impressions; loads compared in the side panel
-   (`diff_load`); layout for very large stations; later overlays for prices and flows.
+   Reworked the same day on the user's first look: every line horizontal or vertical
+   (bars in rows by kV, neighbours above and below, one lane per branch, dots where a
+   line connects), buses joined by closed ties drawn as one bar unless "show breakers"
+   is on, a three-winding transformer drawn as one symbol at its star bus, settlement
+   point names in the side panel, CRR buses also placed along matched lines. `?nohash`
+   on the URL keeps the station name out of it. Next: `diff_load` in the side panel;
+   prices and flows as overlays.
 4. **EMIL sweep** for planning-stage data (pin id, classification, window, then track,
    then pull): transmission outage scheduler reports, resource outage capacity and
    unplanned resource outages, 60-day DAM and SCED disclosures, actual load and

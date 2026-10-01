@@ -15,7 +15,7 @@
 body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.4 -apple-system, "Segoe UI", sans-serif; }
 #ceii { position:sticky; top:0; z-index:5; background:var(--warn-bg); color:var(--warn-ink); padding:6px 14px; font-weight:600; letter-spacing:.02em; }
 #bar { display:flex; gap:10px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
-#bar input { font:inherit; padding:4px 8px; width:220px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; }
+#bar input#search { font:inherit; padding:4px 8px; width:220px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; }
 #bar button { font:inherit; padding:4px 10px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; cursor:pointer; }
 #bar .legend span { margin-right:12px; white-space:nowrap; }
 #bar .sw { display:inline-block; width:18px; height:0; border-top:3px solid; vertical-align:middle; margin-right:4px; }
@@ -25,6 +25,7 @@ body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.4 -apple-sy
 .pane { border-right:1px solid var(--line); min-width:0; }
 .pane h2 { margin:0; padding:6px 12px; font-size:12px; font-weight:600; color:var(--dim); border-bottom:1px solid var(--line); }
 svg { width:100%; height:auto; display:block; }
+.br { stroke-linejoin:round; }
 svg text { fill:var(--ink); font-size:10px; user-select:none; }
 .bus { stroke:var(--bus); stroke-width:5; stroke-linecap:round; cursor:pointer; }
 .bus.dead { stroke:var(--dim); opacity:.5; }
@@ -33,7 +34,13 @@ svg text { fill:var(--ink); font-size:10px; user-select:none; }
 .br.limited { stroke-width:3; }
 .br.out { stroke-dasharray:4 3; opacity:.75; }
 .br.same { stroke:var(--same); } .br.differs { stroke:var(--differs); } .br.only { stroke:var(--only); }
-.xf { fill:var(--panel); stroke-width:1.4; }
+.xf { fill:var(--panel); stroke-width:1.6; cursor:pointer; }
+.xf3 { fill:var(--panel); stroke:var(--bus); stroke-width:1.6; cursor:pointer; }
+.sw { fill:var(--panel); stroke-width:1.4; cursor:pointer; }
+.sw.closed.same { fill:var(--same); } .sw.closed.differs { fill:var(--differs); } .sw.closed.only { fill:var(--only); }
+.dot { fill:var(--bus); pointer-events:none; }
+.pane { overflow-x:auto; }
+#bar label { white-space:nowrap; }
 .nb rect { fill:var(--panel); stroke:var(--line); cursor:pointer; rx:4; }
 .nb:hover rect { stroke:var(--hit); }
 .nb text { cursor:pointer; }
@@ -60,6 +67,7 @@ tr.click { cursor:pointer; } tr.click:hover td { color:var(--hit); }
   <button id="back" title="Previous station">&larr;</button>
   <input id="search" list="stations" placeholder="Station (Enter to go)">
   <datalist id="stations"></datalist>
+  <label title="Off: buses joined by closed breakers are drawn as one bar, as a bus-branch model sees them. On: every bus section and breaker of the model is drawn."><input type="checkbox" id="breakers"> show breakers</label>
   <span class="legend" id="legend"></span>
 </div>
 <div id="main">
@@ -96,69 +104,140 @@ const two = models.length === 2;
 const status = (m, r) => !m.cmp ? "same" : !(r.id in m.cmp) ? "only" : m.cmp[r.id].same ? "same" : "differs";
 const limited = (m, r) => (m.kind === "dam" ? r.sec : r.mon) && r.base > 0 && r.base < 9999;
 
-let current = null, selected = null;
+let current = null, selected = null, showBreakers = false;
 const trail = [];
 
+// ---- layout: every line is horizontal or vertical -------------------------------------------
+// Bars are buses (or, collapsed, groups of buses joined by closed ties) in rows by voltage level.
+// Neighbouring stations sit in a row above and a row below. A branch leaves its bar vertically,
+// runs along a lane of its own, and drops onto its target. A dot marks where a line connects;
+// a line crossing a bar without a dot passes behind it.
 function drawPane(m, name, svg) {
   svg.replaceChildren();
   const st = m.stations.get(name);
-  if (!st) { el("text", { x: W / 2, y: H / 2, "text-anchor": "middle", class: "kv" }, svg).textContent = "not in this model"; return; }
-  // Buses: one row per voltage level, highest on top.
-  const levels = [...new Set(st.buses.map(b => Math.round(b.kv)))].sort((a, b) => b - a);
-  const top = 150, rowH = Math.min(70, (H - 300) / Math.max(1, levels.length - 1 || 1));
-  const pos = new Map();
-  levels.forEach((kv, i) => {
-    const row = st.buses.filter(b => Math.round(b.kv) === kv).sort((a, b) => a.n - b.n);
-    const y = levels.length === 1 ? H / 2 : top + i * rowH;
-    const span = W * 0.5, w = Math.min(90, span / row.length - 8), x0 = W / 2 - (row.length * (w + 8)) / 2;
-    el("text", { x: x0 - 8, y: y + 3, "text-anchor": "end", class: "kv" }, svg).textContent = kv + " kV";
-    row.forEach((b, j) => pos.set(b.n, { x1: x0 + j * (w + 8), x2: x0 + j * (w + 8) + w, y, b }));
+  if (!st) { svg.setAttribute("viewBox", "0 0 760 200"); el("text", { x: 380, y: 100, "text-anchor": "middle", class: "kv" }, svg).textContent = "not in this model"; return; }
+  const collapse = !showBreakers;
+  // Bars.
+  const barOf = new Map(), bars = [], stars = new Map();
+  for (const b of st.buses.slice().sort((a, c) => a.n - c.n)) {
+    if (b.star) { stars.set(b.n, { b, legs: [] }); continue; }
+    const id = collapse ? b.key : "bus" + b.n;
+    let bar = bars.find(x => x.id === id);
+    if (!bar) { bar = { id, kv: b.kv, buses: [], slots: [] }; bars.push(bar); }
+    bar.buses.push(b); bar.kv = Math.max(bar.kv, b.kv); barOf.set(b.n, bar);
+  }
+  if (!bars.length) { svg.setAttribute("viewBox", "0 0 760 200"); el("text", { x: 380, y: 100, "text-anchor": "middle", class: "kv" }, svg).textContent = "no buses to draw here in this model"; return; }
+  const levels = [...new Set(bars.map(b => Math.round(b.kv)))].sort((a, b) => b - a);
+  bars.forEach(b => b.row = levels.indexOf(Math.round(b.kv)));
+  // What attaches to each bar.
+  const outs = [], inner = [];
+  for (const r of st.branches) {
+    if (r.sa !== r.sb) { const bar = barOf.get(r.sa === name ? r.f : r.t); if (bar) outs.push({ r, bar, nb: r.sa === name ? r.sb : r.sa }); continue; }
+    const sf = stars.get(r.f), stt = stars.get(r.t), a = barOf.get(r.f), b = barOf.get(r.t);
+    if (sf || stt) { const star = sf || stt, bar = sf ? b : a; if (bar) star.legs.push({ r, bar }); continue; }
+    if (!a || !b || a === b) continue;  // a closed tie inside a collapsed group
+    inner.push({ r, a, b });
+  }
+  // Sides for neighbours: lines from the highest level that has any go up, the rest go down;
+  // with a single such level they alternate once the row gets crowded.
+  const sideOf = new Map(), nbNames = [...new Set(outs.map(o => o.nb))].sort();
+  const outRows = [...new Set(outs.map(o => o.bar.row))].sort((a, b) => a - b);
+  nbNames.forEach((n, i) => {
+    const rows = outs.filter(o => o.nb === n).map(o => o.bar.row), top = rows.filter(r => r === outRows[0]).length * 2 >= rows.length;
+    sideOf.set(n, outRows.length > 1 ? (top ? "top" : "bottom") : (nbNames.length > 5 && i % 2 ? "bottom" : "top"));
   });
-  // Neighbours on an ellipse.
-  const groups = new Map();
-  for (const r of st.branches) if (r.sa !== r.sb) { const other = r.sa === name ? r.sb : r.sa; if (!groups.has(other)) groups.set(other, []); groups.get(other).push(r); }
-  const names = [...groups.keys()].sort();
+  // Bar sizes and positions.
+  const slotW = 13, pad = 30;
+  bars.forEach(b => b.n = outs.filter(o => o.bar === b).length + inner.filter(x => x.a === b || x.b === b).length + [...stars.values()].reduce((a, s) => a + s.legs.filter(l => l.bar === b).length, 0));
+  bars.forEach(b => b.w = Math.max(64, pad + slotW * (b.n + 1)));
+  const rowsOfBars = levels.map((_, i) => bars.filter(b => b.row === i));
+  const widest = Math.max(...rowsOfBars.map(r => r.reduce((a, b) => a + b.w + 26, 0)));
+  const nTop = nbNames.filter(n => sideOf.get(n) === "top").length, nBot = nbNames.length - nTop;
+  const W = Math.max(760, widest + 180, Math.max(nTop, nBot) * 104 + 40);
+  rowsOfBars.forEach((row, i) => {
+    if (i > 0) row.forEach(b => { const link = inner.filter(x => x.a === b || x.b === b).map(x => x.a === b ? x.b : x.a).filter(o => o.row < i && o.x != null); b.want = link.length ? link.reduce((a, o) => a + o.x + o.w / 2, 0) / link.length : W / 2; });
+    if (i > 0) row.sort((a, b) => a.want - b.want);
+    let x = (W - row.reduce((a, b) => a + b.w + 26, -26)) / 2;
+    row.forEach(b => { b.x = x; x += b.w + 26; });
+  });
+  // Lanes: one horizontal track per branch, so no two overlap.
+  const outTop = outs.filter(o => sideOf.get(o.nb) === "top"), outBot = outs.filter(o => sideOf.get(o.nb) === "bottom");
+  const between = levels.map((_, i) => inner.filter(x => Math.min(x.a.row, x.b.row) === i && x.a.row !== x.b.row).length + [...stars.values()].filter(s => Math.min(...s.legs.map(l => l.bar.row)) === i).length);
+  const lane = 9, boxH = 20, topY = 28, firstRow = topY + boxH + 26 + outTop.length * lane + 30;
+  const rowY = []; let y = firstRow;
+  levels.forEach((_, i) => { rowY.push(y); y += Math.max(84, 52 + between[i] * lane + 14 * inner.filter(x => x.a.row === i + 1 && x.b.row === i + 1).length); });
+  const lastRow = rowY[rowY.length - 1], botY = lastRow + 44 + outBot.length * lane + 26, H = botY + boxH + 24;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.style.minWidth = Math.min(W, 1600) * 0.75 + "px";
+  bars.forEach(b => b.y = rowY[b.row]);
+  // Neighbour boxes, ordered by where their branches come from.
   const where = new Map();
-  names.forEach((n, i) => { const a = -Math.PI / 2 + (2 * Math.PI * (i + 0.5)) / names.length; where.set(n, { x: W / 2 + W * 0.41 * Math.cos(a), y: H / 2 + H * 0.43 * Math.sin(a) }); });
-  const lines = el("g", {}, svg), boxes = el("g", {}, svg), bars = el("g", {}, svg);
+  for (const [side, by] of [["top", topY], ["bottom", botY]]) {
+    const names = nbNames.filter(n => sideOf.get(n) === side).map(n => { const os = outs.filter(o => o.nb === n); return { n, x: os.reduce((a, o) => a + o.bar.x + o.bar.w / 2, 0) / os.length }; }).sort((a, b) => a.x - b.x);
+    names.forEach((q, i) => where.set(q.n, { x: W * (i + 0.5) / names.length, y: by + boxH / 2, side }));
+  }
+  // Slots along each bar, left to right in the order of their targets.
+  const attach = [];
+  outs.forEach(o => attach.push({ bar: o.bar, tx: where.get(o.nb).x, o }));
+  inner.forEach(x => { attach.push({ bar: x.a, tx: x.b.x + x.b.w / 2, x, end: "a" }); attach.push({ bar: x.b, tx: x.a.x + x.a.w / 2, x, end: "b" }); });
+  for (const s of stars.values()) { s.x = s.legs.reduce((a, l) => a + l.bar.x + l.bar.w / 2, 0) / Math.max(1, s.legs.length); s.legs.forEach(l => attach.push({ bar: l.bar, tx: s.x, leg: l })); }
+  bars.forEach(b => attach.filter(a => a.bar === b).sort((p, q) => p.tx - q.tx).forEach((a, i) => { const x = b.x + pad + slotW * i; if (a.o) a.o.x = x; else if (a.leg) a.leg.x = x; else a.x[a.end + "x"] = x; }));
+  // Draw.
+  const lines = el("g", {}, svg), boxes = el("g", {}, svg), barsG = el("g", {}, svg), marks = el("g", {}, svg);
   const cls = r => `br ${status(m, r)}${r.on ? "" : " out"}${r.tie ? " tie" : ""}${limited(m, r) ? " limited" : ""}`;
   const pick = (node, kind, item) => node.addEventListener("click", ev => { ev.stopPropagation(); select(m, kind, item, node); });
-  // Branches leaving the station.
-  for (const [other, rs] of groups) rs.forEach((r, i) => {
-    const p = pos.get(r.sa === name ? r.f : r.t), q = where.get(other), x = (p.x1 + p.x2) / 2 + (i - (rs.length - 1) / 2) * 6;
-    const line = el("path", { d: `M${x},${p.y} L${q.x + (i - (rs.length - 1) / 2) * 6},${q.y}`, class: cls(r) }, lines);
-    line.dataset.id = r.id; pick(line, "branch", r);
+  const path = (d, r) => { const p = el("path", { d, class: cls(r) }, lines); p.dataset.id = r.id; pick(p, "branch", r); el("title", {}, p).textContent = r.id; return p; };
+  const dot = (x, y) => el("circle", { cx: x, cy: y, r: 2.4, class: "dot" }, marks);
+  const symbol = (r, x, y) => {
+    const c = r.k === "T" ? el("circle", { cx: x, cy: y, r: 5, class: `xf ${cls(r)}` }, marks) : r.tie ? el("rect", { x: x - 4, y: y - 4, width: 8, height: 8, class: `sw ${cls(r)}${r.on ? " closed" : ""}` }, marks) : null;
+    if (c) { c.dataset.id = r.id; pick(c, "branch", r); el("title", {}, c).textContent = r.id; }
+  };
+  const order = list => list.slice().sort((p, q) => where.get(p.nb).x - where.get(q.nb).x || p.x - q.x);
+  const seenBox = new Map();
+  [[order(outTop), -1], [order(outBot), 1]].forEach(([list, dir]) => list.forEach((o, i) => {
+    const q = where.get(o.nb), k = seenBox.get(o.nb) || 0, n = outs.filter(z => z.nb === o.nb).length; seenBox.set(o.nb, k + 1);
+    const bx = q.x + (k - (n - 1) / 2) * 7, ly = dir < 0 ? firstRow - 30 - i * lane : lastRow + 44 + i * lane, by = q.y - dir * boxH / 2;
+    path(`M${o.x},${o.bar.y} V${ly} H${bx} V${by}`, o.r); dot(o.x, o.bar.y);
+  }));
+  const sameRow = new Map(), midLane = new Map();
+  inner.forEach(x => {
+    if (x.a.row === x.b.row) {
+      const k = sameRow.get(x.a.row) || 0; sameRow.set(x.a.row, k + 1);
+      const ly = x.a.y - 12 - 10 * k;
+      path(`M${x.ax},${x.a.y} V${ly} H${x.bx} V${x.b.y}`, x.r); symbol(x.r, (x.ax + x.bx) / 2, ly);
+    } else {
+      const up = x.a.row < x.b.row ? x.a : x.b, i = up.row, k = midLane.get(i) || 0; midLane.set(i, k + 1);
+      const ly = rowY[i] + 26 + k * lane;
+      path(`M${x.ax},${x.a.y} V${ly} H${x.bx} V${x.b.y}`, x.r); symbol(x.r, (x.ax + x.bx) / 2, ly);
+    }
+    dot(x.ax, x.a.y); dot(x.bx, x.b.y);
   });
-  // Branches inside the station.
-  const inside = st.branches.filter(r => r.sa === r.sb);
-  const seen = new Map();
-  inside.forEach(r => {
-    const p = pos.get(r.f), q = pos.get(r.t); if (!p || !q) return;
-    const k = Math.min(r.f, r.t) + ":" + Math.max(r.f, r.t), n = seen.get(k) || 0; seen.set(k, n + 1);
-    const px = (p.x1 + p.x2) / 2, qx = (q.x1 + q.x2) / 2;
-    let d;
-    if (p.y === q.y) { const lift = 16 + 9 * n; d = `M${px},${p.y} C${px},${p.y - lift} ${qx},${q.y - lift} ${qx},${q.y}`; }
-    else { const off = (n - 0.5) * 8; d = `M${px + off},${p.y} L${qx + off},${q.y}`; }
-    const line = el("path", { d, class: cls(r) }, lines);
-    line.dataset.id = r.id; pick(line, "branch", r);
-    if (r.k === "T") { const c = el("circle", { cx: (px + qx) / 2 + (p.y === q.y ? 0 : (n - 0.5) * 8), cy: (p.y + q.y) / 2 - (p.y === q.y ? 12 + 7 * n : 0), r: 4, class: `xf ${cls(r)}` }, lines); pick(c, "branch", r); }
-  });
+  for (const s of stars.values()) {
+    if (!s.legs.length) continue;
+    const i = Math.min(...s.legs.map(l => l.bar.row)), k = midLane.get(i) || 0; midLane.set(i, k + 1);
+    const sy = levels.length > 1 ? rowY[i] + 26 + k * lane : rowY[i] + 30;
+    s.legs.forEach(l => { path(`M${l.x},${l.bar.y} V${sy} H${s.x}`, l.r); dot(l.x, l.bar.y); });
+    const c = el("circle", { cx: s.x, cy: sy, r: 6, class: "xf3" }, marks); el("title", {}, c).textContent = `three-winding transformer (star bus ${s.b.n})`;
+    pick(c, "bus", s.b);
+  }
   for (const [n, q] of where) {
-    const g = el("g", { class: "nb" }, boxes), label = n.length > 15 ? n.slice(0, 14) + "…" : n;
-    el("rect", { x: q.x - 46, y: q.y - 10, width: 92, height: 20 }, g);
+    const g = el("g", { class: "nb" }, boxes), label = n.length > 15 ? n.slice(0, 14) + "…" : n, k = outs.filter(o => o.nb === n).length;
+    el("rect", { x: q.x - 48, y: q.y - boxH / 2, width: 96, height: boxH }, g);
     el("text", { x: q.x, y: q.y + 3.5, "text-anchor": "middle" }, g).textContent = label;
-    el("title", {}, g).textContent = n + " (" + groups.get(n).length + " branch" + (groups.get(n).length > 1 ? "es" : "") + ")";
+    el("title", {}, g).textContent = `${n} (${k} branch${k > 1 ? "es" : ""}); click to go there`;
     g.addEventListener("click", () => go(n));
   }
-  for (const { x1, x2, y, b } of pos.values()) {
-    const bar = el("line", { x1, x2, y1: y, y2: y, class: "bus" + (b.type === 4 ? " dead" : "") }, bars);
-    el("title", {}, bar).textContent = `bus ${b.n}  ${b.kv} kV  ${b.name}`;
-    pick(bar, "bus", b);
-    const on = b.loads.filter(l => l.on).length, off = b.loads.length - on;
-    let x = x1 + 6;
-    if (on) { pick(el("path", { d: `M${x - 4},${y + 6} h8 l-4,7 z`, class: "load" }, bars), "bus", b); x += 12; }
-    if (off) { pick(el("path", { d: `M${x - 4},${y + 6} h8 l-4,7 z`, class: "load out" }, bars), "bus", b); x += 12; }
-    if (b.gen.length) { el("circle", { cx: x, cy: y + 10, r: 4, class: "gen" }, bars); el("text", { x: x - 2.6, y: y + 12.6, style: "font-size:7px" }, bars).textContent = "G"; }
+  levels.forEach((kv, i) => el("text", { x: 8, y: rowY[i] + 3, class: "kv" }, svg).textContent = kv + " kV");
+  for (const b of bars) {
+    const dead = b.buses.every(x => x.type === 4);
+    const bar = el("line", { x1: b.x, x2: b.x + b.w, y1: b.y, y2: b.y, class: "bus" + (dead ? " dead" : "") }, barsG);
+    el("title", {}, bar).textContent = b.buses.map(x => `bus ${x.n}  ${x.kv} kV  ${x.name}`).join("\n");
+    pick(bar, "bar", b);
+    const loads = b.buses.flatMap(x => x.loads), on = loads.filter(l => l.on).length, off = loads.length - on, gens = b.buses.reduce((a, x) => a + x.gen.length, 0);
+    let x = b.x + 5;
+    if (on) { pick(el("path", { d: `M${x - 4},${b.y + 6} h8 l-4,7 z`, class: "load" }, barsG), "bar", b); x += 11; }
+    if (off) { pick(el("path", { d: `M${x - 4},${b.y + 6} h8 l-4,7 z`, class: "load out" }, barsG), "bar", b); x += 11; }
+    if (gens) { el("circle", { cx: x, cy: b.y + 10, r: 4, class: "gen" }, barsG); el("text", { x: x - 2.6, y: b.y + 12.6, style: "font-size:7px" }, barsG).textContent = "G"; }
+    if (b.buses.length > 1) el("text", { x: b.x + b.w + 4, y: b.y - 4, class: "kv" }, barsG).textContent = "×" + b.buses.length;
   }
 }
 
@@ -167,14 +246,16 @@ function count(m, name) {
   if (!st) return null;
   const ins = st.branches.filter(r => r.sa === r.sb), out = st.branches.filter(r => r.sa !== r.sb), loads = st.buses.flatMap(b => b.loads);
   return {
-    "Buses": st.buses.length, "Lines out of station (in / out of service)": `${out.filter(r => r.on).length} / ${out.filter(r => !r.on).length}`,
+    "Buses (without star points)": st.buses.filter(b => !b.star).length, "Electrical nodes (closed ties merged)": new Set(st.buses.filter(b => !b.star).map(b => b.key)).size, "Lines out of station (in / out of service)": `${out.filter(r => r.on).length} / ${out.filter(r => !r.on).length}`,
     "Ties (closed / open)": `${ins.filter(r => r.tie && r.on).length} / ${ins.filter(r => r.tie && !r.on).length}`,
     "Transformers (in / out)": `${ins.filter(r => r.k === "T" && r.on).length} / ${ins.filter(r => r.k === "T" && !r.on).length}`,
     "Branches with a limit": st.branches.filter(r => limited(m, r)).length,
     "Loads (in / out of service)": `${loads.filter(l => l.on).length} / ${loads.filter(l => !l.on).length}`,
     "Load MW in service": fmt(loads.filter(l => l.on).reduce((a, l) => a + (l.mw || 0), 0)),
     "Load MW out of service": fmt(loads.filter(l => !l.on).reduce((a, l) => a + (l.mw || 0), 0)),
-    "Generators": st.buses.reduce((a, b) => a + b.gen.length, 0), "Settlement points": new Set(st.buses.flatMap(b => b.sp)).size,
+    "Three-winding transformers": st.buses.filter(b => b.star).length,
+    "Generators": st.buses.reduce((a, b) => a + b.gen.length, 0), "Resource nodes and DC ties": new Set(st.buses.flatMap(b => b.sp)).size,
+    "Hubs and load zones it is part of": new Set(st.buses.flatMap(b => b.agg)).size,
     "Neighbouring stations": new Set(out.map(r => r.sa === name ? r.sb : r.sa)).size,
   };
 }
@@ -187,6 +268,13 @@ function summary(name) {
   const counts = models.map(m => count(m, name)), keys = Object.keys(counts.find(Boolean) || {});
   const rows = keys.map(k => { const v = counts.map(c => c ? c[k] : ""); const d = two && String(v[0]) !== String(v[1]); return `<tr><td>${esc(k)}</td>${v.map(x => `<td class="num${d ? " diff" : ""}">${esc(x)}</td>`).join("")}</tr>`; });
   let html = `<h3>${esc(name)}</h3>` + table(["", ...models.map(m => m.id)], rows);
+  const names = f => models.map(m => { const st = m.stations.get(name); return st ? [...new Set(st.buses.flatMap(f))].sort() : []; });
+  const sps = names(b => b.sp), aggs = names(b => b.agg);
+  const cell = (xs, others) => `<td>${xs.map(x => two && !others.includes(x) ? `<span class="diff">${esc(x)}</span>` : esc(x)).join("<br>")}</td>`;
+  if (sps.some(x => x.length) || aggs.some(x => x.length))
+    html += "<h3>Settlement points</h3>" + table(["", ...models.map(m => m.id)], [
+      `<tr><td>Resource nodes, DC ties</td>${sps.map((xs, i) => cell(xs, sps[1 - i] || [])).join("")}</tr>`,
+      `<tr><td>Hubs, load zones</td>${aggs.map((xs, i) => cell(xs, aggs[1 - i] || [])).join("")}</tr>`]);
   models.forEach(m => {
     const st = m.stations.get(name); if (!st) return;
     const rows = st.branches.slice().sort((a, b) => a.id < b.id ? -1 : 1).map(r => {
@@ -199,9 +287,19 @@ function summary(name) {
 }
 
 function detail(m, kind, item) {
+  if (kind === "bar") {
+    const buses = item.buses, loads = buses.flatMap(b => b.loads.map(l => ({ ...l, n: b.n })));
+    const rows = buses.map(b => `<tr><td class="num">${b.n}</td><td class="num">${b.kv}</td><td>${esc(b.name)}</td><td>${b.type === 4 ? "isolated" : b.type === 3 ? "swing" : b.type === 2 ? "generator" : "load"}</td></tr>`);
+    const uniq = f => [...new Set(buses.flatMap(f))];
+    const lrows = loads.map(l => `<tr><td>${esc(l.id)}</td><td class="num">${l.n}</td><td>${l.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${fmt(l.mw)}</td><td class="num">${fmt(l.ldf, 4)}</td><td>${esc(l.zone)}</td></tr>`);
+    const list = (title, xs) => xs.length ? `<h3>${title}</h3><p>${xs.map(esc).join(", ")}</p>` : "";
+    return `<h3>${buses.length > 1 ? buses.length + " buses joined by closed ties" : "Bus"}, ${esc(m.id)}</h3>` + table(["PSS/E bus", "base kV", "name in RAW", "PSS/E type"], rows)
+      + `<p class="muted">Node key: ${esc(buses[0].key)}</p>` + (lrows.length ? "<h3>Loads</h3>" + table(["load", "bus", "service", "MW", "LDF", "zone"], lrows) : "")
+      + list("Generators", uniq(b => b.gen)) + list("Resource nodes and DC ties here", uniq(b => b.sp)) + list("Hubs and load zones this bus is part of", uniq(b => b.agg));
+  }
   if (kind === "bus") {
     const rows = [["PSS/E bus", item.n], ["Base kV", item.kv], ["Name in RAW", item.name], ["Type", item.type === 4 ? "4 (isolated)" : item.type], ["Node key", item.key],
-                  ["Generators", item.gen.join(", ")], ["Settlement points", item.sp.join(", ")]].map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`);
+                  ["Generators", item.gen.join(", ")], ["Resource nodes", item.sp.join(", ")], ["Part of", item.agg.join(", ")], ["Note", item.star ? "fictitious star point of a three-winding transformer" : ""]].map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`);
     const loads = item.loads.map(l => `<tr><td>${esc(l.id)}</td><td>${l.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${fmt(l.mw)}</td><td class="num">${fmt(l.ldf, 4)}</td><td>${esc(l.zone)}</td></tr>`);
     return `<h3>Bus, ${esc(m.id)}</h3>` + table(["", ""], rows) + (loads.length ? `<h3>Loads on this bus</h3>` + table(["load", "service", "MW", "LDF", "zone"], loads) : "");
   }
@@ -243,7 +341,7 @@ function go(name, push = true) {
   current = name; selected = null;
   document.getElementById("search").value = name;
   models.forEach((m, i) => drawPane(m, name, document.getElementById("svg" + i)));
-  history.replaceState(null, "", "#" + encodeURIComponent(name));
+  if (!location.search.includes("nohash")) history.replaceState(null, "", "#" + encodeURIComponent(name));
   render();
 }
 
@@ -256,10 +354,11 @@ function start() {
   document.getElementById("stations").innerHTML = all.map(s => `<option value="${esc(s)}">`).join("");
   const sw = (c, t, extra = "") => `<span><i class="sw" style="border-color:var(${c});${extra}"></i>${t}</span>`;
   document.getElementById("legend").innerHTML = (two ? sw("--same", "same on both sides") + sw("--differs", "matched, differs (service or reactance)") + sw("--only", "this side only") : "")
-    + sw("--same", "out of service", "border-top-style:dashed") + sw("--same", "has an enforced limit", "border-top-width:5px") + "<span>▼ load in service</span><span style='color:var(--off)'>▽ load out</span>";
+    + sw("--same", "out of service", "border-top-style:dashed") + `<span title="The model enforces a MW limit on this branch: in a CRR model it is in the monitored-elements file, in a DAM model it is flagged Secured. Thin lines are in the network but carry no limit.">${sw("--same", "limit enforced by this model", "border-top-width:5px")}</span>` + "<span>\u25CB transformer</span><span>\u25A0 closed / \u25A1 open breaker</span>" + "<span>▼ load in service</span><span style='color:var(--off)'>▽ load out</span>";
   const search = document.getElementById("search");
   search.addEventListener("change", () => go(search.value.trim()));
   search.addEventListener("keydown", e => { if (e.key === "Enter") go(search.value.trim()); });
+  document.getElementById("breakers").addEventListener("change", e => { showBreakers = e.target.checked; go(current, false); });
   document.getElementById("back").addEventListener("click", () => { const p = trail.pop(); if (p) go(p, false); });
   const wanted = decodeURIComponent(location.hash.slice(1));
   let first = wanted && all.includes(wanted) ? wanted : null;

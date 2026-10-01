@@ -11,9 +11,11 @@
      "st": "ALPHA",
      "name": "ALPHA_1",
      "type": 1,
-     "key": "k1",
+     "key": "k12",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 2,
@@ -21,9 +23,11 @@
      "st": "ALPHA",
      "name": "ALPHA_2",
      "type": 1,
-     "key": "k2",
+     "key": "k12",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 3,
@@ -33,7 +37,9 @@
      "type": 1,
      "key": "k3",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 4,
@@ -45,7 +51,12 @@
      "sp": [
       "RN_ALPHA"
      ],
-     "gen": []
+     "gen": [],
+     "agg": [
+      "LZ_X",
+      "HB_Y"
+     ],
+     "star": false
     },
     {
      "n": 9,
@@ -55,7 +66,9 @@
      "type": 1,
      "key": "k9",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 5,
@@ -65,7 +78,9 @@
      "type": 1,
      "key": "k5",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 6,
@@ -75,7 +90,9 @@
      "type": 1,
      "key": "k6",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 7,
@@ -85,7 +102,9 @@
      "type": 1,
      "key": "k7",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 8,
@@ -95,7 +114,33 @@
      "type": 1,
      "key": "k8",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
+    },
+    {
+     "n": 20,
+     "kv": 1.0,
+     "st": "ALPHA",
+     "name": "ALPHA_STAR",
+     "type": 1,
+     "key": "k20",
+     "sp": [],
+     "agg": [],
+     "gen": [],
+     "star": true
+    },
+    {
+     "n": 21,
+     "kv": 13.8,
+     "st": "ALPHA",
+     "name": "ALPHA_TER",
+     "type": 1,
+     "key": "k21",
+     "sp": [],
+     "agg": [],
+     "gen": [],
+     "star": false
     }
    ],
    "branches": [
@@ -273,6 +318,57 @@
      "ra": null,
      "rb": null,
      "ctg": []
+    },
+    {
+     "id": "XF3_H",
+     "k": "T",
+     "f": 2,
+     "t": 20,
+     "ckt": "1",
+     "x": 0.02,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": 300.0,
+     "rb": 330.0,
+     "ctg": []
+    },
+    {
+     "id": "XF3_L",
+     "k": "T",
+     "f": 20,
+     "t": 4,
+     "ckt": "1",
+     "x": 0.02,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": 300.0,
+     "rb": 330.0,
+     "ctg": []
+    },
+    {
+     "id": "XF3_T",
+     "k": "T",
+     "f": 20,
+     "t": 21,
+     "ckt": "1",
+     "x": 0.02,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": 300.0,
+     "rb": 330.0,
+     "ctg": []
     }
    ],
    "loads": [
@@ -317,7 +413,9 @@
      "sp": [],
      "gen": [
       "ALPHA_G1"
-     ]
+     ],
+     "agg": [],
+     "star": false
     },
     {
      "n": 103,
@@ -329,7 +427,9 @@
      "sp": [
       "RN_ALPHA"
      ],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 105,
@@ -339,7 +439,9 @@
      "type": 1,
      "key": "k105",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 106,
@@ -349,7 +451,9 @@
      "type": 1,
      "key": "k106",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 107,
@@ -359,7 +463,9 @@
      "type": 1,
      "key": "k107",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
     },
     {
      "n": 108,
@@ -369,7 +475,33 @@
      "type": 1,
      "key": "k108",
      "sp": [],
-     "gen": []
+     "gen": [],
+     "agg": [],
+     "star": false
+    },
+    {
+     "n": 120,
+     "kv": 1.0,
+     "st": "ALPHA",
+     "name": "ALPHA",
+     "type": 1,
+     "key": "k120",
+     "sp": [],
+     "agg": [],
+     "gen": [],
+     "star": true
+    },
+    {
+     "n": 121,
+     "kv": 13.8,
+     "st": "ALPHA",
+     "name": "ALPHA",
+     "type": 1,
+     "key": "k121",
+     "sp": [],
+     "agg": [],
+     "gen": [],
+     "star": false
     }
    ],
    "branches": [
@@ -474,6 +606,57 @@
      "ra": 220,
      "rb": 242.0,
      "ctg": []
+    },
+    {
+     "id": "XF3H",
+     "k": "T",
+     "f": 101,
+     "t": 120,
+     "ckt": "1",
+     "x": 0.02,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": 300.0,
+     "rb": 330.0,
+     "ctg": []
+    },
+    {
+     "id": "XF3L",
+     "k": "T",
+     "f": 120,
+     "t": 103,
+     "ckt": "1",
+     "x": 0.02,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": 300.0,
+     "rb": 330.0,
+     "ctg": []
+    },
+    {
+     "id": "XF3T",
+     "k": "T",
+     "f": 120,
+     "t": 121,
+     "ckt": "1",
+     "x": 0.02,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": 300.0,
+     "rb": 330.0,
+     "ctg": []
     }
    ],
    "loads": [
@@ -514,6 +697,18 @@
    "L_AD": {
     "other": "LAD_1",
     "same": true
+   },
+   "XF3_H": {
+    "other": "XF3H",
+    "same": true
+   },
+   "XF3_L": {
+    "other": "XF3L",
+    "same": true
+   },
+   "XF3_T": {
+    "other": "XF3T",
+    "same": true
    }
   },
   "right": {
@@ -539,6 +734,18 @@
    },
    "LAD_1": {
     "other": "L_AD",
+    "same": true
+   },
+   "XF3H": {
+    "other": "XF3_H",
+    "same": true
+   },
+   "XF3L": {
+    "other": "XF3_L",
+    "same": true
+   },
+   "XF3T": {
+    "other": "XF3_T",
     "same": true
    }
   }

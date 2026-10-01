@@ -24,6 +24,8 @@ class FakeSession:
             "branch_rating": pl.DataFrame({"snapshot_id": [SID] * 2, "branch_id": ["XF1", "L1"], "rating_source": ["psse_raw"] * 2, "time_of_use": [None, None],
                                            "base_mw": [400.0, 200.0], "emergency_mw": [440.0, 220.0]}, schema_overrides={"time_of_use": pl.String}),
             "contingency_outage": pl.DataFrame({"snapshot_id": [SID] * 2, "contingency_id": ["C1", "C2"], "branch_id": ["L1", "L1"]}),
+            "settlement_point": pl.DataFrame({"snapshot_id": [SID] * 2, "settlement_point_id": ["RN_ALPHA", "LZ_X"], "kind": ["resource_node", "load_zone"]}),
+            "settlement_point_node": pl.DataFrame({"snapshot_id": [SID] * 2, "settlement_point_id": ["RN_ALPHA", "LZ_X"], "node_key": ["b", "c"], "is_resolved": [True, True]}),
             "load": pl.DataFrame({"snapshot_id": [SID], "load_id": ["BRAVO_L1"], "psse_bus": [3], "is_in_service": [True], "mw": [12.5], "mw_ldf": [0.001], "load_zone": ["LZ_X"]}),
         }
 
@@ -40,7 +42,8 @@ def test_build_writes_an_owner_only_page_with_the_model_embedded(tmp_path):
     model = data["models"][0]
     assert data["compare"] is None and model["kind"] == "dam"
     assert {b["n"]: b["st"] for b in model["buses"]} == {1: "ALPHA", 2: "ALPHA", 3: "BRAVO"}
-    assert model["buses"][0]["gen"] == ["ALPHA_G1"] and model["buses"][1]["sp"] == ["RN_ALPHA"]
+    assert model["buses"][0]["gen"] == ["ALPHA_G1"] and model["buses"][1]["sp"] == ["RN_ALPHA"] and model["buses"][2]["agg"] == ["LZ_X"]
+    assert not any(b["star"] for b in model["buses"])
     line = next(b for b in model["branches"] if b["id"] == "L1")
     assert (line["k"], line["on"], line["base"], line["ctg"]) == ("L", False, 200.0, ["C1", "C2"])
     assert model["loads"] == [{"id": "BRAVO_L1", "bus": 3, "on": True, "mw": 12.5, "ldf": 0.001, "zone": "LZ_X"}]
