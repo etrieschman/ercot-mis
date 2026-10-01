@@ -147,3 +147,18 @@ def test_by_default_ties_are_branches_between_their_own_buses_as_ercot_solves_th
     assert net.nodes["node_id"].to_list() == ["A@1", "A@2", "B", "C"]
     assert "T" in net.branches["branch_id"].to_list() and "P" in net.branches["branch_id"].to_list()
     assert net.summary()["dropped_branches"] == {"island": 1, "out_of_service": 1}
+
+
+def test_a_network_written_to_disk_reads_back_the_same(tmp_path):
+    from ercot_mis.out import network as out
+
+    net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
+    assert out.read(tmp_path / "missing") is None
+    out.write(net, tmp_path / "n")
+    back = out.read(tmp_path / "n")
+    assert (back.snapshot_id, back.options, back.slack_node_id, back.slack_source) == (net.snapshot_id, net.options, net.slack_node_id, net.slack_source)
+    for name in out.FRAMES:
+        assert getattr(back, name).equals(getattr(net, name)), name
+    assert out.cache_key("core=1", Options()) != out.cache_key("core=1", CONTRACT) != out.cache_key("core=2", CONTRACT)
+    (tmp_path / "n" / "network.json").unlink()
+    assert out.read(tmp_path / "n") is None  # incomplete folders are not trusted

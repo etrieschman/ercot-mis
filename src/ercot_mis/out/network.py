@@ -48,8 +48,8 @@ What the assembly does, in order:
    that fell on dropped nodes is recorded per point as ``weight_dropped``.
 
 Nothing here decides which contingencies island the network: that depends on the
-consumer's connectivity check, as in ``ftr_align``. Nothing is written to disk yet;
-``Session.network`` computes on demand.
+consumer's connectivity check, as in ``ftr_align``. ``Session.network`` assembles a network on first request and keeps
+it under ``out/network/`` (``write`` and ``read`` below), keyed by options and code versions.
 """
 
 from __future__ import annotations
@@ -384,3 +384,47 @@ def core_tables(session, snapshot_id: str) -> CoreTables:
         raise KeyError(f"no core rows for {snapshot_id!r}; run build_core()")
     return CoreTables(node, rows("branch"), rows("branch_rating"), rows("contingency"), rows("contingency_outage"), rows("gtc"), rows("gtc_member"),
                       rows("settlement_point"), rows("settlement_point_bus"))
+
+
+# ---------------------------------------------------------------------- on disk
+
+FRAMES = ("nodes", "branches", "contingencies", "gtcs", "gtc_members", "settlement_points", "settlement_point_nodes",
+          "dropped_branches", "dropped_nodes", "dropped_contingencies")
+
+
+def cache_key(core_version: str, options: Options) -> str:
+    """Identity of an assembled network: this module's version, the core build's, and every option."""
+    import hashlib
+    import json
+
+    text = json.dumps({"network": VERSION, "core": core_version, "options": asdict(options)}, sort_keys=True)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def write(net: Network, folder) -> None:
+    """One Parquet file per frame plus ``network.json`` (snapshot, options, slack), owner-only."""
+    import json
+    import os
+
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for name in FRAMES:
+        path = folder / f"{name}.parquet"
+        getattr(net, name).write_parquet(path, compression="zstd")
+        os.chmod(path, 0o600)
+    meta = folder / "network.json"  # written last: its presence says the folder is complete
+    meta.write_text(json.dumps({"snapshot_id": net.snapshot_id, "options": asdict(net.options), "slack_node_id": net.slack_node_id,
+                                "slack_source": net.slack_source, "version": VERSION}, indent=1))
+    os.chmod(meta, 0o600)
+
+
+def read(folder) -> Network | None:
+    """The network written to ``folder``, or None when it is absent or incomplete."""
+    import json
+
+    meta = folder / "network.json"
+    if not meta.is_file() or not all((folder / f"{name}.parquet").is_file() for name in FRAMES):
+        return None
+    info = json.loads(meta.read_text())
+    frames = {name: pl.read_parquet(folder / f"{name}.parquet") for name in FRAMES}
+    return Network(snapshot_id=info["snapshot_id"], options=Options(**info["options"]), slack_node_id=info["slack_node_id"],
+                   slack_source=info["slack_source"], **frames)

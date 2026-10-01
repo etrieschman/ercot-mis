@@ -455,16 +455,29 @@ class Session:
 
         return viewer.build(self, left, right, reference_dam=reference_dam)
 
-    def network(self, snapshot_id: str, options=None):
-        """One snapshot as a DC model reads it: ``out.network``, computed on demand.
+    def network(self, snapshot_id: str, options=None, *, cache: bool = True):
+        """One snapshot as a DC model reads it: ``out.network``.
 
         ``options`` is an ``ercot_mis.out.network.Options`` (or keyword-free defaults):
         tie contraction, rating source and time-of-use block, which branches get
         limits, the post-contingency rating. See ``ercot_mis.out.network``.
-        """
-        from .out.network import build_network, core_tables
 
-        return build_network(snapshot_id, core_tables(self, snapshot_id), options)
+        The network is assembled on first request and kept under
+        ``out/network/<snapshot>/<key>/`` as Parquet (one file per frame), where the key
+        covers the options and the versions of the code that built it; ask again and it
+        is read back. ``cache=False`` assembles without reading or writing.
+        """
+        from .core.build import core_id
+        from .out import network as out
+
+        options = options or out.Options()
+        folder = self.data_dir / "out" / "network" / snapshot_id.replace(":", "-") / out.cache_key(core_id(), options)
+        if cache and (found := out.read(folder)) is not None:
+            return found
+        net = out.build_network(snapshot_id, out.core_tables(self, snapshot_id), options)
+        if cache:
+            out.write(net, folder)
+        return net
 
     # ----------------------------------------------------------------- reading
 

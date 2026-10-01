@@ -86,7 +86,7 @@ Do not write "node" for the merged thing or "bus" for a CRR bus section again.
   service and ratings side by side with `same_*` verdicts; `core.diff_settlement_point`
   (`session.diff_settlement_points`) does the same for settlement point node sets.
 - `out` — what consumers read: `out.network` (`session.network(snapshot_id, Options)`,
-  computed on demand, conventions in `docs/out-network.md`), `out.hourly_injection` (q).
+  assembled on first request and cached under `out/network/<snapshot>/<key>/` as Parquet, conventions in `docs/out-network.md`), `out.hourly_injection` (q).
 - Layer = folder = DuckDB schema. No PUDL-style `layer_source__type` names.
   Columns: unit suffixes (`_mw`, `_mva`), `is_` booleans, `_code` categoricals.
 - Hourly facts carry `interval_start_utc`, `interval_end_utc` **and** ERCOT's
@@ -341,8 +341,9 @@ the top of the list as soon as the rest of that day's list (2 to 5) is done:
    prices settlement points that are cut off, PRC-03). Still to find: EWS report type
    IDs for the transmission outage reports and the CRR auction results, which the
    Public API does not carry.
-5. **On-disk `out/`**: the network as Parquet, written on first request and cached by
-   snapshot and options (default options built in the daily pull for CRR only).
+5. **On-disk `out/`**: done on 2026-10-01 (`session.network` writes and reads
+   `out/network/<snapshot>/<key>/`). Not built in the daily pull; a network appears
+   when something asks for it.
 6. **Flow check**, once NP3-966-ER overlaps the archived models (mid-October 2026).
 7. **Cross-model network** (one node set for CRR and DAM): the tie-group rule is the
    user's call.
