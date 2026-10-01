@@ -62,7 +62,8 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   the GTL workbook with `crr_gtc_id` from the manual crosswalk in
   `data/overrides/gtc_names.csv`, members empty), and `core.match_branch` /
   `core.settlement_point` + `core.settlement_point_node` (kind, node weights summing to
-  one from CRR participation factors or DAM `Sp`/`Hb`/`Ld`), and `core.match_branch` /
+  one from CRR participation factors or DAM `Sp`/`Hb`/`Ld`), `core.load` (one row per load:
+  node, service status, MW; DAM zone, distribution factor and rollover flags), and `core.match_branch` /
   `core.match_node` per (CRR snapshot, DAM snapshot) via `session.match_branches` and
   `session.match_nodes`, and `core.match_contingency` via `session.match_contingencies`
   (name, then translated branch set; member-set differences recorded).
@@ -208,6 +209,7 @@ src/ercot_mis/
     match.py        core.match_branch (exact -> ops+ckt -> prefix -> prefix+x), core.match_node (settlement
                     point -> matched branch endpoints by vote), core.match_contingency (name -> members)
     settlement_point.py  core.settlement_point and core.settlement_point_node (kind, node weights; both models)
+    load.py         core.load: every load with its node, service status, MW; DAM zone, LDF and rollover flags
     diff.py         core.diff_branch and core.diff_settlement_point: matched elements side by side
     build.py        writes every core table per package
   out/              layer 3: what consumers read
@@ -289,8 +291,9 @@ Then, in the order agreed:
    binding GTC whose CRR members are not all in the DAM network. Then move GTC
    borrowing from the script into `out.network` (NAM-05) and price buses too (needs
    the NP4-160-SG bus mapping parsed).
-2. **`core.load` and `core.diff_load`** (CRR vs DAM load status and weights per
-   station), and label every open CRR tie as normally open or open for an outage from
+2. **`core.diff_load`** (`core.load` is built; CRR and DAM share no load name, so
+   compare per matched node: loads, in-service MW and distribution factor on each
+   side), and label every open CRR tie as normally open or open for an outage from
    the Outages file's normal-state and outage-state columns (first check its breaker
    rows can be tied to RAW ties). A friend's example of a temporary load modeled open
    in an annual model was confirmed in the tables; this makes it a measured class.

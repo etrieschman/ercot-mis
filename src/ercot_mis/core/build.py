@@ -1,6 +1,7 @@
 """Build the core layer from raw: ``core/snapshot.parquet`` and, per package,
 ``core/<table>/emil_id=<EMIL>/<blob16>.parquet`` for every table in ``TABLES``
-(nodes, branches, ratings, contingencies and their outages, GTCs and their members).
+(nodes, branches, ratings, contingencies and their outages, GTCs and their members,
+settlement points and loads).
 
 Each table is registered in the catalog like a raw artifact (key = ``VERSION``s, the
 package version and the blob). Tables are computed per snapshot (a DAM hour, a CRR
@@ -16,22 +17,22 @@ from pathlib import Path
 import polars as pl
 
 from ..raw import build as raw_build
-from . import branch, contingency, gtc, node, settlement_point, snapshot
+from . import branch, contingency, gtc, load, node, settlement_point, snapshot
 
 LAYER = "core"
 DAM_PRODUCT = snapshot.DAM_PRODUCT
 
 # Bump when the set of tables or how they are assembled changes.
-VERSION = 6
+VERSION = 7
 TABLES = ("node", "branch", "branch_rating", "contingency", "contingency_outage", "gtc", "gtc_member",
-          "settlement_point", "settlement_point_node")
+          "settlement_point", "settlement_point_node", "load")
 
 
 def core_id() -> str:
     """Identity of the code that builds core tables: package and layer versions."""
     from .. import __version__
 
-    parts = [f"core={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (node, branch, contingency, gtc, settlement_point)]
+    parts = [f"core={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (node, branch, contingency, gtc, settlement_point, load)]
     return f"ercot-mis={__version__}|" + "|".join(parts)
 
 
@@ -40,9 +41,9 @@ def _raw(session, table: str, emil_id: str, blob_sha256: str) -> pl.DataFrame | 
     return pl.read_parquet(path) if path.is_file() else None
 
 
-DAM_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "dam_lines", "dam_transformers", "dam_generators", "dam_loads",
+DAM_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "psse_load", "dam_lines", "dam_transformers", "dam_generators", "dam_loads",
               "dam_settlement_points", "dam_hub_buses", "dam_contingencies")
-CRR_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "crr_mapping_autos", "crr_sources_and_sinks",
+CRR_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "psse_load", "crr_mapping_autos", "crr_sources_and_sinks",
               "crr_monitored_lines_and_transformers", "crr_contingencies", "crr_non_thermal_constraints")
 
 
@@ -83,6 +84,7 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame)
             contingencies, outages = contingency.dam_contingencies(branches, nodes, r["dam_contingencies"])
             gtcs, members = gtc.dam_gtcs(gtl.filter(pl.col("hour_ending") == snap["hour"]), crosswalk)
             points, point_nodes = settlement_point.dam_settlement_points(nodes, r["dam_settlement_points"], r["dam_hub_buses"], r["dam_loads"])
+            loads = load.dam_loads(nodes, r["psse_load"], r["dam_loads"])
         else:
             r = {t: raw[t].filter(pl.col("month") == snap["month"]) for t in names}
             if r["psse_bus"].is_empty():
@@ -92,9 +94,10 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame)
             contingencies, outages = contingency.crr_contingencies(branches, r["crr_contingencies"])
             gtcs, members = gtc.crr_gtcs(branches, r["crr_non_thermal_constraints"])
             points, point_nodes = settlement_point.crr_settlement_points(nodes, r["crr_sources_and_sinks"])
+            loads = load.crr_loads(nodes, r["psse_load"])
         for table, frame in (("node", nodes), ("branch", branches), ("branch_rating", ratings), ("contingency", contingencies),
                              ("contingency_outage", outages), ("gtc", gtcs), ("gtc_member", members),
-                             ("settlement_point", points), ("settlement_point_node", point_nodes)):
+                             ("settlement_point", points), ("settlement_point_node", point_nodes), ("load", loads)):
             parts[table].append(frame.with_columns(pl.lit(snap["snapshot_id"]).alias("snapshot_id")))
     return {table: pl.concat(frames, how="diagonal_relaxed").select("snapshot_id", pl.exclude("snapshot_id"))
             for table, frames in parts.items() if frames}  # empty GTC frames still carry the schema

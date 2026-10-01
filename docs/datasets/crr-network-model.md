@@ -48,6 +48,11 @@ dynamic line ratings; the monitored CSV already carries the resulting ratings).
 - Device-type spelling differs by file: contingency CSV `LINE`/`XFMR`; monitored CSV
   `Line`/`XFMR`; GTC CSV and all XML `Line`/`Transformer`. Normalize in core.
 - GTC CSV header has spaces after commas.
+- The RAW names a load only by its bus (the comment is bus number, bus name, load id,
+  owner), so `core.load` builds `load_id` from the bus name and the load id. A few
+  annual RAWs repeat a load record (same bus and id, sometimes a different MW); core
+  keeps both rows, so `load_id` is not strictly unique there.
+- Loads out of service keep their MW in the CRR RAW; the DAM RAW zeroes them.
 - A few sources/sinks (load zones, hubs) carry MW-scale weights instead of fractions
   summing to 1. Normalize in core.
 - Mapping-workbook `From #`/`To #` cells hold a text placeholder for unmatched rows.
