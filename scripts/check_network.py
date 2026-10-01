@@ -25,7 +25,7 @@ import polars as pl
 import ercot_mis as em
 from ercot_mis.core.node import TIE_REACTANCE
 from ercot_mis.out.network import Network, Options
-from ercot_mis.sensitivities import DcSystem
+from ercot_mis.shift_factors import DcSystem
 
 REPORT: dict = {}
 

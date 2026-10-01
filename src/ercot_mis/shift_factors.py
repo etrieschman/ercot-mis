@@ -10,7 +10,7 @@ connected to the slack is solved, and nodes cut off get a shift factor of zero.
 Everything that needs a shift factor (``scripts/check_network.py``,
 ``scripts/check_prices.py``, later the flow check) goes through this module. It needs
 ``numpy`` and ``scipy``, which the rest of the package does not: install the
-``sensitivities`` extra.
+``shift-factors`` extra.
 """
 
 from __future__ import annotations

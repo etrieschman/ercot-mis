@@ -4,7 +4,7 @@ import numpy as np
 import polars as pl
 
 from ercot_mis.out.network import CoreTables, build_network
-from ercot_mis.sensitivities import DcSystem
+from ercot_mis.shift_factors import DcSystem
 
 # Triangle 1-2-3 (equal reactances) with node 4 hanging off node 3; bus 1 is the slack.
 # Branch order after sorting by id: A (1-2), B (2-3), C (1-3), D (3-4).

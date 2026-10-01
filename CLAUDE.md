@@ -34,7 +34,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | node identity | **equipment-based `node_key`**, not PSS/E number or name (DAM renumbers every hour; names are station names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `scripts/measure_identity.py` |
 | fidelity | **defaults do what ERCOT does; our analysis choices are named options.** `out.network` keeps CRR ties as branches and enforces the monitored breakers, as the auction does; contraction is `Options(contract_ties=True)`. Every assumption, its status and how it was checked lives in `docs/assumptions.md` (update it in the same commit as the code) |
 | data location | `data/` in this repo by default; `ERCOT_MIS_DATA` overrides |
-| network output | standardized tables + optional `ercot_mis.sensitivities` (base-case PTDF, LODF, GTC rows); no shift factors yet |
+| network output | standardized tables + optional `ercot_mis.shift_factors` (DC solve and shift-factor rows, base case and under a contingency) |
 | ratings | keep both: CRR monitored-element CSV (enforced, default) and PSS/E Rate A/B/C (MVA) |
 | conventions | facts stored as data; judgment calls as named options defaulting to ERCOT practice |
 | PSS/E parser | our own focused v30 parser (`raw/psse.py`): one compiled tokenizer for both ERCOT dialects (~0.3 s per RAW), Arrow for type conversion. Arrow's CSV reader can't split the blank-separated DAM RAW, so it is used for the CSVs only. PowerFlowData.jl as an optional reference check; **not** VeraGridEngine |
@@ -217,8 +217,8 @@ src/ercot_mis/
     network.py      Network for one snapshot: contracted nodes, branches with limits, contingency
                     index sets, signed GTC members, settlement point weights, dropped elements with
                     reasons; Options = judgment calls
-  sensitivities.py  DcSystem: the one place shift factors are computed (factorize once; outaged() re-solves under a
-                    contingency, with split buses and islanding); needs the `sensitivities` extra (numpy, scipy)
+  shift_factors.py  DcSystem: the one place shift factors are computed (factorize once; outaged() re-solves under a
+                    contingency, with split buses and islanding); needs the `shift-factors` extra (numpy, scipy)
   viewer/           single-file station-by-station network viewer (template.html + data builder); output is CEII
 scripts/daily_pull.py        fetch pulled EWS products, list tracked ones, then build_raw + build_core; launchd template in scripts/launchd/
 scripts/probe.py             archive-depth probe over every EWS product
@@ -234,8 +234,8 @@ tests/                       synthetic-only tests; test_guard also scans every t
 Cache keys use explicit `VERSION` constants (each raw parser, every `core/*.py` table
 module, `core/build.py`, `core/match.py`, `core/diff.py`): bump one when its output
 changes and every artifact it produced is rebuilt (a full core rebuild is a few
-minutes); cosmetic edits cost nothing. `numpy` and `scipy` are needed only by `ercot_mis.sensitivities` and the check scripts
-(the `sensitivities` extra; also in the dev group).
+minutes); cosmetic edits cost nothing. `numpy` and `scipy` are needed only by `ercot_mis.shift_factors` and the check scripts
+(the `shift-factors` extra; also in the dev group).
 
 **Numbers do not go in markdown.** Notes record process, decisions and quirks;
 measurements live in the scripts that make them and the dated reports under
@@ -252,7 +252,7 @@ measurements live in the scripts that make them and the dated reports under
 | M4 | `out.network` + `ftr_align/cases/ercot.py` | 2026-09-24: `session.network()` (per-snapshot, own vocabulary, ERCOT's topology by default, settlement point weights, audit frames, `docs/out-network.md`); `scripts/check_network.py` solves it. Not yet: on-disk `out/`, `ercot.py` (needs the sparse PTDF, see next steps) |
 | M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | |
 | M6 | CRR ↔ DAM matching + scorecard | matchers for branches, nodes and contingencies with `match_method` and unmatched rows (`session.match_*`); `scripts/measure_identity.py` reports their rates. 2026-09-24: `prefix+x` tie-break by reactance, `core.diff_branch`, `core.settlement_point[_node]`, `core.diff_settlement_point`. Not yet: `diff_node`/`diff_contingency`, `subset` contingency method, scorecard |
-| M7 | `sensitivities` (restricted float32 PTDF/LODF, cache budget, cross-test vs `ftr_align.network.compute_ptdf`) | |
+| M7 | `shift_factors` (restricted float32 PTDF/LODF, cache budget, cross-test vs `ftr_align.network.compute_ptdf`) | |
 | M8 | scheduled pulls (Python files), docs, first release | |
 
 ## Pick up here (next session)

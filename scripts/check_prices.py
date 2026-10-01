@@ -35,7 +35,7 @@ import polars as pl
 
 import ercot_mis as em
 from ercot_mis.out.network import Network
-from ercot_mis.sensitivities import DcSystem
+from ercot_mis.shift_factors import DcSystem
 
 BASE_CASE = "BASECASE"
 

@@ -31,7 +31,7 @@ svg text { fill:var(--ink); font-size:10px; user-select:none; }
 .bus.dead { stroke:var(--dim); opacity:.5; }
 .br { fill:none; cursor:pointer; stroke-width:1.6; }
 .br.tie { stroke-width:1; }
-.br.limited { stroke-width:3; }
+.br.free { stroke-dasharray:1 3.5; stroke-linecap:round; }
 .br.out { stroke-dasharray:4 3; opacity:.75; }
 .br.same { stroke:var(--same); } .br.differs { stroke:var(--differs); } .br.only { stroke:var(--only); }
 .xf { fill:var(--panel); stroke-width:1.6; cursor:pointer; }
@@ -183,7 +183,7 @@ function drawPane(m, name, svg) {
   bars.forEach(b => attach.filter(a => a.bar === b).sort((p, q) => p.tx - q.tx).forEach((a, i) => { const x = b.x + pad + slotW * i; if (a.o) a.o.x = x; else if (a.leg) a.leg.x = x; else a.x[a.end + "x"] = x; }));
   // Draw.
   const lines = el("g", {}, svg), boxes = el("g", {}, svg), barsG = el("g", {}, svg), marks = el("g", {}, svg);
-  const cls = r => `br ${status(m, r)}${r.on ? "" : " out"}${r.tie ? " tie" : ""}${limited(m, r) ? " limited" : ""}`;
+  const cls = r => `br ${status(m, r)}${r.on ? "" : " out"}${r.tie ? " tie" : ""}${r.on && !r.tie && !limited(m, r) ? " free" : ""}`;
   const pick = (node, kind, item) => node.addEventListener("click", ev => { ev.stopPropagation(); select(m, kind, item, node); });
   const path = (d, r) => { const p = el("path", { d, class: cls(r) }, lines); p.dataset.id = r.id; pick(p, "branch", r); el("title", {}, p).textContent = r.id; return p; };
   const dot = (x, y) => el("circle", { cx: x, cy: y, r: 2.4, class: "dot" }, marks);
@@ -354,7 +354,7 @@ function start() {
   document.getElementById("stations").innerHTML = all.map(s => `<option value="${esc(s)}">`).join("");
   const sw = (c, t, extra = "") => `<span><i class="sw" style="border-color:var(${c});${extra}"></i>${t}</span>`;
   document.getElementById("legend").innerHTML = (two ? sw("--same", "same on both sides") + sw("--differs", "matched, differs (service or reactance)") + sw("--only", "this side only") : "")
-    + sw("--same", "out of service", "border-top-style:dashed") + `<span title="The model enforces a MW limit on this branch: in a CRR model it is in the monitored-elements file, in a DAM model it is flagged Secured. Thin lines are in the network but carry no limit.">${sw("--same", "limit enforced by this model", "border-top-width:5px")}</span>` + "<span>\u25CB transformer</span><span>\u25A0 closed / \u25A1 open breaker</span>" + "<span>▼ load in service</span><span style='color:var(--off)'>▽ load out</span>";
+    + sw("--same", "out of service", "border-top-style:dashed") + `<span title="Solid: this model enforces a MW limit on the branch (CRR: it is in the monitored-elements file; DAM: it is flagged Secured). Dotted: the branch is in the network and carries flow, but this model puts no limit on it. Most lines are enforced; most dotted branches are transformer windings.">${sw("--same", "in service, no limit enforced", "border-top-style:dotted")}</span>` + "<span>\u25CB transformer</span><span>\u25A0 closed / \u25A1 open breaker</span>" + "<span>▼ load in service</span><span style='color:var(--off)'>▽ load out</span>";
   const search = document.getElementById("search");
   search.addEventListener("change", () => go(search.value.trim()));
   search.addEventListener("keydown", e => { if (e.key === "Enter") go(search.value.trim()); });

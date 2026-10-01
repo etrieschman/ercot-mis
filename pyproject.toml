@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sensitivities = ["numpy>=2", "scipy>=1.13"]
+shift-factors = ["numpy>=2", "scipy>=1.13"]
 
 [dependency-groups]
 dev = [
