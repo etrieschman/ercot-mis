@@ -48,27 +48,66 @@ def key(expr: pl.Expr) -> pl.Expr:
 
 
 class Outaged(DcSystem):
-    """The same network with some branches removed.
+    """The same network under a contingency: branches removed, buses split.
 
-    Removing them can cut nodes off (a radial line, a station fed one way). ERCOT's
+    Removing branches can cut nodes off (a radial line, a station fed one way). ERCOT's
     engine solves what stays connected to the slack, so this does too: nodes cut off
     get a shift factor of zero and are counted in ``n_islanded``.
+
+    A split-bus row moves one end of a branch from its bus to a new bus section the
+    contingency creates; the branches a contingency moves off the same bus stay joined
+    to each other there. ``splits`` lists ``(branch index, "from" or "to")``.
     """
 
-    def __init__(self, base: DcSystem, branch_idx):
+    def __init__(self, base: DcSystem, branch_idx, splits=()):
         self.__dict__.update(base.__dict__)
         self.y = base.y.copy()
         self.y[list(branch_idx)] = 0.0
+        self.f, self.t = base.f.copy(), base.t.copy()
+        sections: dict[int, int] = {}
+        for j, end in splits:
+            ends = self.f if end == "from" else self.t
+            ends[j] = sections.setdefault(int(ends[j]), base.n + len(sections))
+        self.n_all = base.n + len(sections)
+        m = self.m
+        self.A = sp.csc_matrix((np.r_[np.ones(m), -np.ones(m)], (np.r_[self.f, self.t], np.r_[np.arange(m), np.arange(m)])), shape=(self.n_all, m))
         live = self.y != 0
-        graph = sp.csr_matrix((np.ones(int(live.sum())), (self.f[live], self.t[live])), shape=(self.n, self.n))
+        graph = sp.csr_matrix((np.ones(int(live.sum())), (self.f[live], self.t[live])), shape=(self.n_all, self.n_all))
         _, component = connected_components(graph, directed=False)
-        slack = next(iter(set(range(self.n)) - set(base.keep.tolist())))
-        connected = component == component[slack]
-        self.n_islanded = int((~connected).sum())
-        self.connected = connected
-        self.keep = np.array([i for i in base.keep if connected[i]])
+        slack = next(iter(set(range(base.n)) - set(base.keep.tolist())))
+        self.connected = component == component[slack]
+        self.n_islanded = int((~self.connected[:base.n]).sum())
+        self.keep = np.array([i for i in range(self.n_all) if i != slack and self.connected[i]])
         B = (self.A @ sp.diags(self.y) @ self.A.T).tocsc()
         self.lu = spla.splu(B[self.keep][:, self.keep])
+
+    def ptdf_rows(self, branch_idx) -> np.ndarray:
+        rows = []
+        for j in branch_idx:
+            a = self.A[:, j].toarray().ravel()[self.keep] * self.y[j]
+            row = np.zeros(self.n_all)
+            row[self.keep] = self.lu.solve(a.astype(float), trans="T")
+            rows.append(row[:self.n])
+        return np.array(rows)
+
+
+def split_rows(session, day: date, hour: int, net: Network) -> dict[str, list[tuple[int, str]]]:
+    """Per contingency, the branch ends its split-bus rows move: the end whose split column is not a bus number."""
+    raw = (session.raw("dam_contingencies").filter((pl.col("operating_date") == day) & (pl.col("hour") == hour)
+                                                   & (pl.col("contingency_operation") == "SplitBus") & (pl.col("equipment_type") == "Branch")).collect())
+    if raw.is_empty():
+        return {}
+    number = lambda c: pl.col(c).cast(pl.String).str.strip_chars().cast(pl.Int64, strict=False)
+    ends = session.core("branch").filter(pl.col("snapshot_id") == net.snapshot_id).select("branch_id", "from_bus", "to_bus", pl.col("ckt").cast(pl.String).str.strip_chars()).collect()
+    rows = (raw.select(key(pl.col("contingency_name")).alias("ctg"), number("psse_from_bus_number").alias("from_bus"), number("psse_to_bus_number").alias("to_bus"),
+                       pl.col("psse_ckt_id").cast(pl.String).str.strip_chars().alias("ckt"),
+                       number("split_bus_psse_bus_number").is_null().alias("moves_from"), number("split_bus_psse_to_bus_number").is_null().alias("moves_to"))
+            .join(ends, on=["from_bus", "to_bus", "ckt"], how="left").join(net.branches.select("branch_id", "index"), on="branch_id", how="left"))
+    out: dict[str, list[tuple[int, str]]] = {}
+    for ctg, j, moves_from, moves_to in rows.select("ctg", "index", "moves_from", "moves_to").rows():
+        if j is not None and moves_from != moves_to:
+            out.setdefault(ctg, []).append((j, "from" if moves_from else "to"))
+    return out
 
 
 def hour_rows(frame: pl.LazyFrame, day: date, hour: int) -> pl.DataFrame:
@@ -134,13 +173,18 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     def direction(f: int, t: int, from_station: str, to_station: str, from_kv: float, to_kv: float) -> float | None:
         if station[f] != station[t]:
             return 1.0 if (station[f], station[t]) == (from_station, to_station) else -1.0 if (station[t], station[f]) == (from_station, to_station) else None
-        if from_kv == to_kv or {round(kv[f]), round(kv[t])} != {round(from_kv), round(to_kv)}:
+        # Inside one station the voltages tell the ends apart, to the tenth: ERCOT uses the
+        # tenths digit of the base kV to tell bus sections of one level apart.
+        ends, published = (round(kv[f], 1), round(kv[t], 1)), (round(from_kv, 1), round(to_kv, 1))
+        if published[0] == published[1] or set(ends) != set(published):
             return None
-        return 1.0 if round(kv[f]) == round(from_kv) else -1.0
+        return 1.0 if ends == published else -1.0
 
     gtc_rows = borrowed_gtcs(session, snapshot_id, net)
+    splits = split_rows(session, day, hour, net)
 
     congestion = np.zeros(net.n_nodes)
+    cut_off_mu = np.zeros(net.n_nodes)  # per node: shadow price of binding rows whose contingency cuts the node off
     outcome: dict[str, int] = {}
     mu_by_outcome: dict[str, float] = {}
     used_mu = total_mu = 0.0
@@ -173,17 +217,19 @@ def check_hour(session, snapshot_id: str) -> dict | None:
                 why = "constraint_is_outaged_by_its_contingency"
             else:
                 if ctg not in systems:
-                    systems[ctg] = Outaged(system, ctg_of[ctg])
+                    systems[ctg] = Outaged(system, ctg_of[ctg], splits.get(ctg, ()))
                     islanded_nodes = max(islanded_nodes, systems[ctg].n_islanded)
                 solver = systems[ctg]
                 if not (solver.connected[f] and solver.connected[t]):
                     why, solver = "constraint_islanded_by_its_contingency", None
                 else:
-                    why = "used_contingency_islanding" if solver.n_islanded else "used_contingency"
+                    why = "used_contingency_islanding" if solver.n_islanded else "used_contingency_split_bus" if splits.get(ctg) else "used_contingency"
         outcome[why] = outcome.get(why, 0) + 1
         mu_by_outcome[why] = round(mu_by_outcome.get(why, 0.0) + mu, 2)
         if solver is not None:
             congestion += sign * mu * solver.ptdf_rows([j])[0]
+            if why == "used_contingency_islanding":
+                cut_off_mu += mu * ~solver.connected[:net.n_nodes]
             used_mu += abs(mu)
 
     weights = net.settlement_point_nodes.select("settlement_point_id", "node_index", "weight")
@@ -213,6 +259,12 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     centred = centred - np.median(centred)
     hist, edges = np.histogram(centred, bins=[-1e9, -20, -10, -5, -2, -1, -0.1, 0.1, 1, 2, 5, 10, 20, 1e9])
     result["residual_histogram"] = {f"<{e:g}": int(h) for h, e in zip(hist, edges[1:])}
+    # Points on a node that some binding row's contingency cuts off, against the rest.
+    cut = (weights.with_columns(pl.Series("cut", cut_off_mu[weights["node_index"].to_numpy()] > 0)).group_by("settlement_point_id").agg(pl.col("cut").any()))
+    is_cut = points.join(cut, on="settlement_point_id", how="left")["cut"].fill_null(False).to_numpy()
+    for label, mask in (("points_cut_off_by_a_binding_contingency", is_cut), ("other_points", ~is_cut)):
+        result[label] = {"n": int(mask.sum()), "p50_abs": round(float(np.median(resid[mask])), 3) if mask.any() else None,
+                         "max_abs": round(float(resid[mask].max()), 2) if mask.any() else None, "beyond_5": int((resid[mask] > 5).sum())}
     result["within_0.01_by_kind"] = {k: f"{ok} of {n}" for k, ok, n in points.with_columns(pl.Series("ok", resid <= 0.01)).group_by("kind").agg(pl.col("ok").sum(), pl.len()).sort("kind").rows()}
     return result
 

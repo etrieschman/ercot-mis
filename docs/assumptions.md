@@ -65,6 +65,7 @@ yet checked), `external` (needs data we do not pull yet).
 | NAM-05 | forced | DAM GTC members are not known; the CRR id comes from a manual crosswalk | `core/gtc.py` | NP3-770-M defines them; the DAM names a binding GTC by the CRR code | `scripts/check_prices.py` borrows the CRR members through `core.match_branch` and prices the binding GTCs with them; not yet in `out.network` | open (borrowing measured) |
 | NAM-06 | forced | Contingency matching is one-to-one | `core/match.py` | CRR splits what DAM lumps in places | many unmatched CRR contingencies sit inside one DAM contingency | open (a `subset` method) |
 | NAM-07 | forced | Settlement points a contingency disconnects are not special-cased | `raw/dam.py` parses `SpCtg`; core does not use it | The DAM knows which single-bus settlement points a contingency islands | table shape inspected; semantics from the README | open |
+| NAM-09 | forced | Split-bus rows of a DAM contingency are counted (`has_split_bus`), not applied | `core/contingency.py`, `out/network.py` | They change topology under the contingency (PRC-05) | `scripts/check_prices.py` applies them and the price residual falls | open (apply in `out.network`) |
 | NAM-08 | stated | DST days: the extra hour is the third; GTL hour-ending is start hour plus one | `raw/dam.py`, `raw/gtl.py` | README states the DAM convention | verify on the November long day | open |
 
 ## Settlement points
@@ -91,9 +92,11 @@ yet checked), `external` (needs data we do not pull yet).
 
 | id | type | assumption | where | ERCOT | check | status |
 |---|---|---|---|---|---|---|
-| PRC-01 | measured | A DAM price is the system price minus shadow price times shift factor, summed over the binding rows; no loss term | `scripts/check_prices.py` | ERCOT prices carry no marginal loss component | the residual at every settlement point, per DAM hour; both signs tried | verified (residual small against the spread; what is left is PRC-03 and NAM-05) |
-| PRC-02 | measured | A binding row's direction is its from and to station (voltages inside one station), not the model's from-to | `scripts/check_prices.py` | The published flow is unsigned | every binding branch row resolves to a direction | verified |
-| PRC-03 | forced | Under a contingency that cuts nodes off, the part still connected to the slack is solved and the rest gets no shift factor | `scripts/check_prices.py` | Unknown; the `SpCtg` file lists the settlement points a contingency islands (NAM-07) | residual of the price identity with and without those rows | open |
+| PRC-01 | measured | A DAM price is the system price minus shadow price times shift factor, summed over the binding rows; no loss term | `scripts/check_prices.py` | ERCOT prices carry no marginal loss component | the residual at every settlement point, per DAM hour; both signs tried | verified (hours without a binding GTC reproduce to a small residual; hours with one are PRC-04) |
+| PRC-02 | measured | A binding row's direction is its from and to station; inside one station, the two voltages to the tenth of a kV | `scripts/check_prices.py` | The published flow is unsigned; the tenths digit of base kV tells bus sections apart | every binding branch row resolves to a direction; reading the voltage to the whole kV put one line the wrong way round and showed as the largest residual | verified |
+| PRC-03 | forced | Under a contingency that cuts nodes off, the part still connected to the slack is solved and the rest gets no shift factor | `scripts/check_prices.py` | Unknown; the `SpCtg` file lists the settlement points a contingency islands (NAM-07) | residual at the points a binding contingency cuts off, reported apart from the rest | open |
+| PRC-04 | forced | A binding GTC is priced with the CRR model's members for the same month | `scripts/check_prices.py` | The DAM's own definition is in NP3-770-M, not parsed | residual with and without the GTC rows: they remove the largest errors near the interface and leave a broad one in the evening hours | open |
+| PRC-05 | measured | A split-bus contingency row moves one end of a branch to a new bus section; branches the contingency moves off the same bus stay joined there | `scripts/check_prices.py` (`Outaged`); `out.network` does not apply these rows yet (NAM-09) | The contingency file gives the bus that stays as a number and a note for the one created | residual before and after applying the rows | verified |
 
 ## Not yet built (the checks that would catch everything above)
 

@@ -50,8 +50,10 @@ day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.
   disconnects: which resource nodes a contingency islands. Parsed
   (`dam_settlement_point_contingencies`), not yet used by core.
 - The load CSV header ends with a trailing comma its rows lack.
-- Split-bus bus-number columns in the contingency CSV sometimes hold a note instead of a
-  number; kept as text.
+- A split-bus contingency row gives two split-bus columns: the end of the branch that
+  stays holds its bus number, the end that moves to the new bus section holds a note
+  instead of a number (kept as text). `scripts/check_prices.py` applies the move;
+  core only flags it (`has_split_bus`).
 - Headers have spaces after commas; values are trimmed.
 - **Bus numbers change every hour** and are unrelated to CRR numbering; RAW bus names are
   station names (see identity-and-matching.md).
