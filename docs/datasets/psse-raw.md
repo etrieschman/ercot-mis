@@ -1,7 +1,7 @@
 # PSS/E v30 RAW files (shared by CRR and DAM)
 
 ## What it is and why we use it
-The network topology and impedances behind both markets: buses, loads, generators,
+The network topology and impedances behind both markets: nodes (PSS/E's "buses"), loads, generators,
 branches, transformers, switched shunts. CRR packages ship one RAW per month; DAM
 packages ship one per operating hour.
 
@@ -53,9 +53,9 @@ manual (`i`, `j`, `ckt`, `ratea`, ...). Every table except `psse_case` ends with
 All transformers are 2-winding. Integers occasionally appear as `3.0`; they are
 accepted when whole.
 
-Bus numbers: CRR numbering is stable month to month; **DAM numbering is reassigned in
-every hourly model** and unrelated to CRR's. DAM bus names are substation names shared by
-several buses. CRR has thousands of zero-impedance branches (bus ties, `x = 0.0001`);
+Node numbers (PSS/E bus numbers): CRR numbering is stable month to month; **DAM numbering is reassigned in
+every hourly model** and unrelated to CRR's. DAM names are substation names shared by
+several nodes. CRR has thousands of zero-impedance branches (ties, `x = 0.0001`);
 DAM clamps reactance at a floor of `0.0005` and holds no branch below it.
 
 ## Validation

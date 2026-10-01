@@ -16,7 +16,7 @@ milestones).
   **Public API**.
 - Keeping the original documents immutable and content-addressed, so every
   derived table records exactly which ERCOT file and which code produced it.
-- Standardizing CRR and DAM network models (buses, branches, ratings,
+- Standardizing CRR and DAM network models (nodes, buses, branches, ratings,
   contingencies, generic transmission constraints) and DAM prices and cleared
   quantities into tidy Parquet tables you query from Python.
 
@@ -40,13 +40,28 @@ zip member, how each arrived, and every table built from them.
 with em.open() as session:
     session.build_raw("NP4-500-SG")                  # parsed rows, one Parquet per package and table
     session.build_core()                             # snapshots, nodes, branches, ratings, contingencies, GTCs
-    buses = session.raw("psse_bus").filter(pl.col("operating_date") == "2026-09-15").collect()
+    raw_nodes = session.raw("psse_bus").filter(pl.col("operating_date") == "2026-09-15").collect()
     nodes = session.core("node").filter(pl.col("snapshot_id") == "dam:2026-09-15:he12:r1").collect()
     net = session.network("dam:2026-09-15:he12:r1")  # one snapshot as a DC model reads it
     branches = session.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he12:r1")
 ```
 
+A few words are used strictly throughout (`docs/datasets/identity-and-matching.md`):
+a **node** is the finest connection point a model gives (one RAW record, which PSS/E
+calls a bus), a **bus** is the nodes joined by closed breakers, and a **substation** is
+the yard holding buses at several voltages.
+
+```python
+with em.open() as session:
+    page = session.viewer("crr:monthly:2026-09:r1", "dam:2026-09-15:he12:r1")   # one HTML file, substation by substation
+```
+
+The viewer page holds CEII (equipment names); it is written inside the data folder and
+must not be shared. `scripts/check_prices.py` tests a DAM network against the prices
+ERCOT published for that hour.
+
 `docs/out-network.md` lists the conventions behind `network()` and its options;
+`docs/assumptions.md` lists every choice the code makes and how it was checked;
 `docs/datasets/` has one note per ERCOT dataset.
 
 Run builds from a script or notebook (the process pool needs an importable `__main__`).

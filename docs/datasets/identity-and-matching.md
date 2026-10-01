@@ -1,6 +1,6 @@
 # Identity and matching across CRR and DAM models
 
-How buses, branches, contingencies and constraints are identified within a model and
+How nodes, buses, branches, contingencies and constraints are identified within a model and
 matched across models. Numbers are deliberately absent: `scripts/measure_identity.py`
 measures everything stated here on real packages and writes a dated JSON report to
 `data/reports/identity/`. Re-run it when a new CRR month or DAM day arrives; if a
@@ -12,8 +12,8 @@ Three words, used the same way in code, tables, the viewer and these notes (sett
 the user on 2026-10-01; it is the node-breaker convention):
 
 - **node**: the finest connection point a model gives, one RAW record. PSS/E calls
-  every RAW record a "bus", and columns that quote the file keep its word
-  (`psse_bus_number`). In a CRR model nodes are bus sections between breakers; in a
+  every RAW record a "bus", and only the raw layer keeps that word (`raw.psse_bus`);
+  processed layers say `node_number`. In a CRR model nodes are the sections between breakers; in a
   DAM model ERCOT has already merged them, so each node is a bus on its own.
 - **bus**: nodes joined by closed breakers (in-service ties), one electrical point.
   `bus_key` identifies a bus; `core.node` has one row per node with the `bus_key` of
@@ -21,19 +21,19 @@ the user on 2026-10-01; it is the node-breaker convention):
   (`core.match_bus`) and settlement point weights (`core.settlement_point_bus`) are
   at this level.
 - **substation**: the physical yard holding buses at several voltage levels. DAM RAW
-  names are substation names; CRR RAW names are node names, so `core.node.substation`
-  holds the node's own name for a CRR model (the viewer assigns CRR substations
-  through the bus match).
+  names are substation names; CRR RAW names are node names. `core.node.raw_name` is the
+  name as the file gives it and `core.node.substation` is filled only where that name is
+  a substation (DAM); the viewer assigns CRR substations through the bus match.
 
 `out.network` calls its vertices nodes: by default they are the model's nodes, and
 with `contract_ties=True` each vertex is a bus (`n_members` says how many nodes).
 
 ## What the keys in ERCOT's files are
 
-**Buses.** A DAM RAW bus name is the *substation* name, shared by every bus at that
-substation; the CSVs' "Station Name/PSS/E Bus Name" column is the same string. CRR bus
-names are 12-character electrical bus names, unique except for a few collisions. CRR
-and DAM bus numbers are unrelated numbering schemes. CRR numbers are stable month to
+**Nodes.** A DAM RAW name is the *substation* name, shared by every node at that
+substation; the CSVs' "Station Name/PSS/E Bus Name" column is the same string. CRR node
+names are 12-character electrical bus names (ERCOT's term), unique except for a few
+collisions. CRR and DAM numbers are unrelated numbering schemes. CRR numbers are stable month to
 month; **DAM numbers are reassigned in every hourly model**. Neither number nor name
 identifies a bus across models, and in DAM the number does not identify a bus across
 hours.
@@ -54,8 +54,8 @@ this as `is_name_reversed`. CRR line names always follow the RAW's order. DAM
 transformers are named in the `Xf` CSV.
 
 **Topology level.** CRR RAWs hold thousands of branches at PSS/E's minimum
-reactance (`x = 0.0001`, `r = 0`) joining two buses of the same substation and voltage:
-closed breakers, disconnect switches and bus-section jumpers, exported from a
+reactance (`x = 0.0001`, `r = 0`) joining two nodes of the same substation and voltage:
+closed breakers, disconnect switches and jumpers, exported from a
 node-breaker model. They are not alternative connections; they are the switching
 devices that make several nodes one bus. Most carry the 9999
 placeholder rating, some carry a real breaker rating and appear in the monitored
@@ -67,8 +67,8 @@ between the CRR minimum and the floor. So CRR-to-DAM bus mapping is many-to-one,
 CRR breaker outage usually has no DAM counterpart, and a reactance comparison across
 models must raise both sides to the floor first.
 
-**Base kV.** Both RAWs occasionally give a bus a base kV with a tenths digit that is
-not a nominal level (`138.1`, `345.2`), more often in DAM than in CRR. It tells buses
+**Base kV.** Both RAWs occasionally give a node a base kV with a tenths digit that is
+not a nominal level (`138.1`, `345.2`), more often in DAM than in CRR. It tells nodes
 of one substation apart; it is not a voltage. Compare voltage levels with the tenths
 dropped, and expect `bus_key`s, which include the kV as written, to differ by it
 only within a model, never across hours or months.
@@ -196,7 +196,7 @@ a given hour.
   weight). Whether the difference is definition or bus resolution is open.
 - DAM settlement points with no bus in the hour (de-energized resource nodes and
   logical resource nodes without a combined-cycle point) stay unresolved.
-- How to treat monitored bus ties in a contracted CRR model.
+- How to treat monitored ties in a contracted CRR model.
 - Verify the monitored/secured reading against binding constraints in `NP4-191-CD`.
 - The GTL workbook's GTC names against the CRR GTC codes: the crosswalk is manual
   (generic-transmission-limits.md); nothing published links the two.

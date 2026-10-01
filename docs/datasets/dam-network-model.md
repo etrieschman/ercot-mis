@@ -30,7 +30,7 @@ day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.
   `split_bus_*`, `number_of_energized_components`, `load_zone`, `dc_tie`,
   `resource_node_settlement_point_name`).
 - **No blob dedup; identity by equipment**: no two hourly files are byte-identical,
-  because PSS/E bus numbers are reassigned in every hourly model. The equipment maps
+  because PSS/E numbers are reassigned to the nodes in every hourly model. The equipment maps
   (generator, load, settlement point and branch name to substation and kV) are identical
   across hours, so the core layer keys every hour's buses by the equipment attached to
   them (`bus_key`, see identity-and-matching.md) and every hour's branches by name;
@@ -55,12 +55,12 @@ day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.
   instead of a number (kept as text). `scripts/check_prices.py` applies the move;
   core only flags it (`has_split_bus`).
 - Headers have spaces after commas; values are trimmed.
-- **Bus numbers change every hour** and are unrelated to CRR numbering; RAW bus names are
+- **Node numbers change every hour** and are unrelated to CRR numbering; RAW names are
   substation names (see identity-and-matching.md).
 - **Reactance floor**: no branch has |x| below 0.0005 pu; a sizeable set sits at exactly
   that value (breakers and short lines the CRR model carries at 0.0001 or less). A few
   reactances are negative (series capacitors).
-- **Base kV with a tenths digit** (138.1, 345.2) distinguishes buses at one substation; it
+- **Base kV with a tenths digit** (138.1, 345.2) distinguishes nodes at one substation; it
   is not a voltage. Drop the tenths to compare voltage levels.
 - No GTC file: DAM GTC definitions and daily limits come from NP3-770-M and NP3-766-M.
 - `Monitored?` and `Monitored and Secured?` are the CIM `DAM Monitored`/`DAM Secured` flags

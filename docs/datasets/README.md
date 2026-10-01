@@ -5,7 +5,7 @@ docstrings say *how* a parser works; these notes record what ERCOT actually ship
 what we decided, and what was verified against real files.
 
 **Structure only.** Notes are public. Describe layouts, column names and formats;
-never bus, substation, device, contingency or constraint names, or file names.
+never node, bus, substation, device, contingency or constraint names, or file names.
 
 **No numbers.** Notes record process, decisions and quirks. Counts, ratios and dates
 of the last clean run belong to the scripts that measure them (`validate_parsers.py`,

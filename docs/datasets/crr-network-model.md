@@ -35,7 +35,7 @@ dynamic line ratings; the monitored CSV already carries the resulting ratings).
 - **Member metadata from paths**: auction type, term, sequence, month and TOU are parsed
   from member names (`classify_member`); the document's revision comes from the catalog.
 - **Exact header checks**: a changed or reordered header raises `ParseError`.
-- **Mapping-workbook bus numbers stay text** (see quirks).
+- **Mapping-workbook node numbers stay text** (see quirks).
 - **The Outages file is informational.** The RAW already reflects the outage
   scheduler: every outage whose equipment name matches a workbook operations name is
   out of service in the RAW (`scripts/measure_identity.py` does not measure this yet;
@@ -51,17 +51,17 @@ dynamic line ratings; the monitored CSV already carries the resulting ratings).
 - **Temporary topology is labeled.** The mapping workbook's operations equipment code
   is a name for standing equipment and a sentence for branches ERCOT added as temporary
   split-bus topology for outages. `core.branch.is_temporary` carries it. The ties that
-  join such a temporary bus to the standing bus have no workbook row of their own, so a
-  temporary bus is one a temporary branch touches.
+  join such a temporary node to the standing one have no workbook row of their own, so a
+  temporary node is one a temporary branch touches.
 - **Switch outages cannot be tied to RAW ties by name.** The Outages file lists
   breakers and disconnects by substation and device name with their normal and outage
-  state; the RAW names a tie only by its two buses, and the workbook gives an
+  state; the RAW names a tie only by its two nodes, and the workbook gives an
   operations name to a minority of ties, none of them a device name from the Outages
   file. Why a tie is open can be told per substation (does the substation have a switch
   outage in the model's month), not per device.
-- The RAW names a load only by its bus (the comment is bus number, bus name, load id,
-  owner), so `core.load` builds `load_id` from the bus name and the load id. A few
-  annual RAWs repeat a load record (same bus and id, sometimes a different MW); core
+- The RAW names a load only by its node (the comment is node number, node name, load id,
+  owner), so `core.load` builds `load_id` from the node name and the load id. A few
+  annual RAWs repeat a load record (same node and id, sometimes a different MW); core
   keeps both rows, so `load_id` is not strictly unique there.
 - Loads out of service keep their MW in the CRR RAW; the DAM RAW zeroes them.
 - A few sources/sinks (load zones, hubs) carry MW-scale weights instead of fractions

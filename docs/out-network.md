@@ -23,13 +23,13 @@ and its contingency keys from `branch_indexes`.
 - **A rating of zero is no limit.** PSS/E's convention; the few DAM branches with a
   zero rate A get `+inf`, as does every branch the CRR monitored-element CSV does not
   list.
-- **Isolated buses and minor islands are dropped.** Both RAWs carry buses with no
+- **Isolated nodes and minor islands are dropped.** Both RAWs carry nodes with no
   in-service branch (type 4 and others) and occasionally a small component apart
   from the main grid. A DC model needs one connected component; the largest is kept
   and the rest listed in `dropped_nodes` (`isolated`, `island`) with their branches.
-- **Slack is ERCOT's.** The DAM RAW marks one swing bus (type 3). The CRR RAW marks
-  one per island, and all but one of those islands are generator terminal buses cut
-  off from the grid that month, so after islands are dropped one swing bus remains
+- **Slack is ERCOT's.** The DAM RAW marks one swing node (PSS/E type 3, its "swing bus"). The CRR RAW marks
+  one per island, and all but one of those islands are generator terminal nodes cut
+  off from the grid that month, so after islands are dropped one swing node remains
   and it is the slack. If several remained the busiest would be taken; if none, the
   busiest node stands in. `slack_source` says which case applied (`ercot` or
   `fallback`), `slack_node_id` and `is_slack` say which node. The choice does not
@@ -59,7 +59,7 @@ and its contingency keys from `branch_indexes`.
   point's weights over the kept nodes, renormalized to one, and `settlement_points`
   records the weight that fell on dropped nodes (`weight_dropped`). This is the matrix
   that maps injections at settlement points (awards, bids) onto nodes. Without
-  contraction a CRR point's weight is spread equally over its group's buses.
+  contraction a CRR point's weight is spread equally over its bus's nodes.
 - **Islanding contingencies are not screened here.** Whether removing an outage set
   disconnects the network depends on the consumer's connectivity check, as in
   `ftr_align.network.is_connected`.
@@ -68,7 +68,7 @@ and its contingency keys from `branch_indexes`.
 
 | option | default | meaning |
 |---|---|---|
-| `contract_ties` | `False` | ERCOT's topology: every bus is a node and CRR bus ties are branches at their RAW reactance, monitored ones with their breaker ratings. With `True`, buses joined by in-service ties are one node; the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`) and their limits with them. The cost of contraction is measured by `scripts/check_network.py`. Tie members keep their group key in their id (`<key>@<bus>`). No effect on DAM. |
+| `contract_ties` | `False` | ERCOT's topology: every node of the model is a vertex and CRR ties are branches at their RAW reactance, monitored ones with their breaker ratings. With `True`, nodes joined by in-service ties are one node; the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`) and their limits with them. The cost of contraction is measured by `scripts/check_network.py`. Tie members keep their group key in their id (`<key>@<bus>`). No effect on DAM. |
 | `rating_source` | model default | `crr_monitored` (CRR CSV, per time-of-use block) or `psse_raw` (RAW rate A/B). CRR defaults to the CSV, DAM to the RAW. |
 | `time_of_use` | `PeakWD` | The CRR CSV block; the CRR RAW is the PeakWD model. |
 | `limits` | `enforced` | Which branches get finite limits: `enforced` (CRR monitored, DAM secured), `monitored` (DAM monitored or secured), `all`. |

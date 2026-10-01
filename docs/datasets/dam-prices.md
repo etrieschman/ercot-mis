@@ -43,7 +43,7 @@ The header picks the table (`raw/prices.py`): `dam_shadow_prices`, `dam_lmps`,
 - The published flow is unsigned and equals the limit. Direction is in
   `from_station` / `to_station`, which may run against the model's from-to. Inside one
   substation the two voltages tell the ends apart, and only to the tenth of a kV: a line
-  between two bus sections of one level differs in the tenths digit alone.
+  between two nodes of one level differs in the tenths digit alone.
 - Shadow prices are non-negative; they enter the price with a minus sign in the
   model's own orientation (settled by the data in `check_prices.py`, both signs tried).
 
@@ -57,5 +57,6 @@ the price identity at the settlement points.
 
 - What ERCOT does for a node a contingency cuts off (we solve the part still connected
   to the slack and give the rest no shift factor); the `SpCtg` file is the lead.
-- Electrical bus names in the LMP file are not the RAW's bus names; the mapping
+- Electrical bus names in the LMP file (ERCOT's term for its finest pricing points) are not
+  the RAW's node names; the mapping
   (NP4-160-SG) is archived and not parsed, so the check prices settlement points only.
