@@ -79,9 +79,9 @@ class _ServerError(EwsError):
 
 @dataclass(frozen=True)
 class RemoteDoc:
-    """One posted document, as described by a GetReports listing."""
+    """One posted document, as a listing describes it (EWS GetReports or the Public API archive)."""
 
-    report_type_id: int
+    report_type_id: int | None
     doc_id: str | None
     file_name: str
     report_group: str

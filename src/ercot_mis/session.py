@@ -23,6 +23,7 @@ from .config import Identity, load_identity
 from .products import Product, get_product
 from .sources.retry import retrying
 from .sources.ews import ERCOT_TZ, EwsClient, EwsError, RemoteDoc
+from .sources.public_api import PublicApiClient
 from .archive import store
 from .archive.catalog import Catalog
 
@@ -115,6 +116,7 @@ class Session:
         self.data_dir = Path(data_dir)
         self._identity = identity
         self._ews: EwsClient | None = None
+        self._public_api: PublicApiClient | None = None
         self._catalog: Catalog | None = None
 
     def __repr__(self) -> str:
@@ -159,10 +161,15 @@ class Session:
             self._ews = EwsClient(self._identity or load_identity())
         return self._ews
 
+    @property
+    def public_api(self) -> PublicApiClient:
+        """The Public API client, created on first use from the secrets."""
+        if self._public_api is None:
+            self._public_api = PublicApiClient.from_secrets()
+        return self._public_api
+
     def _source(self, spec: Product) -> Source:
-        if spec.source == "ews":
-            return self.ews
-        raise NotImplementedError(f"{spec.emil_id} comes from the Public API, whose client is not built yet.")
+        return self.ews if spec.source == "ews" else self.public_api
 
     # ------------------------------------------------------------------ listing
 
@@ -194,7 +201,7 @@ class Session:
         """
         spec = get_product(product)
         if spec.source != "ews" or spec.report_type_id is None:
-            raise NotImplementedError(f"{spec.emil_id} comes from the Public API, whose client is not built yet.")
+            raise NotImplementedError(f"{spec.emil_id} comes from the Public API; probe() measures the EWS archive only.")
         now = datetime.now(timezone.utc) if now is None else now
         cutoff = now - timedelta(days=spec.display_days or 0)
 
