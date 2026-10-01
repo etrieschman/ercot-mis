@@ -101,10 +101,19 @@ def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[li
         same, crossed = (cf == df) + (ct == dt), (cf == dt) + (ct == df)
         if same != crossed:
             members.append((j, factor if same > crossed else -factor))
+    # Members the DAM's definition has beyond the CRR's, kept by hand in data/overrides/dam_gtc_members.csv
+    # (gtc_id, branch_id, factor in the DAM branch's own from-to, note). Never committed.
+    extra = session.data_dir / "overrides" / "dam_gtc_members.csv"
+    index_of = dict(net.branches.select("branch_id", "index").rows())
+    if extra.is_file():
+        for gtc, branch_id, factor in pl.read_csv(extra, schema_overrides={"factor": pl.Float64}).select(key(pl.col("gtc_id")), "branch_id", "factor").rows():
+            if branch_id in index_of:
+                out.setdefault(gtc, []).append((index_of[branch_id], factor))
+                declared[gtc] = declared.get(gtc, 0) + 1
     return {gtc: (members, declared.get(gtc, len(members)) - len(members)) for gtc, members in out.items()}
 
 
-def check_hour(session, snapshot_id: str) -> dict | None:
+def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | None:
     _, day_text, he, _ = snapshot_id.split(":")
     day, hour = date.fromisoformat(day_text), int(he[2:])
     shadow = hour_rows(session.raw("dam_shadow_prices"), day, hour)
@@ -212,6 +221,9 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     centred = centred - np.median(centred)
     hist, edges = np.histogram(centred, bins=[-1e9, -20, -10, -5, -2, -1, -0.1, 0.1, 1, 2, 5, 10, 20, 1e9])
     result["residual_histogram"] = {f"<{e:g}": int(h) for h, e in zip(hist, edges[1:])}
+    if detail is not None:  # for digging into a residual: the points, the network and the solver
+        detail.update(points=points.with_columns(pl.Series("residual", centred)), net=net, system=system, gtc_rows=gtc_rows, weights=weights,
+                      gtc_binding={n: mu for n, _, mu, *_ in rows if n in gtc_rows})
     # Points on a node that some binding row's contingency cuts off, against the rest.
     cut = (weights.with_columns(pl.Series("cut", cut_off_mu[weights["node_index"].to_numpy()] > 0)).group_by("settlement_point_id").agg(pl.col("cut").any()))
     is_cut = points.join(cut, on="settlement_point_id", how="left")["cut"].fill_null(False).to_numpy()

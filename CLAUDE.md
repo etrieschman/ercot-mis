@@ -304,14 +304,22 @@ First, check health (2 min):
 Then, in the order agreed. **The user's bar for the price identity (2026-10-01): any
 settlement point off by more than a couple of dollars is a problem.** Item 1 goes to
 the top of the list as soon as the rest of that day's list (2 to 5) is done:
-1. **Price identity, the rest of the residual.** Hours without a binding GTC now
-   reproduce to about a dollar at worst (two fixes on 2026-10-01: direction read to the
-   tenth of a kV; split-bus contingency rows applied). Hours with a binding GTC keep a
-   broad residual: the borrowed CRR members fix the points near the interface and are
-   not the whole definition (PRC-04; parse NP3-770-M). Then move split-bus rows
-   (NAM-09) and GTC members (NAM-05) from the script into `out.network`, look at the
-   points a contingency cuts off (PRC-03), and price buses too (needs the NP4-160-SG
-   bus mapping parsed).
+1. **Price identity, the rest of the residual.** State on 2026-10-01 (day tried:
+   2026-09-30): hours with little GTC shadow price are within about a dollar or two
+   everywhere; the evening hours, where one GTC binds hard, still miss by up to about
+   eight dollars at a few dozen points. Found so far: direction to the tenth of a kV;
+   split-bus contingency rows; the residual in GTC hours is one fixed pattern times the
+   GTC's shadow price, and regressing that pattern on nearby shift factors showed the
+   DAM's definition has two parallel lines the CRR's lacks (now in the gitignored
+   `data/overrides/dam_gtc_members.csv`). NP3-770-M cannot give definitions as data:
+   it is PDFs and slides. Next: the rest of that GTC's pattern (the same regression
+   over a wider set points at lines far from the interface with fractional factors,
+   which does not look like a definition; check other days and whether the CRR members'
+   orientation or a second GTC is involved); points a contingency cuts off (PRC-03,
+   with NP4-200-CD / NP4-158-SG / NP4-231-CD); system lambda (NP4-523-CD) instead of a
+   fitted intercept; then move split-bus rows (NAM-09) and GTC members (NAM-05) from
+   the script into `out.network`; price nodes as well as settlement points (needs the
+   NP4-160-SG mapping parsed).
 2. **Tie labels**: measured on 2026-10-01. The Outages file's breaker and disconnect
    rows cannot be joined to RAW ties by name (see `crr-network-model.md`), so "normally
    open or open for an outage" is only answerable per substation. What the data does give
