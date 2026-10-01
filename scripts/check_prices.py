@@ -32,63 +32,16 @@ from datetime import date, datetime, timezone
 
 import numpy as np
 import polars as pl
-import scipy.sparse as sp
-import scipy.sparse.linalg as spla
-from scipy.sparse.csgraph import connected_components
 
 import ercot_mis as em
-from check_network import DcSystem
 from ercot_mis.out.network import Network
+from ercot_mis.sensitivities import DcSystem
 
 BASE_CASE = "BASECASE"
 
 
 def key(expr: pl.Expr) -> pl.Expr:
     return expr.str.to_uppercase().str.replace_all(r"[^A-Z0-9]", "")
-
-
-class Outaged(DcSystem):
-    """The same network under a contingency: branches removed, buses split.
-
-    Removing branches can cut nodes off (a radial line, a station fed one way). ERCOT's
-    engine solves what stays connected to the slack, so this does too: nodes cut off
-    get a shift factor of zero and are counted in ``n_islanded``.
-
-    A split-bus row moves one end of a branch from its bus to a new bus section the
-    contingency creates; the branches a contingency moves off the same bus stay joined
-    to each other there. ``splits`` lists ``(branch index, "from" or "to")``.
-    """
-
-    def __init__(self, base: DcSystem, branch_idx, splits=()):
-        self.__dict__.update(base.__dict__)
-        self.y = base.y.copy()
-        self.y[list(branch_idx)] = 0.0
-        self.f, self.t = base.f.copy(), base.t.copy()
-        sections: dict[int, int] = {}
-        for j, end in splits:
-            ends = self.f if end == "from" else self.t
-            ends[j] = sections.setdefault(int(ends[j]), base.n + len(sections))
-        self.n_all = base.n + len(sections)
-        m = self.m
-        self.A = sp.csc_matrix((np.r_[np.ones(m), -np.ones(m)], (np.r_[self.f, self.t], np.r_[np.arange(m), np.arange(m)])), shape=(self.n_all, m))
-        live = self.y != 0
-        graph = sp.csr_matrix((np.ones(int(live.sum())), (self.f[live], self.t[live])), shape=(self.n_all, self.n_all))
-        _, component = connected_components(graph, directed=False)
-        slack = next(iter(set(range(base.n)) - set(base.keep.tolist())))
-        self.connected = component == component[slack]
-        self.n_islanded = int((~self.connected[:base.n]).sum())
-        self.keep = np.array([i for i in range(self.n_all) if i != slack and self.connected[i]])
-        B = (self.A @ sp.diags(self.y) @ self.A.T).tocsc()
-        self.lu = spla.splu(B[self.keep][:, self.keep])
-
-    def ptdf_rows(self, branch_idx) -> np.ndarray:
-        rows = []
-        for j in branch_idx:
-            a = self.A[:, j].toarray().ravel()[self.keep] * self.y[j]
-            row = np.zeros(self.n_all)
-            row[self.keep] = self.lu.solve(a.astype(float), trans="T")
-            rows.append(row[:self.n])
-        return np.array(rows)
 
 
 def split_rows(session, day: date, hour: int, net: Network) -> dict[str, list[tuple[int, str]]]:
@@ -198,7 +151,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
         if name in gtc_rows:
             members, n_missing = gtc_rows[name]
             why = "used_gtc_crr_members" if not n_missing else "used_gtc_crr_members_incomplete"
-            congestion += mu * sum((factor * system.ptdf_rows([j])[0] for j, factor in members), np.zeros(net.n_nodes))
+            congestion += mu * sum((factor * system.shift_factors([j])[0] for j, factor in members), np.zeros(net.n_nodes))
             used_mu += abs(mu)
         elif name not in branch_of:
             why = "constraint_not_a_branch"
@@ -217,7 +170,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
                 why = "constraint_is_outaged_by_its_contingency"
             else:
                 if ctg not in systems:
-                    systems[ctg] = Outaged(system, ctg_of[ctg], splits.get(ctg, ()))
+                    systems[ctg] = system.outaged(ctg_of[ctg], splits.get(ctg, ()))
                     islanded_nodes = max(islanded_nodes, systems[ctg].n_islanded)
                 solver = systems[ctg]
                 if not (solver.connected[f] and solver.connected[t]):
@@ -227,7 +180,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
         outcome[why] = outcome.get(why, 0) + 1
         mu_by_outcome[why] = round(mu_by_outcome.get(why, 0.0) + mu, 2)
         if solver is not None:
-            congestion += sign * mu * solver.ptdf_rows([j])[0]
+            congestion += sign * mu * solver.shift_factors([j])[0]
             if why == "used_contingency_islanding":
                 cut_off_mu += mu * ~solver.connected[:net.n_nodes]
             used_mu += abs(mu)

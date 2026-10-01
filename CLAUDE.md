@@ -216,6 +216,8 @@ src/ercot_mis/
     network.py      Network for one snapshot: contracted nodes, branches with limits, contingency
                     index sets, signed GTC members, settlement point weights, dropped elements with
                     reasons; Options = judgment calls
+  sensitivities.py  DcSystem: the one place shift factors are computed (factorize once; outaged() re-solves under a
+                    contingency, with split buses and islanding); needs the `sensitivities` extra (numpy, scipy)
   viewer/           single-file station-by-station network viewer (template.html + data builder); output is CEII
 scripts/daily_pull.py        fetch pulled EWS products, list tracked ones, then build_raw + build_core; launchd template in scripts/launchd/
 scripts/probe.py             archive-depth probe over every EWS product
@@ -231,8 +233,8 @@ tests/                       synthetic-only tests; test_guard also scans every t
 Cache keys use explicit `VERSION` constants (each raw parser, every `core/*.py` table
 module, `core/build.py`, `core/match.py`, `core/diff.py`): bump one when its output
 changes and every artifact it produced is rebuilt (a full core rebuild is a few
-minutes); cosmetic edits cost nothing. `numpy` and `scipy` are dev dependencies for
-the check scripts only; the package itself needs neither.
+minutes); cosmetic edits cost nothing. `numpy` and `scipy` are needed only by `ercot_mis.sensitivities` and the check scripts
+(the `sensitivities` extra; also in the dev group).
 
 **Numbers do not go in markdown.** Notes record process, decisions and quirks;
 measurements live in the scripts that make them and the dated reports under

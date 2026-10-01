@@ -21,12 +21,11 @@ from datetime import datetime, timezone
 
 import numpy as np
 import polars as pl
-import scipy.sparse as sp
-import scipy.sparse.linalg as spla
 
 import ercot_mis as em
 from ercot_mis.core.node import TIE_REACTANCE
 from ercot_mis.out.network import Network, Options
+from ercot_mis.sensitivities import DcSystem
 
 REPORT: dict = {}
 
@@ -34,38 +33,6 @@ REPORT: dict = {}
 def show(label: str, **values) -> None:
     REPORT[label] = values
     print(f"  {label}: " + ", ".join(f"{k}={v}" for k, v in values.items()))
-
-
-class DcSystem:
-    """Sparse DC power flow on a :class:`Network`: ``B theta = q`` with the slack removed."""
-
-    def __init__(self, net: Network):
-        b = net.branches
-        self.n, self.m = net.n_nodes, net.n_branches
-        self.f, self.t = b["from_index"].to_numpy(), b["to_index"].to_numpy()
-        self.y = 1.0 / (b["x_pu"].to_numpy() * b["tap_ratio"].to_numpy())
-        self.A = sp.csc_matrix((np.r_[np.ones(self.m), -np.ones(self.m)], (np.r_[self.f, self.t], np.r_[np.arange(self.m), np.arange(self.m)])),
-                               shape=(self.n, self.m))
-        B = (self.A @ sp.diags(self.y) @ self.A.T).tocsc()
-        slack = int(net.nodes.filter(pl.col("is_slack"))["index"][0])
-        self.keep = np.array([i for i in range(self.n) if i != slack])
-        started = time.perf_counter()
-        self.lu = spla.splu(B[self.keep][:, self.keep])
-        self.seconds = time.perf_counter() - started
-
-    def flows(self, q: np.ndarray) -> np.ndarray:
-        theta = np.zeros(self.n)
-        theta[self.keep] = self.lu.solve(q[self.keep])
-        return self.y * (theta[self.f] - theta[self.t])
-
-    def ptdf_rows(self, branch_idx) -> np.ndarray:
-        rows = []
-        for j in branch_idx:
-            a = self.A[:, j].toarray().ravel()[self.keep] * self.y[j]
-            row = np.zeros(self.n)
-            row[self.keep] = self.lu.solve(a.astype(float), trans="T")
-            rows.append(row)
-        return np.array(rows)
 
 
 def check(label: str, net: Network) -> DcSystem:

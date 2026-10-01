@@ -385,6 +385,14 @@ dependencies = [
     { name = "zeep", extra = ["xmlsec"] },
 ]
 
+[package.optional-dependencies]
+sensitivities = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "cryptography" },
@@ -401,12 +409,15 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.2" },
     { name = "fastexcel", specifier = ">=0.12" },
     { name = "lxml", specifier = ">=5" },
+    { name = "numpy", marker = "extra == 'sensitivities'", specifier = ">=2" },
     { name = "polars", specifier = ">=1.30" },
     { name = "pyarrow", specifier = ">=18" },
     { name = "pytz", specifier = ">=2024.1" },
     { name = "requests", specifier = ">=2.32" },
+    { name = "scipy", marker = "extra == 'sensitivities'", specifier = ">=1.13" },
     { name = "zeep", extras = ["xmlsec"], specifier = ">=4.3" },
 ]
+provides-extras = ["sensitivities"]
 
 [package.metadata.requires-dev]
 dev = [
