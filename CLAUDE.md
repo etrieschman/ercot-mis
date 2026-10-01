@@ -148,7 +148,8 @@ quirks, validation, open questions). Read the relevant note before touching a
 parser; **update it in the same commit** whenever an import decision changes or a
 new quirk turns up. Notes are public: structure only, never names or values.
 Written so far: `psse-raw.md`, `crr-network-model.md`, `dam-network-model.md`,
-`identity-and-matching.md`, `generic-transmission-limits.md`, `dam-prices.md`. Beside them:
+`identity-and-matching.md`, `generic-transmission-limits.md`, `dam-prices.md`,
+`planning-inputs.md`. Beside them:
 `docs/out-network.md` (the conventions and options of the network handed to a solver)
 and `docs/assumptions.md` (the register of every assumption, checked or open).
 
@@ -320,10 +321,13 @@ the top of the list as soon as the rest of that day's list (2 to 5) is done:
    point names in the side panel, CRR buses also placed along matched lines. `?nohash`
    on the URL keeps the station name out of it. Next: `diff_load` in the side panel;
    prices and flows as overlays.
-4. **EMIL sweep** for planning-stage data (pin id, classification, window, then track,
-   then pull): transmission outage scheduler reports, resource outage capacity and
-   unplanned resource outages, 60-day DAM and SCED disclosures, actual load and
-   forecasts, load distribution factors, wind and solar, CRR auction results.
+4. **Planning-stage inputs**: the Public API catalogue was swept on 2026-10-01
+   (`docs/datasets/planning-inputs.md`; candidates are `track` in `products.py`). Two
+   finds bear on the price identity: NP4-523-CD (DAM System Lambda, the system price we
+   now fit as a free number) and NP4-200-CD / NP4-158-SG / NP4-231-CD (how the DAM
+   prices settlement points that are cut off, PRC-03). Still to find: EWS report type
+   IDs for the transmission outage reports and the CRR auction results, which the
+   Public API does not carry.
 5. **On-disk `out/`**: the network as Parquet, written on first request and cached by
    snapshot and options (default options built in the daily pull for CRR only).
 6. **Flow check**, once NP3-966-ER overlaps the archived models (mid-October 2026).

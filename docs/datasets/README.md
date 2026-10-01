@@ -21,6 +21,7 @@ of the last clean run belong to the scripts that measure them (`validate_parsers
 | _to write_ | NP4-160-SG, NP3-220-SG, NP5-615-SG | archived, not parsed |
 | [dam-prices.md](dam-prices.md) | NP4-191-CD, NP4-183-CD, NP4-190-CD | parsed; tested by `scripts/check_prices.py` |
 | _to write_ | NP3-966-ER, NP4-159-CD | listed, not pulled yet |
+| [planning-inputs.md](planning-inputs.md) | outages, offers, load, wind and solar, system lambda (candidates) | tracked in `products.py`, not pulled |
 
 ## Template
 
