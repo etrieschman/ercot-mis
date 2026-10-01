@@ -51,11 +51,11 @@ def split_rows(session, day: date, hour: int, net: Network) -> dict[str, list[tu
     if raw.is_empty():
         return {}
     number = lambda c: pl.col(c).cast(pl.String).str.strip_chars().cast(pl.Int64, strict=False)
-    ends = session.core("branch").filter(pl.col("snapshot_id") == net.snapshot_id).select("branch_id", "from_bus", "to_bus", pl.col("ckt").cast(pl.String).str.strip_chars()).collect()
-    rows = (raw.select(key(pl.col("contingency_name")).alias("ctg"), number("psse_from_bus_number").alias("from_bus"), number("psse_to_bus_number").alias("to_bus"),
+    ends = session.core("branch").filter(pl.col("snapshot_id") == net.snapshot_id).select("branch_id", "from_node", "to_node", pl.col("ckt").cast(pl.String).str.strip_chars()).collect()
+    rows = (raw.select(key(pl.col("contingency_name")).alias("ctg"), number("psse_from_bus_number").alias("from_node"), number("psse_to_bus_number").alias("to_node"),
                        pl.col("psse_ckt_id").cast(pl.String).str.strip_chars().alias("ckt"),
                        number("split_bus_psse_bus_number").is_null().alias("moves_from"), number("split_bus_psse_to_bus_number").is_null().alias("moves_to"))
-            .join(ends, on=["from_bus", "to_bus", "ckt"], how="left").join(net.branches.select("branch_id", "index"), on="branch_id", how="left"))
+            .join(ends, on=["from_node", "to_node", "ckt"], how="left").join(net.branches.select("branch_id", "index"), on="branch_id", how="left"))
     out: dict[str, list[tuple[int, str]]] = {}
     for ctg, j, moves_from, moves_to in rows.select("ctg", "index", "moves_from", "moves_to").rows():
         if j is not None and moves_from != moves_to:

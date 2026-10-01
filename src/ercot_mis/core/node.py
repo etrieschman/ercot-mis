@@ -1,7 +1,7 @@
 """``core.node``: every node of a model, and the stable key of the bus it belongs to.
 
 Vocabulary (docs/datasets/identity-and-matching.md): a **node** is one RAW record, the
-finest connection point the model gives (PSS/E calls it a bus, and ``psse_bus_number``
+finest connection point the model gives (PSS/E calls it a bus, and ``node_number``
 keeps the file's word); a **bus** is the nodes joined by closed breakers.
 
 DAM hourly models renumber every node, and their RAW names are substation names
@@ -31,10 +31,12 @@ import polars as pl
 VERSION = 2  # bump when keys or the contraction rule change; every core.node artifact is rebuilt
 TIE_REACTANCE = 1e-4  # |x| at or below this is a bus tie (breaker, switch, jumper)
 
-# ``core.node`` columns, the same for both models. ``substation`` is the RAW name: the
-# substation for DAM, the node's own name for CRR. ``bus_group`` is the PSS/E number of
-# the bus's representative node (the smallest member of a CRR tie group, the node itself otherwise).
-COLUMNS = ("psse_bus_number", "substation", "kv", "bus_type", "bus_group", "is_tie_member",
+# ``core.node`` columns, the same for both models. ``node_number`` and ``node_type`` are what
+# PSS/E calls the bus number and bus type code. ``raw_name`` is the record's name in the RAW;
+# ``substation`` is filled only where that name is a substation (DAM), and is null for CRR,
+# whose RAW names nodes. ``bus_group`` is the number of the bus's representative node (the
+# smallest member of a CRR tie group, the node itself otherwise).
+COLUMNS = ("node_number", "raw_name", "substation", "kv", "node_type", "bus_group", "is_tie_member",
            "attachments", "n_attachments", "bus_key", "is_ambiguous")
 
 # Prefixes keep equipment kinds apart inside a key: a generator and a load with the
@@ -67,7 +69,7 @@ def _keys(nodes: pl.DataFrame, attachments: pl.DataFrame, group: str) -> pl.Data
                                               pl.len().alias("n_attachments")))
     nodes = nodes.join(joined, left_on=group, right_on="bus", how="left").with_columns(
         pl.col("attachments").fill_null(""), pl.col("n_attachments").fill_null(0))
-    text = (pl.col("substation").fill_null("") + "|" + pl.col("kv").cast(pl.String) + "|" + pl.col("attachments"))
+    text = (pl.col("raw_name").fill_null("") + "|" + pl.col("kv").cast(pl.String) + "|" + pl.col("attachments"))
     nodes = nodes.with_columns(text.map_elements(_digest, return_dtype=pl.String).alias("bus_key"))
     counts = nodes.group_by("bus_key").len().rename({"len": "_n"})
     nodes = nodes.join(counts, on="bus_key").with_columns((pl.col("_n") > 1).alias("is_ambiguous")).drop("_n")
@@ -95,14 +97,14 @@ def dam_nodes(bus: pl.DataFrame, lines: pl.DataFrame, transformers: pl.DataFrame
         (loads, "psse_bus_number", "load_name", "load"),
         (settlement_points, "psse_bus_number", "settlement_point_name", "settlement_point"),
     ])
-    nodes = bus.select(pl.col("i").alias("psse_bus_number"), pl.col("name").map_elements(_norm, return_dtype=pl.String).alias("substation"),
-                       pl.col("basekv").alias("kv"), pl.col("ide").alias("bus_type"))
-    nodes = _keys(nodes, attachments, "psse_bus_number")
-    return nodes.with_columns(pl.col("psse_bus_number").alias("bus_group"), pl.lit(False).alias("is_tie_member")).select(COLUMNS).sort("psse_bus_number")
+    nodes = bus.select(pl.col("i").alias("node_number"), pl.col("name").map_elements(_norm, return_dtype=pl.String).alias("raw_name"),
+                       pl.col("basekv").alias("kv"), pl.col("ide").alias("node_type"))
+    nodes = _keys(nodes, attachments, "node_number")
+    return nodes.with_columns(pl.col("node_number").alias("bus_group"), pl.lit(False).alias("is_tie_member"), pl.col("raw_name").alias("substation")).select(COLUMNS).sort("node_number")
 
 
 def tie_groups(branch: pl.DataFrame, tie_reactance: float = TIE_REACTANCE) -> pl.DataFrame:
-    """Union-find over in-service branches with |x| <= tie_reactance: (psse_bus_number, tie_group)."""
+    """Union-find over in-service branches with |x| <= tie_reactance: (node_number, tie_group)."""
     ties = branch.filter((pl.col("x").abs() <= tie_reactance) & (pl.col("st") == 1)).select("i", "j")
     parent: dict[int, int] = {}
 
@@ -117,7 +119,7 @@ def tie_groups(branch: pl.DataFrame, tie_reactance: float = TIE_REACTANCE) -> pl
         if ri != rj:
             parent[max(ri, rj)] = min(ri, rj)
     members = sorted(parent)
-    return pl.DataFrame({"psse_bus_number": members, "tie_group": [find(b) for b in members]}, schema={"psse_bus_number": pl.Int64, "tie_group": pl.Int64})
+    return pl.DataFrame({"node_number": members, "tie_group": [find(b) for b in members]}, schema={"node_number": pl.Int64, "tie_group": pl.Int64})
 
 
 def crr_nodes(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame, autos: pl.DataFrame,
@@ -131,27 +133,27 @@ def crr_nodes(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame
     ``tie_group`` (the smallest member number).
     """
     groups = tie_groups(branch, tie_reactance)
-    nodes = (bus.select(pl.col("i").alias("psse_bus_number"), pl.col("name").map_elements(_norm, return_dtype=pl.String).alias("substation"),
-                        pl.col("basekv").alias("kv"), pl.col("ide").alias("bus_type"))
-             .join(groups.rename({"tie_group": "bus_group"}), on="psse_bus_number", how="left")
-             .with_columns(pl.col("bus_group").fill_null(pl.col("psse_bus_number"))))
-    to_group = nodes.select("psse_bus_number", "bus_group")
+    nodes = (bus.select(pl.col("i").alias("node_number"), pl.col("name").map_elements(_norm, return_dtype=pl.String).alias("raw_name"),
+                        pl.col("basekv").alias("kv"), pl.col("ide").alias("node_type"))
+             .join(groups.rename({"tie_group": "bus_group"}), on="node_number", how="left")
+             .with_columns(pl.col("bus_group").fill_null(pl.col("node_number"))))
+    to_group = nodes.select("node_number", "bus_group")
 
     lines = branch.filter(pl.col("x").abs() > tie_reactance).select("i", "j", pl.col("comment").alias("name"))
     from .branch import autos_by_key  # both orientations of the sheet's (from, to, ckt)
 
     xf = (transformer.select("i", "j", pl.col("ckt").str.strip_chars().alias("ckt"))
-          .join(autos_by_key(autos).rename({"from_bus": "i", "to_bus": "j"}), on=["i", "j", "ckt"], how="left"))
+          .join(autos_by_key(autos).rename({"from_node": "i", "to_node": "j"}), on=["i", "j", "ckt"], how="left"))
     xf = xf.with_columns(pl.coalesce(pl.col("name"), pl.format("XF {} {} {}", "i", "j", "ckt")).alias("name"))
     sp = sources_sinks.select(pl.col("bus_name").str.extract(r"^\s*(\d+)").cast(pl.Int64).alias("bus"), pl.col("name"))
     both = pl.concat([lines, xf.select("i", "j", "name")])
     attachments = _attachments([
         (both, "i", "name", "branch"), (both, "j", "name", "branch"), (sp, "bus", "name", "source_sink"),
-    ]).join(to_group, left_on="bus", right_on="psse_bus_number", how="inner").select(pl.col("bus_group").alias("bus"), "label")
+    ]).join(to_group, left_on="bus", right_on="node_number", how="inner").select(pl.col("bus_group").alias("bus"), "label")
 
     # A group's key text joins its member names, so one contraction has one key.
-    grouped = nodes.group_by("bus_group").agg(pl.col("substation").sort().str.join("+").alias("substation"), pl.col("kv").min().alias("kv"))
-    keyed = _keys(grouped, attachments, "bus_group").drop("substation", "kv")
+    grouped = nodes.group_by("bus_group").agg(pl.col("raw_name").sort().str.join("+").alias("raw_name"), pl.col("kv").min().alias("kv"))
+    keyed = _keys(grouped, attachments, "bus_group").drop("raw_name", "kv")
     return (nodes.join(keyed, on="bus_group", how="left")
-            .with_columns(pl.col("psse_bus_number").is_in(groups["psse_bus_number"].implode()).alias("is_tie_member"))
-            .select(COLUMNS).sort("psse_bus_number"))
+            .with_columns(pl.col("node_number").is_in(groups["node_number"].implode()).alias("is_tie_member"), pl.lit(None, pl.String).alias("substation"))
+            .select(COLUMNS).sort("node_number"))

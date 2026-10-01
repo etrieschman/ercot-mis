@@ -24,45 +24,45 @@ VERSION = 4  # bump when columns or identities change
 # (from, to). CRR line comments always follow the RAW; CRR transformer names follow the
 # ``Autos`` sheet, which is swapped relative to the RAW for a large minority. A CSV's
 # "From-To" flow direction refers to the name's order, so consumers flip the sign here.
-BRANCH_COLUMNS = ("branch_id", "kind", "from_bus", "to_bus", "ckt", "from_bus_key", "to_bus_key",
+BRANCH_COLUMNS = ("branch_id", "kind", "from_node", "to_node", "ckt", "from_bus_key", "to_bus_key",
                   "is_in_service", "is_tie", "is_name_reversed", "r_pu", "x_pu", "b_pu", "tap_ratio", "angle_deg",
                   "is_monitored", "is_secured", "is_temporary")
 RATING_COLUMNS = ("branch_id", "rating_source", "time_of_use", "base_mw", "emergency_mw", "rate_c_mw")
 
 
 def autos_by_key(autos: pl.DataFrame) -> pl.DataFrame:
-    """``Autos`` names keyed by (from_bus, to_bus, ckt) in both orientations: the sheet
+    """``Autos`` names keyed by (from_node, to_node, ckt) in both orientations: the sheet
     lists some transformers with from and to swapped relative to the RAW. ``is_swapped``
     says which orientation a key came from."""
-    direct = autos.select(pl.col("from_number").cast(pl.Int64, strict=False).alias("from_bus"),
-                          pl.col("to_number").cast(pl.Int64, strict=False).alias("to_bus"),
+    direct = autos.select(pl.col("from_number").cast(pl.Int64, strict=False).alias("from_node"),
+                          pl.col("to_number").cast(pl.Int64, strict=False).alias("to_node"),
                           pl.col("id").str.strip_chars().alias("ckt"), pl.col("crr_name").alias("name"),
-                          pl.lit(False).alias("is_swapped")).drop_nulls(["from_bus", "to_bus"])
-    swapped = direct.select(pl.col("to_bus").alias("from_bus"), pl.col("from_bus").alias("to_bus"), "ckt", "name", pl.lit(True).alias("is_swapped"))
-    return pl.concat([direct, swapped]).unique(subset=["from_bus", "to_bus", "ckt"], keep="first")
+                          pl.lit(False).alias("is_swapped")).drop_nulls(["from_node", "to_node"])
+    swapped = direct.select(pl.col("to_node").alias("from_node"), pl.col("from_node").alias("to_node"), "ckt", "name", pl.lit(True).alias("is_swapped"))
+    return pl.concat([direct, swapped]).unique(subset=["from_node", "to_node", "ckt"], keep="first")
 
 
 def _keys(nodes: pl.DataFrame) -> pl.DataFrame:
-    return nodes.select("psse_bus_number", "bus_key")
+    return nodes.select("node_number", "bus_key")
 
 
 def _with_endpoints(frame: pl.DataFrame, nodes: pl.DataFrame) -> pl.DataFrame:
     keys = _keys(nodes)
-    return (frame.join(keys.rename({"psse_bus_number": "from_bus", "bus_key": "from_bus_key"}), on="from_bus", how="left")
-            .join(keys.rename({"psse_bus_number": "to_bus", "bus_key": "to_bus_key"}), on="to_bus", how="left"))
+    return (frame.join(keys.rename({"node_number": "from_node", "bus_key": "from_bus_key"}), on="from_node", how="left")
+            .join(keys.rename({"node_number": "to_node", "bus_key": "to_bus_key"}), on="to_node", how="left"))
 
 
 def _raw_parts(psse_branch: pl.DataFrame, psse_transformer: pl.DataFrame) -> pl.DataFrame:
     """RAW lines and transformers in one frame with the physical columns of ``core.branch``."""
     lines = psse_branch.select(
-        pl.lit("line").alias("kind"), pl.col("i").alias("from_bus"), pl.col("j").alias("to_bus"),
+        pl.lit("line").alias("kind"), pl.col("i").alias("from_node"), pl.col("j").alias("to_node"),
         pl.col("ckt").str.strip_chars().alias("ckt"), (pl.col("st") == 1).alias("is_in_service"),
         pl.col("r").alias("r_pu"), pl.col("x").alias("x_pu"), pl.col("b").alias("b_pu"),
         pl.lit(None, pl.Float64).alias("tap_ratio"), pl.lit(None, pl.Float64).alias("angle_deg"),
         pl.col("ratea").alias("base_mw"), pl.col("rateb").alias("emergency_mw"), pl.col("ratec").alias("rate_c_mw"),
         pl.col("comment"))
     xf = psse_transformer.select(
-        pl.lit("transformer").alias("kind"), pl.col("i").alias("from_bus"), pl.col("j").alias("to_bus"),
+        pl.lit("transformer").alias("kind"), pl.col("i").alias("from_node"), pl.col("j").alias("to_node"),
         pl.col("ckt").str.strip_chars().alias("ckt"), (pl.col("stat") == 1).alias("is_in_service"),
         pl.col("r1_2").alias("r_pu"), pl.col("x1_2").alias("x_pu"), pl.lit(0.0).alias("b_pu"),
         (pl.col("windv1") / pl.col("windv2")).alias("tap_ratio"), pl.col("ang1").alias("angle_deg"),
@@ -75,7 +75,7 @@ def _finish(frame: pl.DataFrame, tie_reactance: float) -> tuple[pl.DataFrame, pl
     frame = frame.with_columns(((pl.col("kind") == "line") & (pl.col("x_pu").abs() <= tie_reactance)).alias("is_tie"))
     ratings = frame.select("branch_id", pl.lit("psse_raw").alias("rating_source"), pl.lit(None, pl.String).alias("time_of_use"),
                            "base_mw", "emergency_mw", "rate_c_mw")
-    return frame.select(BRANCH_COLUMNS).sort("kind", "from_bus", "to_bus", "ckt"), ratings
+    return frame.select(BRANCH_COLUMNS).sort("kind", "from_node", "to_node", "ckt"), ratings
 
 
 def dam_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transformer: pl.DataFrame,
@@ -83,12 +83,12 @@ def dam_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
                  tie_reactance: float = TIE_REACTANCE) -> tuple[pl.DataFrame, pl.DataFrame]:
     """``core.branch`` and ``core.branch_rating`` for one DAM hour."""
     named = pl.concat([
-        frame.select(pl.col("psse_from_bus_number").alias("from_bus"), pl.col("psse_to_bus_number").alias("to_bus"),
+        frame.select(pl.col("psse_from_bus_number").alias("from_node"), pl.col("psse_to_bus_number").alias("to_node"),
                      pl.col("psse_ckt_id").str.strip_chars().alias("ckt"), pl.col("branch_name").alias("branch_id"),
                      (pl.col("monitored").str.to_uppercase().str.starts_with("Y")).alias("is_monitored"),
                      (pl.col("monitored_and_secured").str.to_uppercase().str.starts_with("Y")).alias("is_secured"))
         for frame in (dam_lines, dam_transformers)])
-    frame = _with_endpoints(_raw_parts(psse_branch, psse_transformer).join(named, on=["from_bus", "to_bus", "ckt"], how="left"), nodes)
+    frame = _with_endpoints(_raw_parts(psse_branch, psse_transformer).join(named, on=["from_node", "to_node", "ckt"], how="left"), nodes)
     return _finish(frame.with_columns(pl.lit(False).alias("is_name_reversed"), pl.lit(False).alias("is_temporary")), tie_reactance)
 
 
@@ -107,9 +107,9 @@ def crr_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
     """
     auto_names = autos_by_key(autos).rename({"name": "auto_name"})
     frame = (_raw_parts(psse_branch, psse_transformer)
-             .join(auto_names, on=["from_bus", "to_bus", "ckt"], how="left")
+             .join(auto_names, on=["from_node", "to_node", "ckt"], how="left")
              .with_columns(pl.when(pl.col("kind") == "line").then(pl.col("comment"))
-                           .otherwise(pl.coalesce(pl.col("auto_name"), pl.format("XF {} {} {}", "from_bus", "to_bus", "ckt")))
+                           .otherwise(pl.coalesce(pl.col("auto_name"), pl.format("XF {} {} {}", "from_node", "to_node", "ckt")))
                            .alias("branch_id"),
                            ((pl.col("kind") == "transformer") & pl.col("is_swapped").fill_null(False)).alias("is_name_reversed")))
     listed = monitored.select(pl.col("device_name").alias("branch_id")).unique().with_columns(pl.lit(True).alias("is_monitored"))

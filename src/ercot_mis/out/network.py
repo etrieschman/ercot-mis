@@ -59,7 +59,7 @@ from dataclasses import asdict, dataclass, field
 
 import polars as pl
 
-VERSION = 2
+VERSION = 3
 
 INF = math.inf
 
@@ -117,7 +117,8 @@ class Network:
     """``"ercot"`` when the slack is a swing bus the RAW marks, ``"fallback"`` when none
     survived and the busiest node stands in."""
     nodes: pl.DataFrame
-    """``index, node_id, substation, kv, n_members, psse_bus_number, is_slack``; ``n_members`` is how many
+    """``index, node_id, raw_name, substation, kv, n_members, node_number, is_slack`` (``substation`` is null
+    for CRR models, whose RAW names nodes); ``n_members`` is how many
     model nodes the vertex stands for (more than one only when ties are contracted into buses)."""
     branches: pl.DataFrame
     """``index, branch_id, kind, from_node_id, to_node_id, from_index, to_index, x_pu,
@@ -215,7 +216,7 @@ def _node_ids(node: pl.DataFrame, contract_ties: bool) -> pl.DataFrame:
         return node.with_columns(pl.col("bus_key").alias("node_id"))
     # Tie members keep their own bus as a node; the key still says which group they are in.
     return node.with_columns(
-        pl.when(pl.col("is_tie_member")).then(pl.col("bus_key") + "@" + pl.col("psse_bus_number").cast(pl.String))
+        pl.when(pl.col("is_tie_member")).then(pl.col("bus_key") + "@" + pl.col("node_number").cast(pl.String))
         .otherwise(pl.col("bus_key")).alias("node_id"))
 
 
@@ -254,10 +255,10 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
     options = options or Options()
     dam = is_dam(snapshot_id)
     buses = _node_ids(core.node, options.contract_ties)
-    bus_to_node = buses.select("psse_bus_number", "node_id")
+    bus_to_node = buses.select("node_number", "node_id")
 
-    branch = (core.branch.join(bus_to_node.rename({"psse_bus_number": "from_bus", "node_id": "from_node_id"}), on="from_bus", how="left")
-              .join(bus_to_node.rename({"psse_bus_number": "to_bus", "node_id": "to_node_id"}), on="to_bus", how="left"))
+    branch = (core.branch.join(bus_to_node.rename({"node_number": "from_node", "node_id": "from_node_id"}), on="from_node", how="left")
+              .join(bus_to_node.rename({"node_number": "to_node", "node_id": "to_node_id"}), on="to_node", how="left"))
     reason = (pl.when(~pl.col("is_in_service") & ~pl.lit(options.keep_out_of_service)).then(pl.lit("out_of_service"))
               .when((pl.col("from_node_id") == pl.col("to_node_id")) & pl.col("is_tie")).then(pl.lit("contracted_tie"))
               .when(pl.col("from_node_id") == pl.col("to_node_id")).then(pl.lit("loop"))
@@ -285,8 +286,8 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
 
     # Nodes: one row per node in the main component, with a representative bus.
     nodes = (buses.filter(~pl.col("node_id").is_in(dropped_nodes["node_id"].implode()))
-             .group_by("node_id").agg(pl.col("substation").first(), pl.col("kv").min(), pl.len().alias("n_members"),
-                                      pl.col("psse_bus_number").min(), (pl.col("bus_type") == 3).any().alias("_slack"))
+             .group_by("node_id").agg(pl.col("raw_name").first(), pl.col("substation").first(), pl.col("kv").min(), pl.len().alias("n_members"),
+                                      pl.col("node_number").min(), (pl.col("node_type") == 3).any().alias("_slack"))
              .sort("node_id").with_row_index("index"))
     degree = pl.concat([kept.select(pl.col("from_node_id").alias("node_id")), kept.select(pl.col("to_node_id").alias("node_id"))]).group_by("node_id").len()
     nodes = nodes.join(degree, on="node_id", how="left").with_columns(pl.col("len").fill_null(0))
@@ -295,7 +296,7 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
     candidates = marked if marked.height else nodes
     slack = candidates.sort("len", "kv", "node_id", descending=[True, True, False])["node_id"][0] if candidates.height else None
     nodes = nodes.with_columns((pl.col("node_id") == slack).alias("is_slack")).select(
-        "index", "node_id", "substation", "kv", "n_members", "psse_bus_number", "is_slack")
+        "index", "node_id", "raw_name", "substation", "kv", "n_members", "node_number", "is_slack")
 
     index_of = nodes.select("node_id", "index")
     branches = (_limits(kept, core.branch_rating, options, dam)

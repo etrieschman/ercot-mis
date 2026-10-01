@@ -23,7 +23,7 @@ LAYER = "core"
 DAM_PRODUCT = snapshot.DAM_PRODUCT
 
 # Bump when the set of tables or how they are assembled changes.
-VERSION = 8
+VERSION = 9
 TABLES = ("node", "branch", "branch_rating", "contingency", "contingency_outage", "gtc", "gtc_member",
           "settlement_point", "settlement_point_bus", "load")
 

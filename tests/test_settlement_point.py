@@ -5,7 +5,7 @@ from ercot_mis.core import settlement_point as spm
 
 
 def _nodes(buses, keys):
-    return pl.DataFrame({"psse_bus_number": buses, "bus_key": keys})
+    return pl.DataFrame({"node_number": buses, "bus_key": keys})
 
 
 def test_crr_points_normalize_weights_merge_contracted_buses_and_flag_unknown_buses():
@@ -25,7 +25,7 @@ def test_crr_points_normalize_weights_merge_contracted_buses_and_flag_unknown_bu
     assert hub == {"A": 0.5, "C": 0.5}
     assert (by["RN_GONE"]["n_buses"], by["RN_GONE"]["n_unresolved"]) == (0, 1)
     gone = rows.filter(pl.col("settlement_point_id") == "RN_GONE").row(0, named=True)
-    assert gone["bus_key"] is None and gone["is_resolved"] is False and gone["psse_bus"] == 99
+    assert gone["bus_key"] is None and gone["is_resolved"] is False and gone["node_number"] == 99
 
 
 def test_dam_points_use_sp_hub_and_load_files_and_derive_the_average_hubs():

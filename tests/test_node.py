@@ -24,10 +24,10 @@ def test_dam_bus_keys_survive_renumbering_and_split_station_names():
     assert a["bus_key"].n_unique() == 3 and not a["is_ambiguous"].any()
     assert a.columns == list(identity.COLUMNS) and not a["is_tie_member"].any()
     assert sorted(a["bus_key"]) == sorted(b["bus_key"])
-    key_of = dict(zip(a["psse_bus_number"], a["bus_key"]))
-    key_of_b = dict(zip(b["psse_bus_number"], b["bus_key"]))
+    key_of = dict(zip(a["node_number"], a["bus_key"]))
+    key_of_b = dict(zip(b["node_number"], b["bus_key"]))
     assert key_of[1] == key_of_b[7] and key_of[2] == key_of_b[9]
-    assert a.filter(pl.col("psse_bus_number") == 1)["attachments"][0] == "B:L1|G:G1|S:SP_A"
+    assert a.filter(pl.col("node_number") == 1)["attachments"][0] == "B:L1|G:G1|S:SP_A"
 
 
 def test_isolated_buses_at_one_station_get_distinct_keys():
@@ -49,7 +49,7 @@ def test_crr_nodes_contract_bus_ties_and_name_transformers_from_autos():
     autos = pl.DataFrame({"from_number": ["1"], "to_number": ["4"], "id": ["T1"], "crr_name": ["AUTO_A"]})
     sources = pl.DataFrame({"name": ["SP_A"], "bus_name": ["2 A_BUS2"]})
     nodes = identity.crr_nodes(bus, branch, transformer, autos, sources)
-    by = {r["psse_bus_number"]: r for r in nodes.to_dicts()}
+    by = {r["node_number"]: r for r in nodes.to_dicts()}
     assert by[1]["bus_group"] == 1 and by[2]["bus_group"] == 1 and by[1]["bus_key"] == by[2]["bus_key"]
     assert by[1]["is_tie_member"] and by[2]["is_tie_member"] and not by[3]["is_tie_member"]
     assert by[3]["bus_group"] == 3 and nodes["bus_key"].n_unique() == 3

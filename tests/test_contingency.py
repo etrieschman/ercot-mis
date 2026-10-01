@@ -4,7 +4,7 @@ from ercot_mis.core import contingency, gtc
 
 
 def _branches(ids, keys):
-    return pl.DataFrame({"branch_id": ids, "from_bus": [1, 2, 1], "to_bus": [3, 3, 2], "ckt": ["1", "1", "T1"],
+    return pl.DataFrame({"branch_id": ids, "from_node": [1, 2, 1], "to_node": [3, 3, 2], "ckt": ["1", "1", "T1"],
                          "from_bus_key": [k[0] for k in keys], "to_bus_key": [k[1] for k in keys]})
 
 
@@ -22,7 +22,7 @@ def test_crr_contingencies_resolve_devices_by_branch_id_and_keep_unresolved():
 
 def test_dam_contingencies_resolve_branches_by_key_and_equipment_by_bus():
     branches = _branches(["L1", "L2", "X1"], [("a", "b"), ("c", "b"), ("a", "c")])
-    nodes = pl.DataFrame({"psse_bus_number": [1, 2, 3], "bus_key": ["a", "c", "b"]})
+    nodes = pl.DataFrame({"node_number": [1, 2, 3], "bus_key": ["a", "c", "b"]})
     raw = pl.DataFrame({
         "contingency_name": ["D1", "D1", "D2", "D3", "D4"],
         "equipment_type": ["Branch", "Generator", "Load", "SettlementPoint", "Branch"],

@@ -4,7 +4,7 @@ from ercot_mis.core import load
 
 
 def _nodes():
-    return pl.DataFrame({"psse_bus_number": [1, 2, 3], "bus_key": ["A", "B", "C"]})
+    return pl.DataFrame({"node_number": [1, 2, 3], "bus_key": ["A", "B", "C"]})
 
 
 def test_crr_loads_take_the_bus_name_from_the_comment_and_keep_open_loads():
@@ -27,7 +27,7 @@ def test_dam_loads_join_the_load_file_to_the_raw_record():
                        "ercot_load": ["YES", "NO"], "conforming_or_non_conforming": ["Conforming", "Non-Conforming"],
                        "raw_mw_ldf": [0.6, 0.4], "load_rollover_capable": ["NO", "YES"], "number_of_target_loads": ["0", "2"]})
     rows = {r["load_id"]: r for r in load.dam_loads(_nodes(), raw, ld).to_dicts()}
-    assert rows["STN_L1"] == {"load_id": "STN_L1", "psse_bus": 1, "psse_load_id": "L1", "bus_key": "A", "is_in_service": True, "mw": 7.0,
+    assert rows["STN_L1"] == {"load_id": "STN_L1", "node_number": 1, "psse_load_id": "L1", "bus_key": "A", "is_in_service": True, "mw": 7.0,
                               "load_zone": "LZ_Q", "weather_zone": "W", "is_ercot_load": True, "is_conforming": True, "mw_ldf": 0.6,
                               "is_rollover_capable": False, "n_rollover_targets": 0}
     assert (rows["STN_L2"]["is_in_service"], rows["STN_L2"]["is_rollover_capable"], rows["STN_L2"]["n_rollover_targets"]) == (False, True, 2)

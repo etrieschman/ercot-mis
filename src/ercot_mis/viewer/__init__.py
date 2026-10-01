@@ -40,9 +40,9 @@ def crr_substations(session, crr_id: str, dam_id: str, node: pl.DataFrame, branc
     """A substation name for every CRR bus (see the module docstring)."""
     dam_station = dict(_rows(session, "node", dam_id).select("bus_key", "substation").rows())
     matched = {c: dam_station.get(d) for c, d in session.match_buses(crr_id, dam_id).drop_nulls(["crr_bus_key", "dam_bus_key"]).select("crr_bus_key", "dam_bus_key").rows()}
-    substation = {bus: matched[key] for bus, key in node.select("psse_bus_number", "bus_key").rows() if matched.get(key)}
+    substation = {bus: matched[key] for bus, key in node.select("node_number", "bus_key").rows() if matched.get(key)}
     # Spread to unmatched buses over ties and transformers (equipment inside a substation), whatever their status.
-    inside = branch.filter(pl.col("is_tie") | (pl.col("kind") == "transformer")).select("from_bus", "to_bus").rows()
+    inside = branch.filter(pl.col("is_tie") | (pl.col("kind") == "transformer")).select("from_node", "to_node").rows()
     changed = True
     while changed:
         changed = False
@@ -54,9 +54,9 @@ def crr_substations(session, crr_id: str, dam_id: str, node: pl.DataFrame, branc
     # Then along matched lines: when one end of a CRR line is placed and its DAM line joins that
     # substation to another, the other end is in the other substation. This places buses the node match
     # left undecided between several DAM buses of one substation.
-    dam_bus_station = dict(_rows(session, "node", dam_id).select("psse_bus_number", "substation").rows())
-    dam_ends = {i: (dam_bus_station.get(f), dam_bus_station.get(t)) for i, f, t in _rows(session, "branch", dam_id).select("branch_id", "from_bus", "to_bus").rows()}
-    crr_ends = dict((i, (f, t)) for i, f, t in branch.select("branch_id", "from_bus", "to_bus").rows())
+    dam_bus_station = dict(_rows(session, "node", dam_id).select("node_number", "substation").rows())
+    dam_ends = {i: (dam_bus_station.get(f), dam_bus_station.get(t)) for i, f, t in _rows(session, "branch", dam_id).select("branch_id", "from_node", "to_node").rows()}
+    crr_ends = dict((i, (f, t)) for i, f, t in branch.select("branch_id", "from_node", "to_node").rows())
     pairs = [(crr_ends[c], dam_ends[d]) for c, d in session.match_branches(crr_id, dam_id).drop_nulls(["crr_branch_id", "dam_branch_id"])
              .select("crr_branch_id", "dam_branch_id").rows() if c in crr_ends and d in dam_ends and None not in dam_ends[d]]
     changed = True
@@ -79,7 +79,7 @@ def crr_substations(session, crr_id: str, dam_id: str, node: pl.DataFrame, branc
                 substation[b], changed = substation[a], True
             elif b in substation and a not in substation:
                 substation[a], changed = substation[b], True
-    for bus, name in node.select("psse_bus_number", "substation").rows():
+    for bus, name in node.select("node_number", "raw_name").rows():
         substation.setdefault(bus, f"~{name}")
     return substation
 
@@ -91,7 +91,7 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
         raise KeyError(f"no core rows for {snapshot_id!r}; run build_core()")
     dam = _is_dam(snapshot_id)
     if dam:
-        substation = dict(node.select("psse_bus_number", "substation").rows())
+        substation = dict(node.select("node_number", "substation").rows())
     else:
         if reference_dam is None:
             raise ValueError("a CRR snapshot needs reference_dam (a DAM snapshot to take substation names from)")
@@ -116,9 +116,9 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
     for sp_id, key, kind in points.select("settlement_point_id", "bus_key", "kind").sort("settlement_point_id").rows():
         (on_node if kind in ("resource_node", "dc_tie") else part_of).setdefault(key, []).append(sp_id)
     # A three-winding transformer is three two-winding legs meeting at a fictitious star bus (1 kV, transformers only).
-    ends = pl.concat([branch.select(pl.col("from_bus").alias("bus"), "kind"), branch.select(pl.col("to_bus").alias("bus"), "kind")])
+    ends = pl.concat([branch.select(pl.col("from_node").alias("bus"), "kind"), branch.select(pl.col("to_node").alias("bus"), "kind")])
     stars = set(ends.group_by("bus").agg(pl.len().alias("n"), (pl.col("kind") == "transformer").sum().alias("nt"))
-                .filter((pl.col("n") == pl.col("nt")) & (pl.col("nt") >= 3))["bus"]) & set(node.filter(pl.col("kv") <= 1.0)["psse_bus_number"])
+                .filter((pl.col("n") == pl.col("nt")) & (pl.col("nt") >= 3))["bus"]) & set(node.filter(pl.col("kv") <= 1.0)["node_number"])
 
     def labels(text: str, prefix: str) -> list[str]:
         return [part[2:] for part in (text or "").split("|") if part.startswith(prefix)]
@@ -126,16 +126,16 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
     return {
         "id": snapshot_id, "kind": "dam" if dam else "crr",
         "limit_source": "RAW rate A / B" if dam else "CRR monitored CSV, PeakWD",
-        "buses": [{"n": bus, "kv": kv, "st": substation[bus], "name": name, "type": bus_type, "key": key,
+        "buses": [{"n": bus, "kv": kv, "st": substation[bus], "name": name, "type": node_type, "key": key,
                    "sp": on_node.get(key, []), "agg": part_of.get(key, []), "gen": labels(att, "G:"), "star": bus in stars}
-                  for bus, kv, name, bus_type, key, att in node.select("psse_bus_number", "kv", "substation", "bus_type", "bus_key", "attachments").rows()],
+                  for bus, kv, name, node_type, key, att in node.select("node_number", "kv", "raw_name", "node_type", "bus_key", "attachments").rows()],
         "branches": [{"id": i, "k": kind[0].upper(), "f": f, "t": t, "ckt": ckt, "x": x, "on": on, "tie": tie, "mon": bool(mon), "sec": bool(sec),
                       "base": base, "emer": emer, "ra": ra, "rb": rb, "ctg": c or [], "temp": bool(temp)}
                      for i, kind, f, t, ckt, x, on, tie, mon, sec, base, emer, ra, rb, c, temp in branch.select(
-                         "branch_id", "kind", "from_bus", "to_bus", "ckt", "x_pu", "is_in_service", "is_tie", "is_monitored", "is_secured",
+                         "branch_id", "kind", "from_node", "to_node", "ckt", "x_pu", "is_in_service", "is_tie", "is_monitored", "is_secured",
                          "base_mw", "emergency_mw", "rate_a", "rate_b", "ctg", "is_temporary").rows()],
         "loads": [{"id": i, "bus": bus, "on": on, "mw": mw, "ldf": ldf, "zone": zone}
-                  for i, bus, on, mw, ldf, zone in load.select("load_id", "psse_bus", "is_in_service", "mw", "mw_ldf", "load_zone").rows()],
+                  for i, bus, on, mw, ldf, zone in load.select("load_id", "node_number", "is_in_service", "mw", "mw_ldf", "load_zone").rows()],
     }
 
 

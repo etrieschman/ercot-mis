@@ -13,10 +13,10 @@ from ercot_mis.out.network import CoreTables, Options, build_network
 
 def _core():
     node = pl.DataFrame({
-        "psse_bus_number": [1, 2, 3, 4, 5, 6, 7],
-        "substation": ["S1", "S1", "S2", "S3", "S4", "S5", "S5"],
+        "node_number": [1, 2, 3, 4, 5, 6, 7],
+        "raw_name": ["S1", "S1", "S2", "S3", "S4", "S5", "S5"], "substation": ["S1", "S1", "S2", "S3", "S4", "S5", "S5"],
         "kv": [138.0] * 7,
-        "bus_type": [1, 1, 3, 1, 4, 1, 1],
+        "node_type": [1, 1, 3, 1, 4, 1, 1],
         "bus_group": [1, 1, 3, 4, 5, 6, 7],
         "is_tie_member": [True, True, False, False, False, False, False],
         "bus_key": ["A", "A", "B", "C", "D", "E", "F"],
@@ -24,7 +24,7 @@ def _core():
     branch = pl.DataFrame({
         "branch_id": ["T", "L1", "L2", "L3", "X", "P", "I"],
         "kind": ["line", "line", "line", "line", "transformer", "line", "line"],
-        "from_bus": [1, 1, 2, 3, 4, 1, 6], "to_bus": [2, 3, 3, 4, 3, 2, 7],
+        "from_node": [1, 1, 2, 3, 4, 1, 6], "to_node": [2, 3, 3, 4, 3, 2, 7],
         "is_in_service": [True, True, True, True, False, True, True],
         "is_tie": [True, False, False, False, False, False, False],
         "x_pu": [0.0001, 0.01, 0.02, 0.03, 0.05, 0.04, 0.01],
@@ -113,7 +113,7 @@ def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons
 
 def test_slack_falls_back_to_the_busiest_node_when_no_swing_bus_survives():
     core = _core()
-    node = core.node.with_columns(pl.when(pl.col("psse_bus_number") == 3).then(1).otherwise(pl.col("bus_type")).alias("bus_type"))
+    node = core.node.with_columns(pl.when(pl.col("node_number") == 3).then(1).otherwise(pl.col("node_type")).alias("node_type"))
     net = build_network("crr:monthly:2026-10:r1", CoreTables(node, core.branch, core.branch_rating, core.contingency, core.contingency_outage, core.gtc, core.gtc_member), CONTRACT)
     assert net.slack_source == "fallback" and net.slack_node_id == "B"  # B still has the most branches
 
