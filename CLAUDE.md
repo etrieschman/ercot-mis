@@ -27,9 +27,9 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | scope | ERCOT only, in ERCOT vocabulary (settlement point, electrical bus, TOU block, EMIL ID, report type) |
 | job | pull and standardize; the only writer of data; consumers read |
 | interface | **Python API only**, used from Python files and notebooks; no CLI for now |
-| entry point | `em.open()` → `Session`; methods `list`, `fetch`, `ingest`, `probe`, `build_raw`, `build_core`, `raw`, `core`; later `match`, `sql`, `export` |
+| entry point | `em.open()` → `Session`; methods `list`, `fetch`, `ingest`, `probe`, `build_raw`, `build_core`, `raw`, `core`, `match_*`, `diff_*`, `network` |
 | transport | own thin clients: EWS (certificate) and Public API (archive files, not JSON rows) |
-| transforms | Python parsers → `raw`; `.sql` files on DuckDB → `core`, `out` |
+| transforms | Python parsers → `raw`; Python (polars) → `core`, `out`. The `.sql` runner was dropped on 2026-10-01; DuckDB remains for the catalog and ad hoc SQL |
 | storage | Parquet on disk (zstd, hive-partitioned), Arrow in memory, DuckDB catalog + SQL engine, polars for reading. **Catalog writes are short-lived**: `Session` reads through a read-only connection and takes the writer only to record a listing, a blob or an artifact, never across a download or a parse |
 | node identity | **equipment-based `node_key`**, not PSS/E number or name (DAM renumbers every hour; names are station names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `scripts/measure_identity.py` |
 | fidelity | **defaults do what ERCOT does; our analysis choices are named options.** `out.network` keeps CRR ties as branches and enforces the monitored breakers, as the auction does; contraction is `Options(contract_ties=True)`. Every assumption, its status and how it was checked lives in `docs/assumptions.md` (update it in the same commit as the code) |
@@ -147,7 +147,7 @@ quirks, validation, open questions). Read the relevant note before touching a
 parser; **update it in the same commit** whenever an import decision changes or a
 new quirk turns up. Notes are public: structure only, never names or values.
 Written so far: `psse-raw.md`, `crr-network-model.md`, `dam-network-model.md`,
-`identity-and-matching.md`, `generic-transmission-limits.md`. Beside them:
+`identity-and-matching.md`, `generic-transmission-limits.md`, `dam-prices.md`. Beside them:
 `docs/out-network.md` (the conventions and options of the network handed to a solver)
 and `docs/assumptions.md` (the register of every assumption, checked or open).
 
@@ -186,6 +186,7 @@ src/ercot_mis/
   products.py       PRODUCTS: EMIL specs (report type, class, window, source, pull/track)
   sources/          how bytes arrive
     ews.py          EWS: build_request, sign (SHA-1 WS-Security), parse_reports, EwsClient
+    public_api.py   Public API: ID token, paged archive listing, paced calls, retry on 429; PublicApiClient
     retry.py        retrying(): fixed back-off for stalled downloads and listings
   archive/          layer 0: original documents, never edited
     store.py        content-addressed files (archive/<EMIL>/<sha256>.zip, read-only, atomic), zip member hashing
@@ -196,6 +197,7 @@ src/ercot_mis/
     psse.py         PSS/E v30 RAW -> psse_* tables, both dialects
     crr.py, dam.py  package member classification + parsers -> crr_* / dam_* tables
     gtl.py          NP3-766-M GTL workbook (whole document, not a zip) -> gtl_hourly
+    prices.py       DAM shadow prices, bus LMPs, settlement point prices (Public API) -> dam_* tables
     build.py        parse packages in a process pool, write Parquet with identity columns, register artifacts
   core/             layer 2: tidy keyed tables shared by CRR and DAM
     snapshot.py     snapshot IDs and revisions from the catalog and member names
@@ -216,6 +218,7 @@ scripts/daily_pull.py        fetch pulled EWS products, list tracked ones, then 
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs, GTL hours)
 scripts/measure_identity.py  key-matching and node-identity measurements -> data/reports/identity/*.json
+scripts/check_prices.py      price identity per DAM hour: shadow prices x shift factors vs published prices -> data/reports/prices/*.json
 scripts/check_network.py     DC solve on assembled networks; contracted vs ERCOT topology -> data/reports/network/*.json
 tools/check_confidential.py  pre-commit guard (stdlib only; also blocks Keychain-stored secrets)
 .github/workflows/ci.yml     tests + guard on every push
@@ -237,9 +240,9 @@ measurements live in the scripts that make them and the dated reports under
 | # | milestone | status |
 |---|---|---|
 | M0 | scaffold, config, EWS client, archive probe | done — EWS depth = display window |
-| M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS side done and running daily via launchd since 2026-09-15 (retries, status file, notification on failure); Public API client not started |
+| M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS side done and running daily via launchd since 2026-09-15 (retries, status file, notification on failure); 2026-10-01: Public API archive client; DAM prices pulled daily |
 | M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | parsers done (PSS/E both dialects, CRR, DAM, GTL workbook); `scripts/validate_parsers.py` clean on every archived package. Not yet: DynamicRatings, PowerFlowData.jl cross-check (needs Julia) |
-| M3 | core layer + SQL runner, cache skip, lineage, validation checks | 2026-09-17: raw writer with provenance (`build_raw`, process pool, cache skip, `run`/`artifact`/`lineage`); `build_core` writes snapshot, node, branch, branch_rating, contingency, contingency_outage, gtc, gtc_member for every archived package. 2026-09-24: both builds run at the end of the daily pull. Not yet: SQL runner, validation checks as code |
+| M3 | core layer + SQL runner, cache skip, lineage, validation checks | 2026-09-17: raw writer with provenance (`build_raw`, process pool, cache skip, `run`/`artifact`/`lineage`); `build_core` writes snapshot, node, branch, branch_rating, contingency, contingency_outage, gtc, gtc_member for every archived package. 2026-09-24: both builds run at the end of the daily pull. 2026-10-01: SQL runner dropped; register lint (`tests/test_register.py`); `scripts/check_prices.py`. Not yet: flow check, status page |
 | M4 | `out.network` + `ftr_align/cases/ercot.py` | 2026-09-24: `session.network()` (per-snapshot, own vocabulary, ERCOT's topology by default, settlement point weights, audit frames, `docs/out-network.md`); `scripts/check_network.py` solves it. Not yet: on-disk `out/`, `ercot.py` (needs the sparse PTDF, see next steps) |
 | M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | |
 | M6 | CRR ↔ DAM matching + scorecard | matchers for branches, nodes and contingencies with `match_method` and unmatched rows (`session.match_*`); `scripts/measure_identity.py` reports their rates. 2026-09-24: `prefix+x` tie-break by reactance, `core.diff_branch`, `core.settlement_point[_node]`, `core.diff_settlement_point`. Not yet: `diff_node`/`diff_contingency`, `subset` contingency method, scorecard |
@@ -248,61 +251,73 @@ measurements live in the scripts that make them and the dated reports under
 
 ## Pick up here (next session)
 
-State at 2026-09-24 (end of day). M0–M3 done except the SQL runner. M4 has
-`session.network()` in ERCOT's own topology with a DC-solve check script. M6 has the
-three matchers, a reactance tie-break, settlement point tables and two diff tables. The
-daily pull builds raw and core after the fetch. The day ended with an **assumptions
-audit**: `docs/assumptions.md` lists every place we could differ from ERCOT, with its
-status. Read it first; most rows are verified, and the open ones are the work below.
+State at 2026-10-01. Scope settled with the user that day: **an impeccable fetcher for
+the network models and their inputs; research (ftr_align cases, sensitivities) is on
+hold.** Dropped: the SQL runner (core is Python; DuckDB stays as catalog and for ad hoc
+SQL), `export()`, telling breakers from disconnects. Two rules from the same talk:
 
-Principle settled with the user on 2026-09-24: **defaults do what ERCOT does; our
-analysis choices are named options.** That flipped `contract_ties` to off, kept the
-monitored breakers' limits in the CRR network, and put ERCOT's swing bus in as the
-slack. Facts established the same day, all in the notes: both RAWs already reflect
-outages; DynamicRatings is temperature assumptions, not ratings; DAM clamps reactance at
-a floor of 0.0005 pu; both RAWs use a tenths digit in base kV to tell buses apart; CRR
-transformer names follow the `Autos` sheet's orientation, reversed for a large
-minority; GTL document IDs do not follow posting time; DAM contingency files differ by
-hour; the `SpCtg` file lists the settlement points a contingency islands.
+- **The register is for choices, `diff_*` is for discrepancies.** Where our code has to
+  decide something, it cites a row of `docs/assumptions.md` (ids, types
+  stated/measured/forced/option; `tests/test_register.py` enforces it for `Options`,
+  drop reasons and match methods). Where two ERCOT models disagree (a load in service
+  in one and not the other), we change nothing and record it in a `core.diff_*` table.
+- **Models are tested against what cleared, without re-clearing.** The price identity
+  (`scripts/check_prices.py`: shadow prices x our shift factors vs published settlement
+  point prices) tests shift factors on binding constraints; the flow check (awards
+  through the network: binding rows at their limit, nothing enforced above it) tests
+  limits, the secured flag and settlement point weights.
+
+Done on 2026-10-01: register ids and lint; Public API client (`sources/public_api.py`,
+archive back to 2014, secrets in the Keychain); raw price tables (`raw/prices.py`) and
+prices for every archived DAM day, pulled daily from now on; `check_prices.py`, which
+resolves every binding row of the day tried (branch, contingency, or GTC by CRR code)
+and leaves a small residual against the published spread (reports in
+`data/reports/prices/`).
 
 First, check health (2 min):
-- `tail -30 data/logs/daily_pull.log` and `cat data/logs/last_run.json` — `failed 0`;
-  the log has `build_raw` and `build_core` lines per product.
-- `launchctl list | grep ercot-mis` — last exit code 0. A failure also posts a
-  macOS notification.
-- After a new CRR month posts: `uv run python scripts/measure_identity.py` and
-  `uv run python scripts/check_network.py`; compare the reports with the previous ones.
+- `tail -30 data/logs/daily_pull.log` and `cat data/logs/last_run.json`: `failed 0`,
+  now with three `NP4-19x/183` lines. The 2026-10-01 run took two hours; find out why.
+- `launchctl list | grep ercot-mis`: last exit code 0.
+- After a new CRR month posts: `measure_identity.py`, `check_network.py` and
+  `check_prices.py --day <a recent day>`; compare with the previous reports. The
+  November model is archived and the first two have not been rerun on it.
 
-Then, in order:
-1. **Close the open rows of `docs/assumptions.md`** that need only reading or local
-   data: which RAW rate is the DAM's post-contingency limit (ERCOT rating
-   conventions; compare rate B with the CRR emergency rating on matched branches);
-   the protocol definitions of hubs and the average hubs; why CRR hubs and zones span
-   far more buses than the DAM's hub-bus file and load list (read
-   `diff_settlement_point`); what to do with `SpCtg` (contingencies that island a
-   settlement point) in `out.network`.
-2. **Public API client** (`sources/public_api.py`): B2C ROPC token, subscription key,
-   paged archive listing, retry on 429; secrets via `load_secret()` (Keychain). Then
-   NP4-191-CD shadow prices to test the secured-flag reading, and NP4-183/190 prices
-   and NP3-966-ER awards for the sum-to-zero and merchandising-surplus identities:
-   the only external test of the whole chain. This moved up because the register's
-   `external` rows all wait on it.
-3. **Cross-model network**: put a CRR and a DAM `Network` on one node set through
-   `core.match_node` / `core.match_branch` so `ftr_align`'s `intersection` can take
-   them. With ERCOT's topology as the default, a CRR tie group maps to one DAM node
-   or to two DAM nodes joined by a floor branch; decide the rule and record it.
-4. **`diff_node`, `diff_contingency`, a `subset` contingency method** (many-to-one,
-   flagged), then the scorecard from the diff tables.
-5. **DAM GTC members**: parse NP3-770-M or borrow CRR members through `crr_gtc_id`
-   inside `out.network`, translating branch ids through `match_branch`.
-6. **SQL runner**, on-disk `out/` (the audit frames become a table per snapshot) and
-   the classification-aware `export()`.
-7. `ftr_align/cases/ercot.py`: needs a sparse formulation (angles, or PTDF rows only
-   for screened constraints); `scripts/check_network.py` has the sparse DC solve to
-   start from. Decide in `ftr_align` first.
+Then, in the order agreed:
+1. **Price identity, the rest of the residual.** It grows in the evening peak. Leads:
+   nodes a contingency cuts off (PRC-03, the `SpCtg` file, NAM-07); the DAM
+   contingency rows that are not branches (generators, loads, split buses); the one
+   binding GTC whose CRR members are not all in the DAM network. Then move GTC
+   borrowing from the script into `out.network` (NAM-05) and price buses too (needs
+   the NP4-160-SG bus mapping parsed).
+2. **`core.load` and `core.diff_load`** (CRR vs DAM load status and weights per
+   station), and label every open CRR tie as normally open or open for an outage from
+   the Outages file's normal-state and outage-state columns (first check its breaker
+   rows can be tied to RAW ties). A friend's example of a temporary load modeled open
+   in an annual model was confirmed in the tables; this makes it a measured class.
+3. **Viewer**: one self-contained HTML per pair of snapshots (any two: annual, monthly,
+   DAM hour) under `data/reports/`, never published. Two panes centred on one station,
+   click a neighbour to recentre both, search box, the centred station at bus level
+   with tie status, loads and generators, neighbours collapsed; colours for matched /
+   differs / one side only; a side panel of summary tables; a permanent CEII banner.
+   Network only; prices and flows are later overlays.
+4. **EMIL sweep** for planning-stage data (pin id, classification, window, then track,
+   then pull): transmission outage scheduler reports, resource outage capacity and
+   unplanned resource outages, 60-day DAM and SCED disclosures, actual load and
+   forecasts, load distribution factors, wind and solar, CRR auction results.
+5. **On-disk `out/`**: the network as Parquet, written on first request and cached by
+   snapshot and options (default options built in the daily pull for CRR only).
+6. **Flow check**, once NP3-966-ER overlaps the archived models (mid-October 2026).
+7. **Cross-model network** (one node set for CRR and DAM): the tie-group rule is the
+   user's call.
+8. A generated status page (register x latest check result) and a notification when a
+   row's result changes; `diff_node`, `diff_contingency`, the `subset` method.
 
-Open decisions for the user: keep capturing every DAM day (see `scripts/probe.py` and
-the catalog for sizes)? Install Julia for the PowerFlowData.jl cross-check?
+Other open rows of `docs/assumptions.md`: RAT-04 (which RAW rate is the DAM's
+post-contingency limit), SP-01 (protocol sections for hubs), SP-04, NAM-08 (the long
+day, 2026-11-01).
+
+Open decisions for the user: keep capturing every DAM day? Install Julia for the
+PowerFlowData.jl cross-check? Backfill public prices further than the archived models?
 
 ## EWS facts learned the hard way (keep)
 
