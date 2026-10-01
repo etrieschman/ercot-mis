@@ -6,17 +6,39 @@ measures everything stated here on real packages and writes a dated JSON report 
 `data/reports/identity/`. Re-run it when a new CRR month or DAM day arrives; if a
 statement below stops being true, change the code and the note together.
 
+## Vocabulary
+
+Three words, used the same way in code, tables, the viewer and these notes (settled with
+the user on 2026-10-01; it is the node-breaker convention):
+
+- **node**: the finest connection point a model gives, one RAW record. PSS/E calls
+  every RAW record a "bus", and columns that quote the file keep its word
+  (`psse_bus_number`). In a CRR model nodes are bus sections between breakers; in a
+  DAM model ERCOT has already merged them, so each node is a bus on its own.
+- **bus**: nodes joined by closed breakers (in-service ties), one electrical point.
+  `bus_key` identifies a bus; `core.node` has one row per node with the `bus_key` of
+  the bus it belongs to. Buses are what the two models have in common, so matching
+  (`core.match_bus`) and settlement point weights (`core.settlement_point_bus`) are
+  at this level.
+- **substation**: the physical yard holding buses at several voltage levels. DAM RAW
+  names are substation names; CRR RAW names are node names, so `core.node.substation`
+  holds the node's own name for a CRR model (the viewer assigns CRR substations
+  through the bus match).
+
+`out.network` calls its vertices nodes: by default they are the model's nodes, and
+with `contract_ties=True` each vertex is a bus (`n_members` says how many nodes).
+
 ## What the keys in ERCOT's files are
 
-**Buses.** A DAM RAW bus name is the *station* name, shared by every bus at that
-station; the CSVs' "Station Name/PSS/E Bus Name" column is the same string. CRR bus
+**Buses.** A DAM RAW bus name is the *substation* name, shared by every bus at that
+substation; the CSVs' "Station Name/PSS/E Bus Name" column is the same string. CRR bus
 names are 12-character electrical bus names, unique except for a few collisions. CRR
 and DAM bus numbers are unrelated numbering schemes. CRR numbers are stable month to
 month; **DAM numbers are reassigned in every hourly model**. Neither number nor name
 identifies a bus across models, and in DAM the number does not identify a bus across
 hours.
 
-**What is stable in DAM**: the (station, kV) reached by a generator name, a load
+**What is stable in DAM**: the (substation, kV) reached by a generator name, a load
 name, a settlement point name or a branch name, hour after hour and day after day.
 
 **Lines.** CRR RAW lines carry their CRR name in the `/*[...]*/` comment, and the
@@ -32,10 +54,10 @@ this as `is_name_reversed`. CRR line names always follow the RAW's order. DAM
 transformers are named in the `Xf` CSV.
 
 **Topology level.** CRR RAWs hold thousands of branches at PSS/E's minimum
-reactance (`x = 0.0001`, `r = 0`) joining two buses of the same station and voltage:
+reactance (`x = 0.0001`, `r = 0`) joining two buses of the same substation and voltage:
 closed breakers, disconnect switches and bus-section jumpers, exported from a
 node-breaker model. They are not alternative connections; they are the switching
-devices that make several bus sections one electrical node. Most carry the 9999
+devices that make several nodes one bus. Most carry the 9999
 placeholder rating, some carry a real breaker rating and appear in the monitored
 list, and some appear as contingency devices (a breaker opening). DAM RAWs hold no
 branch below a **reactance floor** of `x = 0.0005`: every DAM branch that would be
@@ -47,8 +69,8 @@ models must raise both sides to the floor first.
 
 **Base kV.** Both RAWs occasionally give a bus a base kV with a tenths digit that is
 not a nominal level (`138.1`, `345.2`), more often in DAM than in CRR. It tells buses
-of one station apart; it is not a voltage. Compare voltage levels with the tenths
-dropped, and expect `node_key`s, which include the kV as written, to differ by it
+of one substation apart; it is not a voltage. Compare voltage levels with the tenths
+dropped, and expect `bus_key`s, which include the kV as written, to differ by it
 only within a model, never across hours or months.
 
 **Mapping workbook.** `Lines` maps every `CRR_Tag` (a RAW line comment) to an
@@ -101,15 +123,15 @@ a given hour.
 
 ## Decisions
 
-- **Node identity is equipment-based** (`core/node.py`). A `node_key` is derived
-  from (station, kV, attached branch/generator/load/settlement-point names); PSS/E
-  numbers are per-snapshot attributes kept for joins within the snapshot only. Buses
-  with identical attachment sets (isolated buses at one station) get an ordinal
+- **Bus identity is equipment-based** (`core/node.py`). A `bus_key` is derived
+  from (substation, kV, attached branch/generator/load/settlement-point names); PSS/E
+  numbers are per-snapshot attributes kept for joins within the snapshot only. Nodes
+  with identical attachment sets (isolated nodes at one substation) get an ordinal
   suffix and `is_ambiguous`; the suffix is not stable across snapshots, and does not
   need to be, because such buses are never part of the solved network.
-- **CRR bus ties are contracted for identity, not for solving.** `core.node` groups
-  buses joined by in-service ties (|x| at or below `TIE_REACTANCE`) under one
-  `node_key`, which is what matching needs, since the DAM merges those buses. The
+- **CRR ties are contracted for identity, not for solving.** `core.node` groups
+  nodes joined by in-service ties (|x| at or below `TIE_REACTANCE`) under one
+  `bus_key`, which is what matching needs, since the DAM has already merged them. The
   network handed to a solver keeps the ties as branches by default, as ERCOT's auction
   does, and enforces the monitored ones; contraction is an option there
   (`docs/out-network.md`, measured by `scripts/check_network.py`).
@@ -127,22 +149,22 @@ a given hour.
   do not are for `diff_branch`, not for the matcher to hide.
 - **Settlement points are one table in both models** (`core/settlement_point.py`):
   `core.settlement_point` (kind from the DAM type or, in CRR, from the `HB_`/`LZ_`/`DC`
-  prefixes) and `core.settlement_point_node` (weights normalized to sum to one, the
+  prefixes) and `core.settlement_point_bus` (weights normalized to sum to one, the
   raw weight kept). DAM hubs take their `Hb` buses at equal weight, the two average
   hubs are derived (bus average: every hub bus equally; hub average: each hub
   equally, then its buses), load zones take their in-service loads weighted by LDF,
   logical resource nodes borrow their combined-cycle point's bus. Cross-model
   identity is the name; `core.diff_settlement_point` (`session.diff_settlement_points`)
-  translates the CRR nodes through the node match and records whether the node sets
+  translates the CRR buses through the bus match and records whether the bus sets
   agree and how much weight they share.
-- **Node matching** (`session.match_nodes`): settlement points attached to exactly
-  one node on each side vote for (CRR node, DAM node) pairs, and a pair is accepted
-  when every point on either node agrees (zones and hubs touch many CRR buses and are
+- **Bus matching** (`session.match_buses`): settlement points attached to exactly
+  one bus on each side vote for (CRR bus, DAM bus) pairs, and a pair is accepted
+  when every point on either bus agrees (zones and hubs touch many CRR buses and are
   skipped), then
   the endpoints of matched branches by vote (a pair is accepted when it is the top
-  vote for both nodes and either has two agreeing branches or both nodes have a
+  vote for both buses and either has two agreeing branches or both buses have a
   single matched branch; tied votes stay unmatched). Then `unmatched` with the number
-  of competing candidates. Unmatched DAM nodes are listed with a null CRR side.
+  of competing candidates. Unmatched DAM buses are listed with a null CRR side.
 - **Contingency matching** (`session.match_contingencies`): CRR outages are
   translated to DAM branch ids through the branch match first; then by name (case and
   whitespace ignored), then by an identical translated branch set when it points at
@@ -162,13 +184,13 @@ a given hour.
 ## Open questions
 
 - Branches still ambiguous after `prefix+x`: every free candidate disagrees on
-  reactance, or two agree. Endpoint node matches could settle some.
+  reactance, or two agree. Endpoint bus matches could settle some.
 - Matched branches whose reactance, kind or voltage level disagree after the floor is
   allowed for: series devices, re-conductored lines, or wrong matches? Record them
   in `diff_branch` before deciding.
 - Name-matched contingencies whose branch sets differ for reasons other than
   matching coverage (the small remainder the report isolates).
-- Settlement points the two models put on different nodes: a small share of resource
+- Settlement points the two models put on different buses: a small share of resource
   nodes, and every hub and load zone, since the CRR spreads hubs and zones over far
   more buses than the DAM's hub-bus file and load list (the report gives the shared
   weight). Whether the difference is definition or bus resolution is open.

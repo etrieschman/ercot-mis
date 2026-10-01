@@ -78,7 +78,7 @@ Every assumption behind these conventions, with its status, is in
 
 - Nothing cross-model: a CRR and a DAM `Network` are each in their own vocabulary.
   Putting both on one node set (the `intersection` in `ftr_align` needs it) goes
-  through `core.match_node` and `core.match_branch` and is the next step.
+  through `core.match_bus` and `core.match_branch` and is the next step.
 - DAM GTC members (borrowed from the CRR model through `crr_gtc_id`, or parsed).
 - Writing to `out/` on disk and the classification-aware `export()`.
 - Time-of-use blocks other than the one asked for; DynamicRatings.

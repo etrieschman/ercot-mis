@@ -13,7 +13,7 @@ Checks, for one monthly CRR package and one DAM hour:
   * CRR <-> DAM: bus numbers, bus names, branch names (exact / punctuation-free /
     prefix), contingency names, settlement points;
   * stability: DAM bus numbering across hours and days, CRR across months, and
-    whether equipment names give a stable (station, kV) identity.
+    whether equipment names give a stable (substation, kV) identity.
 
     uv run python scripts/measure_identity.py                       # latest month and day
     uv run python scripts/measure_identity.py --month 2026-09 --day 2026-09-15 --hour 12
@@ -337,14 +337,14 @@ def stability(mis: em.Session, dam_path, day: date, hour: int, D, C, crr_month: 
     compare(f"DAM bus numbers, hour {hour} vs next hour", bus_identity(D), bus_identity(next_hour))
     for label, x, y in ((k, equipment(D)[k], equipment(next_hour)[k]) for k in ("generator", "load", "settlement_point", "branch")):
         common = set(x) & set(y)
-        show(f"  {label} name -> (station, kV) across hours", shared=len(common), same=sum(1 for k in common if x[k] == y[k]))
+        show(f"  {label} name -> (substation, kV) across hours", shared=len(common), same=sum(1 for k in common if x[k] == y[k]))
     other_paths = [p for p in package_paths(mis, "NP4-500-SG") if p != dam_path]
     if other_paths:
         other = load_dam(other_paths[-1], hour, kinds)
         compare("DAM bus numbers vs the oldest archived day", bus_identity(D), bus_identity(other))
         for label, x, y in ((k, equipment(D)[k], equipment(other)[k]) for k in ("generator", "load", "settlement_point", "branch")):
             common = set(x) & set(y)
-            show(f"  {label} name -> (station, kV) across days", shared=len(common), same=sum(1 for k in common if x[k] == y[k]))
+            show(f"  {label} name -> (substation, kV) across days", shared=len(common), same=sum(1 for k in common if x[k] == y[k]))
     for path in package_paths(mis, "NP7-800-M"):
         with zipfile.ZipFile(path) as z:
             months = {m.month for n in z.namelist() if (m := crr.classify_member(n)) and m.month}
@@ -354,8 +354,8 @@ def stability(mis: em.Session, dam_path, day: date, hour: int, D, C, crr_month: 
 
 
 def node_identity(mis: em.Session, dam_path, hour: int, D, C) -> None:
-    """How stable the equipment-based node keys are (core/node.py)."""
-    section("Node identity (equipment-based keys)")
+    """How stable the equipment-based bus keys are (core/node.py)."""
+    section("Bus identity (equipment-based keys)")
     kinds = {"network_model", "generators", "loads", "settlement_points", "lines", "transformers"}
 
     def dam_keys(tables) -> pl.DataFrame:
@@ -363,7 +363,7 @@ def node_identity(mis: em.Session, dam_path, hour: int, D, C) -> None:
                                   tables["dam_loads"], tables["dam_settlement_points"])
 
     def compare(label: str, a: pl.DataFrame, b: pl.DataFrame) -> None:
-        ka, kb = set(a["node_key"]), set(b["node_key"])
+        ka, kb = set(a["bus_key"]), set(b["bus_key"])
         show(label, nodes_a=a.height, nodes_b=b.height, keys_shared=len(ka & kb), only_a=len(ka - kb), only_b=len(kb - ka),
              ambiguous_a=int(a["is_ambiguous"].sum()), no_attachments_a=int((a["n_attachments"] == 0).sum()))
 
@@ -376,13 +376,13 @@ def node_identity(mis: em.Session, dam_path, hour: int, D, C) -> None:
          nodes_with_settlement_point=int(here["attachments"].str.contains("S:").sum()))
 
     crr = node.crr_nodes(C["psse_bus"], C["psse_branch"], C["psse_transformer"], C["crr_mapping_autos"], C["crr_sources_and_sinks"])
-    groups = crr.filter(pl.col("is_tie_member")).group_by("node_group").len()
+    groups = crr.filter(pl.col("is_tie_member")).group_by("bus_group").len()
     ties = C["psse_branch"].filter(pl.col("x").abs() <= node.TIE_REACTANCE)
     kv = dict(zip(C["psse_bus"]["i"].to_list(), C["psse_bus"]["basekv"].to_list()))
     show("CRR bus ties (|x| <= TIE_REACTANCE)", n=ties.height, same_kv_both_ends=sum(1 for i, j in zip(ties["i"], ties["j"]) if kv.get(i) == kv.get(j)),
          r_zero=int((ties["r"] == 0).sum()), in_service=int((ties["st"] == 1).sum()), ratea_9999_or_more=int((ties["ratea"] >= 9999).sum()),
          x_patterns=patterns(ties["x"].to_list(), 3))
-    show("CRR contraction", buses=crr.height, nodes=crr["node_group"].n_unique(), tie_groups=groups.height,
+    show("CRR contraction", buses=crr.height, nodes=crr["bus_group"].n_unique(), tie_groups=groups.height,
          buses_in_tie_groups=int(groups["len"].sum()), largest_group=int(groups["len"].max()) if groups.height else 0,
          ambiguous=int(crr["is_ambiguous"].sum()), no_attachments=int((crr["n_attachments"] == 0).sum()))
     for path in package_paths(mis, "NP7-800-M"):
@@ -391,8 +391,8 @@ def node_identity(mis: em.Session, dam_path, hour: int, D, C) -> None:
         other = load_crr(path, {"network_model", "mapping_document", "sources_and_sinks"})
         if other["psse_bus"].height != C["psse_bus"].height or not other["psse_bus"]["name"].equals(C["psse_bus"]["name"]):
             other_nodes = node.crr_nodes(other["psse_bus"], other["psse_branch"], other["psse_transformer"], other["crr_mapping_autos"], other["crr_sources_and_sinks"])
-            ka, kb = set(crr["node_key"]), set(other_nodes["node_key"])
-            show("CRR nodes vs another month", nodes_a=crr["node_group"].n_unique(), nodes_b=other_nodes["node_group"].n_unique(), keys_shared=len(ka & kb))
+            ka, kb = set(crr["bus_key"]), set(other_nodes["bus_key"])
+            show("CRR nodes vs another month", nodes_a=crr["bus_group"].n_unique(), nodes_b=other_nodes["bus_group"].n_unique(), keys_shared=len(ka & kb))
             break
 
 
@@ -405,7 +405,7 @@ def matching(mis: em.Session, crr_month: date, day: date, hour: int) -> None:
         show("skipped", reason="core tables not built for these snapshots", crr=crr_id, dam=dam_id)
         return
     for name, frame, left, right in (("branches", mis.match_branches(crr_id, dam_id), "crr_branch_id", "dam_branch_id"),
-                                     ("nodes", mis.match_nodes(crr_id, dam_id), "crr_node_key", "dam_node_key"),
+                                     ("nodes", mis.match_buses(crr_id, dam_id), "crr_bus_key", "dam_bus_key"),
                                      ("contingencies", mis.match_contingencies(crr_id, dam_id), "crr_contingency_id", "dam_contingency_id")):
         counts = frame.group_by("match_method").agg(pl.len().alias("n"), pl.col(left).is_not_null().sum().alias("crr"), pl.col(right).is_not_null().sum().alias("dam")).sort("match_method")
         show(name, **{f"{m}": f"{n} (crr {c}, dam {d})" for m, n, c, d in counts.rows()})
@@ -429,9 +429,9 @@ def matching(mis: em.Session, crr_month: date, day: date, hour: int) -> None:
                           .when(pl.col("in_dam")).then(pl.lit("shared"))
                           .otherwise(pl.lit("matched_branch_but_dam_contingency_omits_it")).alias("why")))
     show("name-matched contingency rows by outcome", **{why: n for why, n in rows.group_by("why").len().sort("len", descending=True).rows()})
-    nodes = mis.match_nodes(crr_id, dam_id).filter(pl.col("match_method") != "unmatched")
-    kv = (nodes.join(mis.core("node").filter(pl.col("snapshot_id") == crr_id).select("node_key", "kv").unique(subset=["node_key"]).collect(), left_on="crr_node_key", right_on="node_key")
-          .join(mis.core("node").filter(pl.col("snapshot_id") == dam_id).select("node_key", pl.col("kv").alias("dam_kv")).collect(), left_on="dam_node_key", right_on="node_key"))
+    nodes = mis.match_buses(crr_id, dam_id).filter(pl.col("match_method") != "unmatched")
+    kv = (nodes.join(mis.core("node").filter(pl.col("snapshot_id") == crr_id).select("bus_key", "kv").unique(subset=["bus_key"]).collect(), left_on="crr_bus_key", right_on="bus_key")
+          .join(mis.core("node").filter(pl.col("snapshot_id") == dam_id).select("bus_key", pl.col("kv").alias("dam_kv")).collect(), left_on="dam_bus_key", right_on="bus_key"))
     show("matched nodes", n=nodes.height, same_kv=int((kv["kv"] == kv["dam_kv"]).sum()),
          same_kv_ignoring_tenths=int((kv["kv"].floor() == kv["dam_kv"].floor()).sum()))
     # Do matched branches describe the same element? core.diff_branch puts both sides next to each other.
@@ -456,12 +456,12 @@ def matching(mis: em.Session, crr_month: date, day: date, hour: int) -> None:
     for sid, label in ((crr_id, "CRR"), (dam_id, "DAM")):
         pts = mis.core("settlement_point").filter(pl.col("snapshot_id") == sid).collect()
         show(f"settlement points {label}", n=pts.height, **{f"{k}": n for k, n in pts.group_by("kind").len().sort("kind").rows()},
-             without_node=int((pts["n_nodes"] == 0).sum()), with_unresolved_rows=int((pts["n_unresolved"] > 0).sum()),
-             multi_node=int((pts["n_nodes"] > 1).sum()), max_nodes=int(pts["n_nodes"].max()))
+             without_node=int((pts["n_buses"] == 0).sum()), with_unresolved_rows=int((pts["n_unresolved"] > 0).sum()),
+             multi_node=int((pts["n_buses"] > 1).sum()), max_nodes=int(pts["n_buses"].max()))
     spd = mis.diff_settlement_points(crr_id, dam_id)
-    show("settlement points in both", n=spd.height, same_kind=int(spd["same_kind"].sum()), same_nodes=int(spd["same_nodes"].sum()),
-         with_untranslatable_crr_nodes=int((spd["n_crr_nodes_unmatched"] > 0).sum()),
-         **{f"same_nodes_{k}": f"{ok} of {n}" for k, ok, n in spd.group_by("dam_kind").agg(pl.col("same_nodes").sum(), pl.len()).sort("dam_kind").rows()})
+    show("settlement points in both", n=spd.height, same_kind=int(spd["same_kind"].sum()), same_buses=int(spd["same_buses"].sum()),
+         with_untranslatable_crr_nodes=int((spd["n_crr_buses_unmatched"] > 0).sum()),
+         **{f"same_buses_{k}": f"{ok} of {n}" for k, ok, n in spd.group_by("dam_kind").agg(pl.col("same_buses").sum(), pl.len()).sort("dam_kind").rows()})
     hubs = spd.filter(pl.col("dam_kind").is_in(["hub", "load_zone"]))
     show("  hubs and zones: shared weight", crr_side_quantiles=[round(hubs["shared_weight_crr"].quantile(q), 3) for q in (0, 0.5, 1)],
          dam_side_quantiles=[round(hubs["shared_weight_dam"].quantile(q), 3) for q in (0, 0.5, 1)])

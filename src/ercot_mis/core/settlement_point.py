@@ -1,4 +1,4 @@
-"""``core.settlement_point`` and ``core.settlement_point_node``: where each settlement
+"""``core.settlement_point`` and ``core.settlement_point_bus``: where each settlement
 point sits in the network.
 
 ERCOT settles prices at settlement points (resource nodes, hubs, load zones); each
@@ -10,7 +10,7 @@ zone and distribution factor (``Ld``). This module puts both in one shape:
 - ``settlement_point``: one row per settlement point per snapshot with its ``kind``
   (``resource_node``, ``hub``, ``load_zone``, ``dc_tie``), the model's own type text,
   how many nodes it reaches and how many rows could not be resolved;
-- ``settlement_point_node``: one row per (settlement point, node) with ``weight``
+- ``settlement_point_bus``: one row per (settlement point, node) with ``weight``
   (normalized to sum to one over the resolved rows), the ``raw_weight`` as the file
   gave it, the ``source`` file and the PSS/E bus it came through.
 
@@ -28,10 +28,10 @@ import polars as pl
 
 VERSION = 1
 
-SP_COLUMNS = ("settlement_point_id", "kind", "type_text", "n_nodes", "n_unresolved", "weight_sum_raw")
-NODE_COLUMNS = ("settlement_point_id", "node_key", "weight", "raw_weight", "source", "psse_bus", "is_resolved")
+SP_COLUMNS = ("settlement_point_id", "kind", "type_text", "n_buses", "n_unresolved", "weight_sum_raw")
+NODE_COLUMNS = ("settlement_point_id", "bus_key", "weight", "raw_weight", "source", "psse_bus", "is_resolved")
 
-_EMPTY_NODES = {"settlement_point_id": pl.String, "node_key": pl.String, "weight": pl.Float64, "raw_weight": pl.Float64,
+_EMPTY_NODES = {"settlement_point_id": pl.String, "bus_key": pl.String, "weight": pl.Float64, "raw_weight": pl.Float64,
                 "source": pl.String, "psse_bus": pl.Int64, "is_resolved": pl.Boolean}
 
 
@@ -55,32 +55,32 @@ def _kind_from_type(type_text: pl.Expr) -> pl.Expr:
 def _finish(points: pl.DataFrame, rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Resolve buses to nodes was done by the caller; here weights are normalized and counts taken.
 
-    ``rows`` has settlement_point_id, node_key (null when unresolved), raw_weight, source, psse_bus.
+    ``rows`` has settlement_point_id, bus_key (null when unresolved), raw_weight, source, psse_bus.
     Rows landing on the same node (CRR buses of one contracted node) are merged.
     """
-    rows = rows.with_columns(pl.col("node_key").is_not_null().alias("is_resolved"))
+    rows = rows.with_columns(pl.col("bus_key").is_not_null().alias("is_resolved"))
     resolved = (rows.filter(pl.col("is_resolved"))
-                .group_by("settlement_point_id", "node_key", "source")
+                .group_by("settlement_point_id", "bus_key", "source")
                 .agg(pl.col("raw_weight").sum(), pl.col("psse_bus").min()))
     totals = resolved.group_by("settlement_point_id").agg(pl.col("raw_weight").sum().alias("_total"))
     resolved = (resolved.join(totals, on="settlement_point_id")
                 .with_columns(pl.when(pl.col("_total") > 0).then(pl.col("raw_weight") / pl.col("_total")).otherwise(None).alias("weight"))
                 .with_columns(pl.lit(True).alias("is_resolved")))
-    unresolved = rows.filter(~pl.col("is_resolved")).select("settlement_point_id", "node_key", pl.lit(None, pl.Float64).alias("weight"),
+    unresolved = rows.filter(~pl.col("is_resolved")).select("settlement_point_id", "bus_key", pl.lit(None, pl.Float64).alias("weight"),
                                                               "raw_weight", "source", "psse_bus", "is_resolved")
-    nodes = pl.concat([resolved.select(NODE_COLUMNS), unresolved.select(NODE_COLUMNS)]).sort("settlement_point_id", "node_key")
+    nodes = pl.concat([resolved.select(NODE_COLUMNS), unresolved.select(NODE_COLUMNS)]).sort("settlement_point_id", "bus_key")
     counts = (nodes.group_by("settlement_point_id")
-              .agg(pl.col("is_resolved").sum().cast(pl.UInt32).alias("n_nodes"), (~pl.col("is_resolved")).sum().cast(pl.UInt32).alias("n_unresolved"),
+              .agg(pl.col("is_resolved").sum().cast(pl.UInt32).alias("n_buses"), (~pl.col("is_resolved")).sum().cast(pl.UInt32).alias("n_unresolved"),
                    pl.col("raw_weight").filter(pl.col("is_resolved")).sum().alias("weight_sum_raw")))
     points = (points.join(counts, on="settlement_point_id", how="left")
-              .with_columns(pl.col("n_nodes").fill_null(0), pl.col("n_unresolved").fill_null(0))
+              .with_columns(pl.col("n_buses").fill_null(0), pl.col("n_unresolved").fill_null(0))
               .select(SP_COLUMNS).sort("settlement_point_id"))
     return points, nodes
 
 
 def crr_settlement_points(nodes: pl.DataFrame, sources_sinks: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """From ``crr_sources_and_sinks`` (Name, PriceNode, BusName "number name", ParticipationFactor)."""
-    to_node = nodes.select(pl.col("psse_bus_number").alias("psse_bus"), "node_key")
+    to_node = nodes.select(pl.col("psse_bus_number").alias("psse_bus"), "bus_key")
     rows = (sources_sinks.select(pl.col("name").alias("settlement_point_id"),
                                  pl.col("bus_name").str.extract(r"^\s*(\d+)").cast(pl.Int64, strict=False).alias("psse_bus"),
                                  pl.col("participation_factor").alias("raw_weight"), pl.lit("crr_sources_sinks").alias("source"))
@@ -93,7 +93,7 @@ def crr_settlement_points(nodes: pl.DataFrame, sources_sinks: pl.DataFrame) -> t
 def dam_settlement_points(nodes: pl.DataFrame, settlement_points: pl.DataFrame, hub_buses: pl.DataFrame,
                           loads: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """From one hour's ``dam_settlement_points``, ``dam_hub_buses`` and ``dam_loads``."""
-    to_node = nodes.select(pl.col("psse_bus_number").alias("psse_bus"), "node_key")
+    to_node = nodes.select(pl.col("psse_bus_number").alias("psse_bus"), "bus_key")
     sp = settlement_points.select(pl.col("settlement_point_name").alias("settlement_point_id"), pl.col("settlement_point_type").alias("type_text"),
                                   pl.col("psse_bus_number").cast(pl.Int64).alias("psse_bus"),
                                   pl.col("combined_cycle_settlement_point").cast(pl.String).alias("_cc"))
@@ -133,12 +133,12 @@ def dam_settlement_points(nodes: pl.DataFrame, settlement_points: pl.DataFrame, 
     # A settlement point with no row at all (a hub without Hb rows, a zone without loads) still appears, unresolved.
     missing = points.filter(~pl.col("settlement_point_id").is_in(rows["settlement_point_id"].implode())).select(
         "settlement_point_id", pl.lit(None, pl.Int64).alias("psse_bus"), pl.lit(None, pl.Float64).alias("raw_weight"),
-        pl.lit("dam_sp").alias("source"), pl.lit(None, pl.String).alias("node_key"))
-    rows = pl.concat([rows.select("settlement_point_id", "psse_bus", "raw_weight", "source", "node_key"), missing])
+        pl.lit("dam_sp").alias("source"), pl.lit(None, pl.String).alias("bus_key"))
+    rows = pl.concat([rows.select("settlement_point_id", "psse_bus", "raw_weight", "source", "bus_key"), missing])
     return _finish(points, rows)
 
 
 def no_settlement_points() -> tuple[pl.DataFrame, pl.DataFrame]:
-    points = pl.DataFrame(schema={"settlement_point_id": pl.String, "kind": pl.String, "type_text": pl.String, "n_nodes": pl.UInt32,
+    points = pl.DataFrame(schema={"settlement_point_id": pl.String, "kind": pl.String, "type_text": pl.String, "n_buses": pl.UInt32,
                                   "n_unresolved": pl.UInt32, "weight_sum_raw": pl.Float64})
     return points, pl.DataFrame(schema=_EMPTY_NODES)

@@ -39,10 +39,10 @@ The header picks the table (`raw/prices.py`): `dam_shadow_prices`, `dam_lmps`,
   contingency by the DAM contingency name, both as in NP4-500-SG once punctuation is
   ignored; the base case has its own contingency name.
 - A binding GTC is named by the code the CRR package uses, not by the GTL workbook's
-  readable name, and has no stations.
+  readable name, and has no substations.
 - The published flow is unsigned and equals the limit. Direction is in
   `from_station` / `to_station`, which may run against the model's from-to. Inside one
-  station the two voltages tell the ends apart, and only to the tenth of a kV: a line
+  substation the two voltages tell the ends apart, and only to the tenth of a kV: a line
   between two bus sections of one level differs in the tenths digit alone.
 - Shadow prices are non-negative; they enter the price with a minus sign in the
   model's own orientation (settled by the data in `check_prices.py`, both signs tried).

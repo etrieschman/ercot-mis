@@ -23,9 +23,9 @@ LAYER = "core"
 DAM_PRODUCT = snapshot.DAM_PRODUCT
 
 # Bump when the set of tables or how they are assembled changes.
-VERSION = 7
+VERSION = 8
 TABLES = ("node", "branch", "branch_rating", "contingency", "contingency_outage", "gtc", "gtc_member",
-          "settlement_point", "settlement_point_node", "load")
+          "settlement_point", "settlement_point_bus", "load")
 
 
 def core_id() -> str:
@@ -97,7 +97,7 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame)
             loads = load.crr_loads(nodes, r["psse_load"])
         for table, frame in (("node", nodes), ("branch", branches), ("branch_rating", ratings), ("contingency", contingencies),
                              ("contingency_outage", outages), ("gtc", gtcs), ("gtc_member", members),
-                             ("settlement_point", points), ("settlement_point_node", point_nodes), ("load", loads)):
+                             ("settlement_point", points), ("settlement_point_bus", point_nodes), ("load", loads)):
             parts[table].append(frame.with_columns(pl.lit(snap["snapshot_id"]).alias("snapshot_id")))
     return {table: pl.concat(frames, how="diagonal_relaxed").select("snapshot_id", pl.exclude("snapshot_id"))
             for table, frames in parts.items() if frames}  # empty GTC frames still carry the schema

@@ -5,7 +5,7 @@ from ercot_mis.core import contingency, gtc
 
 def _branches(ids, keys):
     return pl.DataFrame({"branch_id": ids, "from_bus": [1, 2, 1], "to_bus": [3, 3, 2], "ckt": ["1", "1", "T1"],
-                         "from_node_key": [k[0] for k in keys], "to_node_key": [k[1] for k in keys]})
+                         "from_bus_key": [k[0] for k in keys], "to_bus_key": [k[1] for k in keys]})
 
 
 def test_crr_contingencies_resolve_devices_by_branch_id_and_keep_unresolved():
@@ -22,7 +22,7 @@ def test_crr_contingencies_resolve_devices_by_branch_id_and_keep_unresolved():
 
 def test_dam_contingencies_resolve_branches_by_key_and_equipment_by_bus():
     branches = _branches(["L1", "L2", "X1"], [("a", "b"), ("c", "b"), ("a", "c")])
-    nodes = pl.DataFrame({"psse_bus_number": [1, 2, 3], "node_key": ["a", "c", "b"]})
+    nodes = pl.DataFrame({"psse_bus_number": [1, 2, 3], "bus_key": ["a", "c", "b"]})
     raw = pl.DataFrame({
         "contingency_name": ["D1", "D1", "D2", "D3", "D4"],
         "equipment_type": ["Branch", "Generator", "Load", "SettlementPoint", "Branch"],
@@ -39,7 +39,7 @@ def test_dam_contingencies_resolve_branches_by_key_and_equipment_by_bus():
     assert by["D4"]["n_unresolved"] == 1
     rows = {(r["contingency_id"], r["element_kind"]): r for r in out.to_dicts()}
     assert rows[("D1", "branch")]["branch_id"] == "L1"  # reversed orientation still resolves
-    assert rows[("D1", "generator")]["node_key"] == "c" and rows[("D1", "generator")]["psse_id"] == "G1"
+    assert rows[("D1", "generator")]["bus_key"] == "c" and rows[("D1", "generator")]["psse_id"] == "G1"
     assert rows[("D3", "settlement_point")]["operation"] == "split_bus"
 
 

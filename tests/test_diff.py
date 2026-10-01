@@ -4,7 +4,7 @@ from ercot_mis.core import diff
 
 
 def _branch(ids, kinds, ends, x, in_service, flag_name, flags):
-    return pl.DataFrame({"branch_id": ids, "kind": kinds, "from_node_key": [e[0] for e in ends], "to_node_key": [e[1] for e in ends],
+    return pl.DataFrame({"branch_id": ids, "kind": kinds, "from_bus_key": [e[0] for e in ends], "to_bus_key": [e[1] for e in ends],
                          "x_pu": x, "is_in_service": in_service, flag_name: flags})
 
 
@@ -15,8 +15,8 @@ def test_diff_branches_compares_kind_reactance_kv_and_ratings_side_by_side():
                     [0.0001, 0.02, 0.05], [True, True, False], "is_monitored", [True, False, True])
     dam_b = _branch(["D1", "D2", "D3", "D9"], ["line", "line", "line", "line"], [("p", "q"), ("q", "r"), ("r", "s"), ("s", "s")],
                     [0.0005, 0.03, 0.05, 0.01], [True, True, True, True], "is_secured", [True, True, True, False])
-    crr_n = pl.DataFrame({"node_key": ["a", "b", "c", "d"], "kv": [138.0, 138.0, 345.0, 138.0]})
-    dam_n = pl.DataFrame({"node_key": ["p", "q", "r", "s"], "kv": [138.1, 138.0, 345.2, 69.0]})
+    crr_n = pl.DataFrame({"bus_key": ["a", "b", "c", "d"], "kv": [138.0, 138.0, 345.0, 138.0]})
+    dam_n = pl.DataFrame({"bus_key": ["p", "q", "r", "s"], "kv": [138.1, 138.0, 345.2, 69.0]})
     crr_r = pl.DataFrame({"branch_id": ["C1", "C1", "C3"], "rating_source": ["crr_monitored", "crr_monitored", "psse_raw"],
                           "time_of_use": ["PeakWD", "Off-peak", None], "base_mw": [90.0, 80.0, 100.0], "emergency_mw": [99.0, 88.0, 110.0]})
     dam_r = pl.DataFrame({"branch_id": ["D1", "D2"], "rating_source": ["psse_raw", "psse_raw"], "time_of_use": [None, None],
@@ -36,29 +36,29 @@ def test_diff_branches_compares_kind_reactance_kv_and_ratings_side_by_side():
 
 def test_diff_settlement_points_translates_crr_nodes_and_compares_sets():
     crr_p = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H", "RN_ONLY_CRR"], "kind": ["resource_node", "hub", "resource_node"]})
-    crr_n = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H", "HB_H", "HB_H"], "node_key": ["c1", "c1", "c2", "c3"],
+    crr_n = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H", "HB_H", "HB_H"], "bus_key": ["c1", "c1", "c2", "c3"],
                           "weight": [1.0, 0.5, 0.25, 0.25], "is_resolved": [True] * 4})
     dam_p = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H"], "kind": ["resource_node", "hub"]})
-    dam_n = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H", "HB_H"], "node_key": ["d1", "d1", "d2"], "weight": [1.0, 0.6, 0.4], "is_resolved": [True] * 3})
-    matches = pl.DataFrame({"crr_node_key": ["c1", "c2", "c3"], "dam_node_key": ["d1", "d2", None], "match_method": ["settlement_point", "branch_endpoints", "unmatched"]})
+    dam_n = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H", "HB_H"], "bus_key": ["d1", "d1", "d2"], "weight": [1.0, 0.6, 0.4], "is_resolved": [True] * 3})
+    matches = pl.DataFrame({"crr_bus_key": ["c1", "c2", "c3"], "dam_bus_key": ["d1", "d2", None], "match_method": ["settlement_point", "branch_endpoints", "unmatched"]})
     result = diff.diff_settlement_points(crr_p, crr_n, dam_p, dam_n, matches)
     assert list(result.columns) == list(diff.SP_COLUMNS) and result["settlement_point_id"].to_list() == ["HB_H", "RN_A"]
     by = {r["settlement_point_id"]: r for r in result.to_dicts()}
-    assert by["RN_A"]["same_nodes"] and by["RN_A"]["n_shared_nodes"] == 1
+    assert by["RN_A"]["same_buses"] and by["RN_A"]["n_shared_buses"] == 1
     hub = by["HB_H"]
-    assert (hub["n_crr_nodes"], hub["n_dam_nodes"], hub["n_crr_nodes_unmatched"], hub["n_shared_nodes"], hub["same_nodes"]) == (3, 2, 1, 2, False)
+    assert (hub["n_crr_buses"], hub["n_dam_buses"], hub["n_crr_buses_unmatched"], hub["n_shared_buses"], hub["same_buses"]) == (3, 2, 1, 2, False)
     assert (round(hub["shared_weight_crr"], 3), round(hub["shared_weight_dam"], 3)) == (0.75, 1.0)
 
 
 def test_diff_loads_compares_per_matched_node_and_keeps_unmatched_sides():
-    crr = pl.DataFrame({"node_key": ["c1", "c1", "c2", "c9"], "is_in_service": [True, False, False, True], "mw": [10.0, 4.0, 6.0, 1.0]})
-    dam = pl.DataFrame({"node_key": ["d1", "d2", "d7"], "is_in_service": [True, True, False], "mw": [9.0, 5.0, 0.0],
+    crr = pl.DataFrame({"bus_key": ["c1", "c1", "c2", "c9"], "is_in_service": [True, False, False, True], "mw": [10.0, 4.0, 6.0, 1.0]})
+    dam = pl.DataFrame({"bus_key": ["d1", "d2", "d7"], "is_in_service": [True, True, False], "mw": [9.0, 5.0, 0.0],
                         "mw_ldf": [0.5, 0.3, 0.2], "is_rollover_capable": [False, True, False]})
-    matches = pl.DataFrame({"crr_node_key": ["c1", "c2", "c9", None], "dam_node_key": ["d1", "d2", None, "d7"],
+    matches = pl.DataFrame({"crr_bus_key": ["c1", "c2", "c9", None], "dam_bus_key": ["d1", "d2", None, "d7"],
                             "match_method": ["settlement_point", "branch_endpoints", "unmatched", "unmatched"]})
     result = diff.diff_loads(crr, dam, matches)
     assert list(result.columns) == list(diff.LOAD_COLUMNS) and result.height == 4
-    by = {(r["crr_node_key"], r["dam_node_key"]): r for r in result.to_dicts()}
+    by = {(r["crr_bus_key"], r["dam_bus_key"]): r for r in result.to_dicts()}
     one = by[("c1", "d1")]
     assert (one["n_crr_loads"], one["n_crr_in_service"], one["crr_mw_out_of_service"], one["n_dam_loads"], one["same_n_loads"], one["same_n_in_service"]) == (2, 1, 4.0, 1, False, True)
     two = by[("c2", "d2")]  # out of service in CRR, in service in DAM

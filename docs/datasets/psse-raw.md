@@ -54,7 +54,7 @@ All transformers are 2-winding. Integers occasionally appear as `3.0`; they are
 accepted when whole.
 
 Bus numbers: CRR numbering is stable month to month; **DAM numbering is reassigned in
-every hourly model** and unrelated to CRR's. DAM bus names are station names shared by
+every hourly model** and unrelated to CRR's. DAM bus names are substation names shared by
 several buses. CRR has thousands of zero-impedance branches (bus ties, `x = 0.0001`);
 DAM clamps reactance at a floor of `0.0005` and holds no branch below it.
 

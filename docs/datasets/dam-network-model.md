@@ -3,7 +3,7 @@
 ## What it is and why we use it
 The network the Day-Ahead Market cleared on: the DAM model `g` in `ftr_align`. One
 PSS/E model per operating hour plus CSVs mapping ERCOT's CIM model onto each RAW
-(station names, branch names, monitored flags, settlement points, hubs, load
+(substation names, branch names, monitored flags, settlement points, hubs, load
 distribution, contingency definitions).
 
 ## Source and capture
@@ -31,9 +31,9 @@ day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.
   `resource_node_settlement_point_name`).
 - **No blob dedup; identity by equipment**: no two hourly files are byte-identical,
   because PSS/E bus numbers are reassigned in every hourly model. The equipment maps
-  (generator, load, settlement point and branch name to station and kV) are identical
+  (generator, load, settlement point and branch name to substation and kV) are identical
   across hours, so the core layer keys every hour's buses by the equipment attached to
-  them (`node_key`, see identity-and-matching.md) and every hour's branches by name;
+  them (`bus_key`, see identity-and-matching.md) and every hour's branches by name;
   raw stays one table per file, and core stays one row per hour with keys that agree
   across hours rather than a per-day dictionary.
 
@@ -56,11 +56,11 @@ day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.
   core only flags it (`has_split_bus`).
 - Headers have spaces after commas; values are trimmed.
 - **Bus numbers change every hour** and are unrelated to CRR numbering; RAW bus names are
-  station names (see identity-and-matching.md).
+  substation names (see identity-and-matching.md).
 - **Reactance floor**: no branch has |x| below 0.0005 pu; a sizeable set sits at exactly
   that value (breakers and short lines the CRR model carries at 0.0001 or less). A few
   reactances are negative (series capacitors).
-- **Base kV with a tenths digit** (138.1, 345.2) distinguishes buses at one station; it
+- **Base kV with a tenths digit** (138.1, 345.2) distinguishes buses at one substation; it
   is not a voltage. Drop the tenths to compare voltage levels.
 - No GTC file: DAM GTC definitions and daily limits come from NP3-770-M and NP3-766-M.
 - `Monitored?` and `Monitored and Secured?` are the CIM `DAM Monitored`/`DAM Secured` flags

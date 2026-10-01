@@ -14,12 +14,12 @@ from ercot_mis.out.network import CoreTables, Options, build_network
 def _core():
     node = pl.DataFrame({
         "psse_bus_number": [1, 2, 3, 4, 5, 6, 7],
-        "station": ["S1", "S1", "S2", "S3", "S4", "S5", "S5"],
+        "substation": ["S1", "S1", "S2", "S3", "S4", "S5", "S5"],
         "kv": [138.0] * 7,
         "bus_type": [1, 1, 3, 1, 4, 1, 1],
-        "node_group": [1, 1, 3, 4, 5, 6, 7],
+        "bus_group": [1, 1, 3, 4, 5, 6, 7],
         "is_tie_member": [True, True, False, False, False, False, False],
-        "node_key": ["A", "A", "B", "C", "D", "E", "F"],
+        "bus_key": ["A", "A", "B", "C", "D", "E", "F"],
     })
     branch = pl.DataFrame({
         "branch_id": ["T", "L1", "L2", "L3", "X", "P", "I"],
@@ -52,7 +52,7 @@ def _core():
     member = pl.DataFrame({"gtc_id": ["G1", "G1", "G1"], "branch_id": ["L1", "L3", "X"], "factor": [1.0, 0.5, 1.0],
                            "flow_direction": ["From-To", "To-From", "From-To"], "is_resolved": [True, True, True]})
     points = pl.DataFrame({"settlement_point_id": ["RN_1", "HB_X", "RN_ISLAND"], "kind": ["resource_node", "hub", "resource_node"]})
-    point_nodes = pl.DataFrame({"settlement_point_id": ["RN_1", "HB_X", "HB_X", "HB_X", "RN_ISLAND"], "node_key": ["A", "A", "C", "E", "E"],
+    point_nodes = pl.DataFrame({"settlement_point_id": ["RN_1", "HB_X", "HB_X", "HB_X", "RN_ISLAND"], "bus_key": ["A", "A", "C", "E", "E"],
                                 "weight": [1.0, 0.5, 0.25, 0.25, 1.0], "is_resolved": [True] * 5})
     return CoreTables(node, branch, rating, contingency, outage, gtc, member, points, point_nodes)
 
@@ -63,7 +63,7 @@ CONTRACT = Options(contract_ties=True)
 def test_contracted_network_drops_ties_loops_islands_and_out_of_service():
     net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
     assert net.nodes["node_id"].to_list() == ["A", "B", "C"]
-    assert net.nodes.filter(pl.col("node_id") == "A")["n_buses"][0] == 2
+    assert net.nodes.filter(pl.col("node_id") == "A")["n_members"][0] == 2
     assert net.branches["branch_id"].to_list() == ["L1", "L2", "L3"]
     dropped = dict(net.dropped_branches.select("branch_id", "reason").rows())
     assert dropped == {"T": "contracted_tie", "P": "loop", "X": "out_of_service", "I": "island"}

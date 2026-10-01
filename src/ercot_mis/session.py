@@ -347,13 +347,13 @@ class Session:
         path.chmod(0o600)
         return result
 
-    def match_nodes(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
-        """``core.match_node`` for one CRR model and one DAM hour: settlement points first, then
+    def match_buses(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
+        """``core.match_bus`` for one CRR model and one DAM hour: settlement points first, then
         the endpoints of matched branches. Computed once and cached like ``match_branches``."""
-        from .core.match import NODE_COLUMNS, VERSION, match_nodes
+        from .core.match import NODE_COLUMNS, VERSION, match_buses
 
         key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
-        path = self.data_dir / "core" / "match_node" / f"v{VERSION}" / f"{key}.parquet"
+        path = self.data_dir / "core" / "match_bus" / f"v{VERSION}" / f"{key}.parquet"
         if path.is_file():
             return pl.read_parquet(path)
         branches = self.match_branches(crr_snapshot_id, dam_snapshot_id)
@@ -361,7 +361,7 @@ class Session:
         dam_nodes = self.core("node").filter(pl.col("snapshot_id") == dam_snapshot_id).collect()
         crr_branch = self.core("branch").filter(pl.col("snapshot_id") == crr_snapshot_id).collect()
         dam_branch = self.core("branch").filter(pl.col("snapshot_id") == dam_snapshot_id).collect()
-        result = match_nodes(crr_nodes, dam_nodes, crr_branch, dam_branch, branches).with_columns(
+        result = match_buses(crr_nodes, dam_nodes, crr_branch, dam_branch, branches).with_columns(
             pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id")
         ).select("crr_snapshot_id", "dam_snapshot_id", *NODE_COLUMNS)
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -410,7 +410,7 @@ class Session:
 
     def diff_settlement_points(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
         """``core.diff_settlement_point``: per settlement point name, the node sets the two models
-        put it on, compared through ``core.match_node``. See ``ercot_mis.core.diff``. Cached."""
+        put it on, compared through ``core.match_bus``. See ``ercot_mis.core.diff``. Cached."""
         from .core.diff import VERSION, diff_settlement_points
 
         key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
@@ -418,9 +418,9 @@ class Session:
         if path.is_file():
             return pl.read_parquet(path)
         by = lambda table, sid: self.core(table).filter(pl.col("snapshot_id") == sid).collect()
-        result = diff_settlement_points(by("settlement_point", crr_snapshot_id), by("settlement_point_node", crr_snapshot_id),
-                                        by("settlement_point", dam_snapshot_id), by("settlement_point_node", dam_snapshot_id),
-                                        self.match_nodes(crr_snapshot_id, dam_snapshot_id))
+        result = diff_settlement_points(by("settlement_point", crr_snapshot_id), by("settlement_point_bus", crr_snapshot_id),
+                                        by("settlement_point", dam_snapshot_id), by("settlement_point_bus", dam_snapshot_id),
+                                        self.match_buses(crr_snapshot_id, dam_snapshot_id))
         result = result.with_columns(pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id"))
         result = result.select("crr_snapshot_id", "dam_snapshot_id", pl.exclude("crr_snapshot_id", "dam_snapshot_id"))
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -430,7 +430,7 @@ class Session:
 
     def diff_loads(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
         """``core.diff_load``: per node carrying a load in either model, both models' loads there
-        (count, in service, MW, DAM distribution factor), compared through ``core.match_node``. Cached."""
+        (count, in service, MW, DAM distribution factor), compared through ``core.match_bus``. Cached."""
         from .core.diff import VERSION, diff_loads
 
         key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
@@ -438,7 +438,7 @@ class Session:
         if path.is_file():
             return pl.read_parquet(path)
         by = lambda sid: self.core("load").filter(pl.col("snapshot_id") == sid).collect()
-        result = diff_loads(by(crr_snapshot_id), by(dam_snapshot_id), self.match_nodes(crr_snapshot_id, dam_snapshot_id))
+        result = diff_loads(by(crr_snapshot_id), by(dam_snapshot_id), self.match_buses(crr_snapshot_id, dam_snapshot_id))
         result = result.with_columns(pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id"))
         result = result.select("crr_snapshot_id", "dam_snapshot_id", pl.exclude("crr_snapshot_id", "dam_snapshot_id"))
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)

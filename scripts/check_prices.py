@@ -77,7 +77,7 @@ def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[li
     The DAM package carries no GTC members. The CRR package does, under the codes the
     shadow price file uses; each member is translated through ``core.match_branch`` and
     its factor re-signed when the DAM branch runs the other way (its ends
-    translated through ``core.match_node``). Returns ``{gtc code: ([(branch index, factor)], members lost)}``.
+    translated through ``core.match_bus``). Returns ``{gtc code: ([(branch index, factor)], members lost)}``.
     """
     day = snapshot_id.split(":")[1]
     crr_ids = session.core("snapshot").filter(pl.col("snapshot_id").str.starts_with(f"crr:monthly:{day[:7]}:")).collect()["snapshot_id"].sort()
@@ -85,8 +85,8 @@ def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[li
         return {}
     crr = session.network(crr_ids[-1])
     pairs = session.match_branches(crr_ids[-1], snapshot_id).drop_nulls(["crr_branch_id", "dam_branch_id"]).select("crr_branch_id", "dam_branch_id")
-    # Orientation: the CRR branch's ends, translated through core.match_node, against the DAM branch's ends.
-    node_of = dict(session.match_nodes(crr_ids[-1], snapshot_id).drop_nulls(["crr_node_key", "dam_node_key"]).select("crr_node_key", "dam_node_key").rows())
+    # Orientation: the CRR branch's ends, translated through core.match_bus, against the DAM branch's ends.
+    node_of = dict(session.match_buses(crr_ids[-1], snapshot_id).drop_nulls(["crr_bus_key", "dam_bus_key"]).select("crr_bus_key", "dam_bus_key").rows())
     group = lambda e: e.str.split("@").list.first().replace_strict(node_of, default=None, return_dtype=pl.String)
     rows = (crr.gtc_members.join(crr.branches.select("branch_id", group(pl.col("from_node_id")).alias("cf"), group(pl.col("to_node_id")).alias("ct")), on="branch_id", how="left")
             .join(pairs, left_on="branch_id", right_on="crr_branch_id", how="left")
@@ -114,19 +114,19 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     net: Network = session.network(snapshot_id)
     system = DcSystem(net)
 
-    # A binding row names the branch and the direction of the flow that bound, as stations
-    # (and voltages, for a transformer inside one station). Shift factors follow the branch's
+    # A binding row names the branch and the direction of the flow that bound, as substations
+    # (and voltages, for a transformer inside one substation). Shift factors follow the branch's
     # own from-to, so a row whose direction runs the other way gets the opposite sign.
-    station = dict(net.nodes.select("index", key(pl.col("station"))).rows())
+    substation = dict(net.nodes.select("index", key(pl.col("substation"))).rows())
     kv = dict(net.nodes.select("index", "kv").rows())
     branch_of = {k: (j, f, t) for k, j, f, t in net.branches.select(key(pl.col("branch_id")), "index", "from_index", "to_index").rows()}
     ctg_of = {k: idx for k, idx in net.contingencies.select(key(pl.col("contingency_id")), "branch_indexes").rows()}
     dropped_ctg = set(net.dropped_contingencies.select(key(pl.col("contingency_id")))["contingency_id"])
 
     def direction(f: int, t: int, from_station: str, to_station: str, from_kv: float, to_kv: float) -> float | None:
-        if station[f] != station[t]:
-            return 1.0 if (station[f], station[t]) == (from_station, to_station) else -1.0 if (station[t], station[f]) == (from_station, to_station) else None
-        # Inside one station the voltages tell the ends apart, to the tenth: ERCOT uses the
+        if substation[f] != substation[t]:
+            return 1.0 if (substation[f], substation[t]) == (from_station, to_station) else -1.0 if (substation[t], substation[f]) == (from_station, to_station) else None
+        # Inside one substation the voltages tell the ends apart, to the tenth: ERCOT uses the
         # tenths digit of the base kV to tell bus sections of one level apart.
         ends, published = (round(kv[f], 1), round(kv[t], 1)), (round(from_kv, 1), round(to_kv, 1))
         if published[0] == published[1] or set(ends) != set(published):

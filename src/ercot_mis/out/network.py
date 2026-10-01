@@ -44,7 +44,7 @@ What the assembly does, in order:
    DAM GTCs carry limits and the CRR id from the manual crosswalk but no members
    (see docs/datasets/generic-transmission-limits.md).
 6. **Settlement points.** Each settlement point's node weights (``core.
-   settlement_point_node``) restricted to the kept nodes and renormalized; the weight
+   settlement_point_bus``) restricted to the kept nodes and renormalized; the weight
    that fell on dropped nodes is recorded per point as ``weight_dropped``.
 
 Nothing here decides which contingencies island the network: that depends on the
@@ -59,7 +59,7 @@ from dataclasses import asdict, dataclass, field
 
 import polars as pl
 
-VERSION = 1
+VERSION = 2
 
 INF = math.inf
 
@@ -117,7 +117,8 @@ class Network:
     """``"ercot"`` when the slack is a swing bus the RAW marks, ``"fallback"`` when none
     survived and the busiest node stands in."""
     nodes: pl.DataFrame
-    """``index, node_id, station, kv, n_buses, psse_bus_number, is_slack``."""
+    """``index, node_id, substation, kv, n_members, psse_bus_number, is_slack``; ``n_members`` is how many
+    model nodes the vertex stands for (more than one only when ties are contracted into buses)."""
     branches: pl.DataFrame
     """``index, branch_id, kind, from_node_id, to_node_id, from_index, to_index, x_pu,
     tap_ratio, base_limit_mw, contingency_limit_mw, is_limited, is_monitored, is_secured``."""
@@ -183,8 +184,8 @@ class CoreTables:
     gtc_member: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(
         schema={"gtc_id": pl.String, "branch_id": pl.String, "factor": pl.Float64, "flow_direction": pl.String, "is_resolved": pl.Boolean}))
     settlement_point: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(schema={"settlement_point_id": pl.String, "kind": pl.String}))
-    settlement_point_node: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(
-        schema={"settlement_point_id": pl.String, "node_key": pl.String, "weight": pl.Float64, "is_resolved": pl.Boolean}))
+    settlement_point_bus: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(
+        schema={"settlement_point_id": pl.String, "bus_key": pl.String, "weight": pl.Float64, "is_resolved": pl.Boolean}))
 
 
 def is_dam(snapshot_id: str) -> bool:
@@ -211,11 +212,11 @@ def _components(nodes: list[str], edges: pl.DataFrame) -> dict[str, str]:
 def _node_ids(node: pl.DataFrame, contract_ties: bool) -> pl.DataFrame:
     """One row per RAW bus with the ``node_id`` it belongs to."""
     if contract_ties:
-        return node.with_columns(pl.col("node_key").alias("node_id"))
+        return node.with_columns(pl.col("bus_key").alias("node_id"))
     # Tie members keep their own bus as a node; the key still says which group they are in.
     return node.with_columns(
-        pl.when(pl.col("is_tie_member")).then(pl.col("node_key") + "@" + pl.col("psse_bus_number").cast(pl.String))
-        .otherwise(pl.col("node_key")).alias("node_id"))
+        pl.when(pl.col("is_tie_member")).then(pl.col("bus_key") + "@" + pl.col("psse_bus_number").cast(pl.String))
+        .otherwise(pl.col("bus_key")).alias("node_id"))
 
 
 def _limits(branch: pl.DataFrame, ratings: pl.DataFrame, options: Options, dam: bool) -> pl.DataFrame:
@@ -284,7 +285,7 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
 
     # Nodes: one row per node in the main component, with a representative bus.
     nodes = (buses.filter(~pl.col("node_id").is_in(dropped_nodes["node_id"].implode()))
-             .group_by("node_id").agg(pl.col("station").first(), pl.col("kv").min(), pl.len().alias("n_buses"),
+             .group_by("node_id").agg(pl.col("substation").first(), pl.col("kv").min(), pl.len().alias("n_members"),
                                       pl.col("psse_bus_number").min(), (pl.col("bus_type") == 3).any().alias("_slack"))
              .sort("node_id").with_row_index("index"))
     degree = pl.concat([kept.select(pl.col("from_node_id").alias("node_id")), kept.select(pl.col("to_node_id").alias("node_id"))]).group_by("node_id").len()
@@ -294,7 +295,7 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
     candidates = marked if marked.height else nodes
     slack = candidates.sort("len", "kv", "node_id", descending=[True, True, False])["node_id"][0] if candidates.height else None
     nodes = nodes.with_columns((pl.col("node_id") == slack).alias("is_slack")).select(
-        "index", "node_id", "station", "kv", "n_buses", "psse_bus_number", "is_slack")
+        "index", "node_id", "substation", "kv", "n_members", "psse_bus_number", "is_slack")
 
     index_of = nodes.select("node_id", "index")
     branches = (_limits(kept, core.branch_rating, options, dam)
@@ -345,15 +346,15 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
             .with_columns(pl.col("n_members").fill_null(0), pl.col("n_unresolved").fill_null(0))
             .select("gtc_id", "source", "limit_mw", "n_members", "n_unresolved", "crr_gtc_id").sort("gtc_id"))
 
-    # Settlement points on the kept nodes. Without contraction a CRR point's node_key is a group key;
+    # Settlement points on the kept nodes. Without contraction a CRR point's bus_key is a group key;
     # its buses are the group members, so weights are spread over them equally.
-    point_rows = core.settlement_point_node.filter(pl.col("is_resolved")).select("settlement_point_id", "node_key", "weight")
+    point_rows = core.settlement_point_bus.filter(pl.col("is_resolved")).select("settlement_point_id", "bus_key", "weight")
     if options.contract_ties:
-        point_rows = point_rows.with_columns(pl.col("node_key").alias("node_id"))
+        point_rows = point_rows.with_columns(pl.col("bus_key").alias("node_id"))
     else:
-        members = buses.group_by("node_key").agg(pl.col("node_id"))
-        point_rows = (point_rows.join(members, on="node_key", how="left").explode("node_id")
-                      .with_columns((pl.col("weight") / pl.col("node_id").count().over("settlement_point_id", "node_key")).alias("weight")))
+        members = buses.group_by("bus_key").agg(pl.col("node_id"))
+        point_rows = (point_rows.join(members, on="bus_key", how="left").explode("node_id")
+                      .with_columns((pl.col("weight") / pl.col("node_id").count().over("settlement_point_id", "bus_key")).alias("weight")))
     point_rows = point_rows.join(index_of.rename({"index": "node_index"}), on="node_id", how="left")
     kept_weight = point_rows.group_by("settlement_point_id").agg(pl.col("weight").filter(pl.col("node_index").is_not_null()).sum().alias("_kept"),
                                                                  pl.col("weight").filter(pl.col("node_index").is_null()).sum().alias("weight_dropped"))
@@ -382,4 +383,4 @@ def core_tables(session, snapshot_id: str) -> CoreTables:
     if node.is_empty():
         raise KeyError(f"no core rows for {snapshot_id!r}; run build_core()")
     return CoreTables(node, rows("branch"), rows("branch_rating"), rows("contingency"), rows("contingency_outage"), rows("gtc"), rows("gtc_member"),
-                      rows("settlement_point"), rows("settlement_point_node"))
+                      rows("settlement_point"), rows("settlement_point_bus"))

@@ -16,8 +16,8 @@ class FakeSession:
     def __init__(self, data_dir):
         self.data_dir = data_dir
         self.tables = {
-            "node": pl.DataFrame({"snapshot_id": [SID] * 3, "psse_bus_number": [1, 2, 3], "kv": [345.0, 138.0, 138.0], "station": ["ALPHA", "ALPHA", "BRAVO"],
-                                  "bus_type": [3, 1, 1], "node_key": ["a", "b", "c"], "attachments": ["B:XF1|G:ALPHA_G1", "B:XF1|B:L1|S:RN_ALPHA", "B:L1|D:BRAVO_L1"]}),
+            "node": pl.DataFrame({"snapshot_id": [SID] * 3, "psse_bus_number": [1, 2, 3], "kv": [345.0, 138.0, 138.0], "substation": ["ALPHA", "ALPHA", "BRAVO"],
+                                  "bus_type": [3, 1, 1], "bus_key": ["a", "b", "c"], "attachments": ["B:XF1|G:ALPHA_G1", "B:XF1|B:L1|S:RN_ALPHA", "B:L1|D:BRAVO_L1"]}),
             "branch": pl.DataFrame({"snapshot_id": [SID] * 2, "branch_id": ["XF1", "L1"], "kind": ["transformer", "line"], "from_bus": [1, 2], "to_bus": [2, 3],
                                     "ckt": ["1", "1"], "x_pu": [0.02, 0.01], "is_in_service": [True, False], "is_tie": [False, False],
                                     "is_monitored": [False, False], "is_secured": [True, True], "is_temporary": [False, False]}),
@@ -25,7 +25,7 @@ class FakeSession:
                                            "base_mw": [400.0, 200.0], "emergency_mw": [440.0, 220.0]}, schema_overrides={"time_of_use": pl.String}),
             "contingency_outage": pl.DataFrame({"snapshot_id": [SID] * 2, "contingency_id": ["C1", "C2"], "branch_id": ["L1", "L1"]}),
             "settlement_point": pl.DataFrame({"snapshot_id": [SID] * 2, "settlement_point_id": ["RN_ALPHA", "LZ_X"], "kind": ["resource_node", "load_zone"]}),
-            "settlement_point_node": pl.DataFrame({"snapshot_id": [SID] * 2, "settlement_point_id": ["RN_ALPHA", "LZ_X"], "node_key": ["b", "c"], "is_resolved": [True, True]}),
+            "settlement_point_bus": pl.DataFrame({"snapshot_id": [SID] * 2, "settlement_point_id": ["RN_ALPHA", "LZ_X"], "bus_key": ["b", "c"], "is_resolved": [True, True]}),
             "load": pl.DataFrame({"snapshot_id": [SID], "load_id": ["BRAVO_L1"], "psse_bus": [3], "is_in_service": [True], "mw": [12.5], "mw_ldf": [0.001], "load_zone": ["LZ_X"]}),
         }
 

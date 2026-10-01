@@ -62,12 +62,12 @@ tr.click { cursor:pointer; } tr.click:hover td { color:var(--hit); }
 </style>
 </head>
 <body>
-<div id="ceii">ERCOT CEII / Protected Information: station, bus and equipment names. Local use only. Do not share, upload or publish this file.</div>
+<div id="ceii">ERCOT CEII / Protected Information: substation, bus and equipment names. Local use only. Do not share, upload or publish this file.</div>
 <div id="bar">
-  <button id="back" title="Previous station">&larr;</button>
-  <input id="search" list="stations" placeholder="Station (Enter to go)">
-  <datalist id="stations"></datalist>
-  <label title="Off: buses joined by closed breakers are drawn as one bar, as a bus-branch model sees them. On: every bus section and breaker of the model is drawn."><input type="checkbox" id="breakers"> show breakers</label>
+  <button id="back" title="Previous substation">&larr;</button>
+  <input id="search" list="substations" placeholder="Substation (Enter to go)">
+  <datalist id="substations"></datalist>
+  <label title="Off: each bar is a bus, that is, the model's nodes joined by closed breakers, as a bus-branch model sees them. On: every node and breaker of the model is drawn."><input type="checkbox" id="breakers"> show nodes and breakers</label>
   <span class="legend" id="legend"></span>
 </div>
 <div id="main">
@@ -83,22 +83,22 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const fmt = (v, d = 1) => v == null ? "" : (typeof v === "number" ? (Math.abs(v) >= 1e9 ? "none" : v.toFixed(d)) : esc(v));
 const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
 
-// Index each model: buses by number, stations, branches by station.
+// Index each model: buses by number, substations, branches by substation.
 const models = (DATA ? DATA.models : []).map((m, side) => {
   const bus = new Map(m.buses.map(b => [b.n, b]));
-  const stations = new Map();
-  for (const b of m.buses) { if (!stations.has(b.st)) stations.set(b.st, { buses: [], branches: [] }); stations.get(b.st).buses.push(b); b.loads = []; }
+  const substations = new Map();
+  for (const b of m.buses) { if (!substations.has(b.st)) substations.set(b.st, { buses: [], branches: [] }); substations.get(b.st).buses.push(b); b.loads = []; }
   for (const l of m.loads) { const b = bus.get(l.bus); if (b) b.loads.push(l); }
   for (const r of m.branches) {
     const a = bus.get(r.f), b = bus.get(r.t);
     if (!a || !b) continue;
     r.sa = a.st; r.sb = b.st;
-    stations.get(a.st).branches.push(r);
-    if (b.st !== a.st) stations.get(b.st).branches.push(r);
+    substations.get(a.st).branches.push(r);
+    if (b.st !== a.st) substations.get(b.st).branches.push(r);
   }
   const cmp = DATA.compare ? DATA.compare[side === 0 ? "left" : "right"] : null;
   const byId = new Map(m.branches.map(r => [r.id, r]));
-  return { ...m, bus, stations, cmp, byId };
+  return { ...m, bus, substations, cmp, byId };
 });
 const two = models.length === 2;
 const status = (m, r) => !m.cmp ? "same" : !(r.id in m.cmp) ? "only" : m.cmp[r.id].same ? "same" : "differs";
@@ -108,13 +108,13 @@ let current = null, selected = null, showBreakers = false;
 const trail = [];
 
 // ---- layout: every line is horizontal or vertical -------------------------------------------
-// Bars are buses (or, collapsed, groups of buses joined by closed ties) in rows by voltage level.
-// Neighbouring stations sit in a row above and a row below. A branch leaves its bar vertically,
+// Bars are buses (the model's nodes joined by closed breakers) or, with breakers shown, the nodes themselves, in rows by voltage level.
+// Neighbouring substations sit in a row above and a row below. A branch leaves its bar vertically,
 // runs along a lane of its own, and drops onto its target. A dot marks where a line connects;
 // a line crossing a bar without a dot passes behind it.
 function drawPane(m, name, svg) {
   svg.replaceChildren();
-  const st = m.stations.get(name);
+  const st = m.substations.get(name);
   if (!st) { svg.setAttribute("viewBox", "0 0 760 200"); el("text", { x: 380, y: 100, "text-anchor": "middle", class: "kv" }, svg).textContent = "not in this model"; return; }
   const collapse = !showBreakers;
   // Bars.
@@ -242,11 +242,11 @@ function drawPane(m, name, svg) {
 }
 
 function count(m, name) {
-  const st = m.stations.get(name);
+  const st = m.substations.get(name);
   if (!st) return null;
   const ins = st.branches.filter(r => r.sa === r.sb), out = st.branches.filter(r => r.sa !== r.sb), loads = st.buses.flatMap(b => b.loads);
   return {
-    "Buses (without star points)": st.buses.filter(b => !b.star).length, "Electrical nodes (closed ties merged)": new Set(st.buses.filter(b => !b.star).map(b => b.key)).size, "Lines out of station (in / out of service)": `${out.filter(r => r.on).length} / ${out.filter(r => !r.on).length}`,
+    "Nodes (model records, without star points)": st.buses.filter(b => !b.star).length, "Buses (nodes joined by closed breakers)": new Set(st.buses.filter(b => !b.star).map(b => b.key)).size, "Lines out of substation (in / out of service)": `${out.filter(r => r.on).length} / ${out.filter(r => !r.on).length}`,
     "Ties (closed / open)": `${ins.filter(r => r.tie && r.on).length} / ${ins.filter(r => r.tie && !r.on).length}`,
     "Transformers (in / out)": `${ins.filter(r => r.k === "T" && r.on).length} / ${ins.filter(r => r.k === "T" && !r.on).length}`,
     "Branches with a limit": st.branches.filter(r => limited(m, r)).length,
@@ -256,7 +256,7 @@ function count(m, name) {
     "Three-winding transformers": st.buses.filter(b => b.star).length,
     "Generators": st.buses.reduce((a, b) => a + b.gen.length, 0), "Resource nodes and DC ties": new Set(st.buses.flatMap(b => b.sp)).size,
     "Hubs and load zones it is part of": new Set(st.buses.flatMap(b => b.agg)).size,
-    "Neighbouring stations": new Set(out.map(r => r.sa === name ? r.sb : r.sa)).size,
+    "Neighbouring substations": new Set(out.map(r => r.sa === name ? r.sb : r.sa)).size,
   };
 }
 
@@ -268,7 +268,7 @@ function summary(name) {
   const counts = models.map(m => count(m, name)), keys = Object.keys(counts.find(Boolean) || {});
   const rows = keys.map(k => { const v = counts.map(c => c ? c[k] : ""); const d = two && String(v[0]) !== String(v[1]); return `<tr><td>${esc(k)}</td>${v.map(x => `<td class="num${d ? " diff" : ""}">${esc(x)}</td>`).join("")}</tr>`; });
   let html = `<h3>${esc(name)}</h3>` + table(["", ...models.map(m => m.id)], rows);
-  const names = f => models.map(m => { const st = m.stations.get(name); return st ? [...new Set(st.buses.flatMap(f))].sort() : []; });
+  const names = f => models.map(m => { const st = m.substations.get(name); return st ? [...new Set(st.buses.flatMap(f))].sort() : []; });
   const sps = names(b => b.sp), aggs = names(b => b.agg);
   const cell = (xs, others) => `<td>${xs.map(x => two && !others.includes(x) ? `<span class="diff">${esc(x)}</span>` : esc(x)).join("<br>")}</td>`;
   if (sps.some(x => x.length) || aggs.some(x => x.length))
@@ -276,7 +276,7 @@ function summary(name) {
       `<tr><td>Resource nodes, DC ties</td>${sps.map((xs, i) => cell(xs, sps[1 - i] || [])).join("")}</tr>`,
       `<tr><td>Hubs, load zones</td>${aggs.map((xs, i) => cell(xs, aggs[1 - i] || [])).join("")}</tr>`]);
   models.forEach(m => {
-    const st = m.stations.get(name); if (!st) return;
+    const st = m.substations.get(name); if (!st) return;
     const rows = st.branches.slice().sort((a, b) => a.id < b.id ? -1 : 1).map(r => {
       const to = (r.sa === r.sb ? (r.tie ? "tie" : "inside") : (r.sa === name ? r.sb : r.sa)) + (r.temp ? " (temporary)" : ""), s = status(m, r);
       return `<tr class="click" data-m="${m.id}" data-id="${esc(r.id)}"><td>${esc(r.id)}</td><td>${r.k}</td><td>${esc(to)}</td><td>${r.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${limited(m, r) ? fmt(r.base, 0) : ""}</td><td>${two ? (s === "same" ? "" : `<span class="diff">${s === "only" ? "this side only" : "differs"}</span>`) : ""}</td></tr>`;
@@ -293,18 +293,18 @@ function detail(m, kind, item) {
     const uniq = f => [...new Set(buses.flatMap(f))];
     const lrows = loads.map(l => `<tr><td>${esc(l.id)}</td><td class="num">${l.n}</td><td>${l.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${fmt(l.mw)}</td><td class="num">${fmt(l.ldf, 4)}</td><td>${esc(l.zone)}</td></tr>`);
     const list = (title, xs) => xs.length ? `<h3>${title}</h3><p>${xs.map(esc).join(", ")}</p>` : "";
-    return `<h3>${buses.length > 1 ? buses.length + " buses joined by closed ties" : "Bus"}, ${esc(m.id)}</h3>` + table(["PSS/E bus", "base kV", "name in RAW", "PSS/E type"], rows)
-      + `<p class="muted">Node key: ${esc(buses[0].key)}</p>` + (lrows.length ? "<h3>Loads</h3>" + table(["load", "bus", "service", "MW", "LDF", "zone"], lrows) : "")
+    return `<h3>${buses.length > 1 ? "Bus of " + buses.length + " nodes joined by closed breakers" : "Bus (one node)"}, ${esc(m.id)}</h3>` + table(["PSS/E number", "base kV", "name in RAW", "PSS/E type"], rows)
+      + `<p class="muted">Bus key: ${esc(buses[0].key)}</p>` + (lrows.length ? "<h3>Loads</h3>" + table(["load", "node", "service", "MW", "LDF", "zone"], lrows) : "")
       + list("Generators", uniq(b => b.gen)) + list("Resource nodes and DC ties here", uniq(b => b.sp)) + list("Hubs and load zones this bus is part of", uniq(b => b.agg));
   }
   if (kind === "bus") {
-    const rows = [["PSS/E bus", item.n], ["Base kV", item.kv], ["Name in RAW", item.name], ["Type", item.type === 4 ? "4 (isolated)" : item.type], ["Node key", item.key],
+    const rows = [["PSS/E number", item.n], ["Base kV", item.kv], ["Name in RAW", item.name], ["Type", item.type === 4 ? "4 (isolated)" : item.type], ["Bus key", item.key],
                   ["Generators", item.gen.join(", ")], ["Resource nodes", item.sp.join(", ")], ["Part of", item.agg.join(", ")], ["Note", item.star ? "fictitious star point of a three-winding transformer" : ""]].map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`);
     const loads = item.loads.map(l => `<tr><td>${esc(l.id)}</td><td>${l.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${fmt(l.mw)}</td><td class="num">${fmt(l.ldf, 4)}</td><td>${esc(l.zone)}</td></tr>`);
-    return `<h3>Bus, ${esc(m.id)}</h3>` + table(["", ""], rows) + (loads.length ? `<h3>Loads on this bus</h3>` + table(["load", "service", "MW", "LDF", "zone"], loads) : "");
+    return `<h3>Node, ${esc(m.id)}</h3>` + table(["", ""], rows) + (loads.length ? `<h3>Loads on this node</h3>` + table(["load", "service", "MW", "LDF", "zone"], loads) : "");
   }
   const other = m.cmp && m.cmp[item.id] ? models[1 - models.indexOf(m)] : null, o = other ? other.byId.get(m.cmp[item.id].other) : null;
-  const fields = [["Id", r => r.id], ["Kind", r => r.k === "T" ? "transformer" : r.tie ? "bus tie" : "line"], ["From bus", r => r.f], ["To bus", r => r.t], ["Circuit", r => r.ckt],
+  const fields = [["Id", r => r.id], ["Kind", r => r.k === "T" ? "transformer" : r.tie ? "bus tie" : "line"], ["From node (PSS/E number)", r => r.f], ["To node (PSS/E number)", r => r.t], ["Circuit", r => r.ckt],
                   ["In service", r => r.on ? "yes" : "no"], ["Reactance pu", r => fmt(r.x, 5)], ["Monitored", r => r.mon ? "yes" : "no"], ["Secured", r => r.sec ? "yes" : "no"],
                   ["Base limit MW", r => fmt(r.base, 0)], ["Emergency limit MW", r => fmt(r.emer, 0)], ["RAW rate A", r => fmt(r.ra, 0)], ["RAW rate B", r => fmt(r.rb, 0)],
                   ["Temporary (added for an outage)", r => r.temp ? "yes" : "no"], ["Contingencies that remove it", r => r.ctg.length]];
@@ -336,7 +336,7 @@ function render() {
 }
 
 function go(name, push = true) {
-  if (!models.some(m => m.stations.has(name))) return;
+  if (!models.some(m => m.substations.has(name))) return;
   if (push && current) trail.push(current);
   current = name; selected = null;
   document.getElementById("search").value = name;
@@ -350,8 +350,8 @@ function start() {
   const panes = document.getElementById("panes");
   if (two) panes.classList.add("two");
   models.forEach((m, i) => { const div = document.createElement("div"); div.className = "pane"; div.innerHTML = `<h2>${esc(m.id)}</h2>`; panes.appendChild(div); const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, id: "svg" + i }, div); svg.addEventListener("click", () => { selected = null; document.querySelectorAll(".sel").forEach(e => e.classList.remove("sel")); render(); }); });
-  const all = [...new Set(models.flatMap(m => [...m.stations.keys()]))].sort();
-  document.getElementById("stations").innerHTML = all.map(s => `<option value="${esc(s)}">`).join("");
+  const all = [...new Set(models.flatMap(m => [...m.substations.keys()]))].sort();
+  document.getElementById("substations").innerHTML = all.map(s => `<option value="${esc(s)}">`).join("");
   const sw = (c, t, extra = "") => `<span><i class="sw" style="border-color:var(${c});${extra}"></i>${t}</span>`;
   document.getElementById("legend").innerHTML = (two ? sw("--same", "same on both sides") + sw("--differs", "matched, differs (service or reactance)") + sw("--only", "this side only") : "")
     + sw("--same", "out of service", "border-top-style:dashed") + `<span title="Solid: this model enforces a MW limit on the branch (CRR: it is in the monitored-elements file; DAM: it is flagged Secured). Dotted: the branch is in the network and carries flow, but this model puts no limit on it. Most lines are enforced; most dotted branches are transformer windings.">${sw("--same", "in service, no limit enforced", "border-top-style:dotted")}</span>` + "<span>\u25CB transformer</span><span>\u25A0 closed / \u25A1 open breaker</span>" + "<span>▼ load in service</span><span style='color:var(--off)'>▽ load out</span>";
@@ -362,7 +362,7 @@ function start() {
   document.getElementById("back").addEventListener("click", () => { const p = trail.pop(); if (p) go(p, false); });
   const wanted = decodeURIComponent(location.hash.slice(1));
   let first = wanted && all.includes(wanted) ? wanted : null;
-  if (!first) { let best = -1; for (const [n, s] of models[0].stations) if (!n.startsWith("~") && s.branches.length > best && s.branches.length < 40) { best = s.branches.length; first = n; } }
+  if (!first) { let best = -1; for (const [n, s] of models[0].substations) if (!n.startsWith("~") && s.branches.length > best && s.branches.length < 40) { best = s.branches.length; first = n; } }
   go(first || all[0], false);
 }
 start();

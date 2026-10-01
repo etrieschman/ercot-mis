@@ -57,29 +57,29 @@ def test_reactance_agreement_allows_for_the_dam_floor():
 
 
 def _nodes(keys, attachments):
-    return pl.DataFrame({"node_key": keys, "attachments": attachments})
+    return pl.DataFrame({"bus_key": keys, "attachments": attachments})
 
 
 def _branch(ids, ends):
-    return pl.DataFrame({"branch_id": ids, "from_node_key": [e[0] for e in ends], "to_node_key": [e[1] for e in ends]})
+    return pl.DataFrame({"branch_id": ids, "from_bus_key": [e[0] for e in ends], "to_bus_key": [e[1] for e in ends]})
 
 
-def test_match_nodes_by_settlement_point_then_branch_endpoints():
+def test_match_buses_by_settlement_point_then_branch_endpoints():
     # CRR: c1 -L1- c2 -L2- c3 ; c4 isolated ; SP_A on c1, zone Z on c2 and c3 (skipped: not 1:1)
     crr_nodes = _nodes(["c1", "c2", "c3", "c4"], ["B:L1|S:SP_A", "B:L1|B:L2|S:Z", "B:L2|S:Z", ""])
     dam_nodes = _nodes(["d1", "d2", "d3", "d9"], ["B:DL1|S:SP_A", "B:DL1|B:DL2", "B:DL2", "S:OTHER"])
     crr_branch = _branch(["L1", "L2"], [("c1", "c2"), ("c2", "c3")])
     dam_branch = _branch(["DL1", "DL2"], [("d2", "d1"), ("d3", "d2")])  # reversed orientations
     matches = pl.DataFrame({"crr_branch_id": ["L1", "L2"], "dam_branch_id": ["DL1", "DL2"], "match_method": ["exact", "prefix"]})
-    result = match.match_nodes(crr_nodes, dam_nodes, crr_branch, dam_branch, matches)
-    by = {r["crr_node_key"]: r for r in result.to_dicts() if r["crr_node_key"]}
-    assert (by["c1"]["dam_node_key"], by["c1"]["match_method"], by["c1"]["settlement_point"], by["c1"]["n_votes"]) == ("d1", "settlement_point", "SP_A", 1)
-    assert (by["c2"]["dam_node_key"], by["c2"]["match_method"], by["c2"]["n_votes"]) == ("d2", "branch_endpoints", 2)
-    assert (by["c3"]["dam_node_key"], by["c3"]["match_method"]) == ("d3", "branch_endpoints")  # degree 1 on both sides
+    result = match.match_buses(crr_nodes, dam_nodes, crr_branch, dam_branch, matches)
+    by = {r["crr_bus_key"]: r for r in result.to_dicts() if r["crr_bus_key"]}
+    assert (by["c1"]["dam_bus_key"], by["c1"]["match_method"], by["c1"]["settlement_point"], by["c1"]["n_votes"]) == ("d1", "settlement_point", "SP_A", 1)
+    assert (by["c2"]["dam_bus_key"], by["c2"]["match_method"], by["c2"]["n_votes"]) == ("d2", "branch_endpoints", 2)
+    assert (by["c3"]["dam_bus_key"], by["c3"]["match_method"]) == ("d3", "branch_endpoints")  # degree 1 on both sides
     assert by["c4"]["match_method"] == "unmatched" and by["c4"]["n_candidates"] == 0
-    dam_only = result.filter(pl.col("crr_node_key").is_null())
-    assert dam_only["dam_node_key"].to_list() == ["d9"] and dam_only["match_method"][0] == "unmatched"
-    assert result.filter(pl.col("match_method") != "unmatched")["dam_node_key"].is_unique().all()
+    dam_only = result.filter(pl.col("crr_bus_key").is_null())
+    assert dam_only["dam_bus_key"].to_list() == ["d9"] and dam_only["match_method"][0] == "unmatched"
+    assert result.filter(pl.col("match_method") != "unmatched")["dam_bus_key"].is_unique().all()
     assert list(result.columns) == list(match.NODE_COLUMNS)
 
 
@@ -104,9 +104,9 @@ def test_several_settlement_points_on_one_node_agree_or_block():
     # c2 hosts SP_C (on d2) and SP_D (on d3): the points disagree, so c2 stays unmatched by this method.
     crr_nodes = _nodes(["c1", "c2"], ["S:SP_A|S:SP_B", "S:SP_C|S:SP_D"])
     dam_nodes = _nodes(["d1", "d2", "d3"], ["S:SP_A|S:SP_B", "S:SP_C", "S:SP_D"])
-    empty = pl.DataFrame(schema={"branch_id": pl.String, "from_node_key": pl.String, "to_node_key": pl.String})
+    empty = pl.DataFrame(schema={"branch_id": pl.String, "from_bus_key": pl.String, "to_bus_key": pl.String})
     matches = pl.DataFrame({"crr_branch_id": [], "dam_branch_id": [], "match_method": []}, schema={"crr_branch_id": pl.String, "dam_branch_id": pl.String, "match_method": pl.String})
-    result = match.match_nodes(crr_nodes, dam_nodes, empty, empty, matches)
-    by = {r["crr_node_key"]: r for r in result.to_dicts() if r["crr_node_key"]}
-    assert (by["c1"]["dam_node_key"], by["c1"]["n_votes"]) == ("d1", 2)
+    result = match.match_buses(crr_nodes, dam_nodes, empty, empty, matches)
+    by = {r["crr_bus_key"]: r for r in result.to_dicts() if r["crr_bus_key"]}
+    assert (by["c1"]["dam_bus_key"], by["c1"]["n_votes"]) == ("d1", 2)
     assert by["c2"]["match_method"] == "unmatched"

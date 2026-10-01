@@ -158,7 +158,7 @@ def test_build_core_snapshots_and_nodes(tmp_path):
         result = mis.build_core()
         assert result["status"].to_list() == ["built", "built"], result["error"].to_list()
         branches = mis.core("branch").collect()
-        assert set(branches["snapshot_id"]) == set(snaps["snapshot_id"]) and "from_node_key" in branches.columns
+        assert set(branches["snapshot_id"]) == set(snaps["snapshot_id"]) and "from_bus_key" in branches.columns
         assert mis.core("branch_rating").filter(pl.col("rating_source") == "crr_monitored").collect().height == 0  # header-only CSV
         ctg = mis.core("contingency").collect()
         crr_ctg = ctg.filter(pl.col("snapshot_id").str.starts_with("crr")).select("contingency_id", "n_outages", "n_unresolved", "has_split_bus")
@@ -168,7 +168,7 @@ def test_build_core_snapshots_and_nodes(tmp_path):
         matched = mis.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
         assert set(matched["match_method"]) <= {"exact", "ops+ckt", "prefix", "unmatched"} and matched.height >= 2
         assert mis.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1").equals(matched)  # cached
-        nodes_matched = mis.match_nodes("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
+        nodes_matched = mis.match_buses("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
         assert set(nodes_matched["match_method"]) <= {"settlement_point", "branch_endpoints", "unmatched"}
         ctg_matched = mis.match_contingencies("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
         assert ctg_matched.filter(pl.col("crr_contingency_id") == "CTG_1").height == 1
@@ -177,9 +177,9 @@ def test_build_core_snapshots_and_nodes(tmp_path):
         nodes = mis.core("node").collect()
         assert set(nodes["snapshot_id"]) == set(snaps["snapshot_id"])
         dam_nodes = nodes.filter(pl.col("snapshot_id").str.starts_with("dam"))
-        assert dam_nodes.filter(pl.col("hour") == 1)["node_key"].to_list() == dam_nodes.filter(pl.col("hour") == 2)["node_key"].to_list() if "hour" in dam_nodes.columns else True
-        h1 = set(dam_nodes.filter(pl.col("snapshot_id").str.contains("he01"))["node_key"])
-        h2 = set(dam_nodes.filter(pl.col("snapshot_id").str.contains("he02"))["node_key"])
+        assert dam_nodes.filter(pl.col("hour") == 1)["bus_key"].to_list() == dam_nodes.filter(pl.col("hour") == 2)["bus_key"].to_list() if "hour" in dam_nodes.columns else True
+        h1 = set(dam_nodes.filter(pl.col("snapshot_id").str.contains("he01"))["bus_key"])
+        h2 = set(dam_nodes.filter(pl.col("snapshot_id").str.contains("he02"))["bus_key"])
         assert h1 == h2 and len(h1) == 2
         assert mis.build_core()["status"].to_list() == ["skipped", "skipped"]
         assert mis.core("snapshot").collect().height == 3

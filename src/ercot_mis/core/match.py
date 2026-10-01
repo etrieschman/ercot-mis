@@ -24,12 +24,12 @@ import re
 
 import polars as pl
 
-VERSION = 3
+VERSION = 4
 
 # The row of docs/assumptions.md behind every match_method (tests/test_register.py).
 REGISTER_ROWS = {
     "match_branch": {"exact": "MAT-01", "ops+ckt": "MAT-01", "prefix": "MAT-02", "prefix+x": "MAT-02", "unmatched": "MAT-05"},
-    "match_node": {"settlement_point": "MAT-03", "branch_endpoints": "MAT-03", "unmatched": "MAT-05"},
+    "match_bus": {"settlement_point": "MAT-03", "branch_endpoints": "MAT-03", "unmatched": "MAT-05"},
     "match_contingency": {"name": "MAT-04", "members": "MAT-04", "unmatched": "MAT-05"},
 }
 
@@ -126,17 +126,17 @@ def match_branches(crr_branch: pl.DataFrame, mapping_lines: pl.DataFrame, mappin
 
 # ------------------------------------------------------------------ nodes
 
-NODE_COLUMNS = ("crr_node_key", "dam_node_key", "match_method", "settlement_point", "n_votes", "n_candidates")
+NODE_COLUMNS = ("crr_bus_key", "dam_bus_key", "match_method", "settlement_point", "n_votes", "n_candidates")
 
 
 def _settlement_points(nodes: pl.DataFrame) -> pl.DataFrame:
-    """(settlement_point, node_key) pairs from the ``S:`` labels in ``attachments``."""
-    return (nodes.filter(pl.col("attachments") != "").select("node_key", pl.col("attachments").str.split("|").alias("label")).explode("label", empty_as_null=False)
+    """(settlement_point, bus_key) pairs from the ``S:`` labels in ``attachments``."""
+    return (nodes.filter(pl.col("attachments") != "").select("bus_key", pl.col("attachments").str.split("|").alias("label")).explode("label", empty_as_null=False)
             .filter(pl.col("label").str.starts_with("S:"))
-            .select(pl.col("label").str.slice(2).alias("settlement_point"), "node_key").unique())
+            .select(pl.col("label").str.slice(2).alias("settlement_point"), "bus_key").unique())
 
 
-def match_nodes(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl.DataFrame, dam_branch: pl.DataFrame,
+def match_buses(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl.DataFrame, dam_branch: pl.DataFrame,
                 branch_matches: pl.DataFrame) -> pl.DataFrame:
     """One row per CRR node with its DAM node, plus unmatched DAM nodes.
 
@@ -153,53 +153,53 @@ def match_nodes(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl
        have a single matched branch;
     3. ``unmatched``, with the number of competing candidates.
     """
-    crr_keys = crr_nodes.select(pl.col("node_key").alias("crr_node_key")).unique()
-    dam_keys = dam_nodes.select(pl.col("node_key").alias("dam_node_key")).unique()
+    crr_keys = crr_nodes.select(pl.col("bus_key").alias("crr_bus_key")).unique()
+    dam_keys = dam_nodes.select(pl.col("bus_key").alias("dam_bus_key")).unique()
 
-    crr_sp = _settlement_points(crr_nodes).group_by("settlement_point").agg(pl.col("node_key").unique().alias("k")).filter(pl.col("k").list.len() == 1).with_columns(pl.col("k").list.first())
-    dam_sp = _settlement_points(dam_nodes).group_by("settlement_point").agg(pl.col("node_key").unique().alias("k")).filter(pl.col("k").list.len() == 1).with_columns(pl.col("k").list.first())
+    crr_sp = _settlement_points(crr_nodes).group_by("settlement_point").agg(pl.col("bus_key").unique().alias("k")).filter(pl.col("k").list.len() == 1).with_columns(pl.col("k").list.first())
+    dam_sp = _settlement_points(dam_nodes).group_by("settlement_point").agg(pl.col("bus_key").unique().alias("k")).filter(pl.col("k").list.len() == 1).with_columns(pl.col("k").list.first())
     sp_pairs = (crr_sp.join(dam_sp, on="settlement_point", suffix="_dam")
-                .select(pl.col("k").alias("crr_node_key"), pl.col("k_dam").alias("dam_node_key"), "settlement_point"))
-    agreed = (sp_pairs.group_by("crr_node_key", "dam_node_key").agg(pl.col("settlement_point").sort().first(), pl.len().alias("n_votes")))
-    one_dam = agreed.group_by("crr_node_key").len().filter(pl.col("len") == 1)["crr_node_key"]
-    one_crr = agreed.group_by("dam_node_key").len().filter(pl.col("len") == 1)["dam_node_key"]
-    by_sp = (agreed.filter(pl.col("crr_node_key").is_in(one_dam.implode()) & pl.col("dam_node_key").is_in(one_crr.implode()))
+                .select(pl.col("k").alias("crr_bus_key"), pl.col("k_dam").alias("dam_bus_key"), "settlement_point"))
+    agreed = (sp_pairs.group_by("crr_bus_key", "dam_bus_key").agg(pl.col("settlement_point").sort().first(), pl.len().alias("n_votes")))
+    one_dam = agreed.group_by("crr_bus_key").len().filter(pl.col("len") == 1)["crr_bus_key"]
+    one_crr = agreed.group_by("dam_bus_key").len().filter(pl.col("len") == 1)["dam_bus_key"]
+    by_sp = (agreed.filter(pl.col("crr_bus_key").is_in(one_dam.implode()) & pl.col("dam_bus_key").is_in(one_crr.implode()))
              .with_columns(pl.lit("settlement_point").alias("match_method"), pl.col("n_votes").cast(pl.UInt32), pl.lit(1, pl.UInt32).alias("n_candidates")))
 
     # Endpoint votes from matched branches.
     ends = (branch_matches.filter(pl.col("match_method") != "unmatched").select("crr_branch_id", "dam_branch_id")
-            .join(crr_branch.select(pl.col("branch_id").alias("crr_branch_id"), pl.col("from_node_key").alias("cf"), pl.col("to_node_key").alias("ct")), on="crr_branch_id")
-            .join(dam_branch.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("from_node_key").alias("df"), pl.col("to_node_key").alias("dt")), on="dam_branch_id"))
-    votes = pl.concat([ends.select(pl.col("cf").alias("crr_node_key"), pl.col("df").alias("dam_node_key")),
-                       ends.select(pl.col("ct").alias("crr_node_key"), pl.col("dt").alias("dam_node_key")),
-                       ends.select(pl.col("cf").alias("crr_node_key"), pl.col("dt").alias("dam_node_key")),
-                       ends.select(pl.col("ct").alias("crr_node_key"), pl.col("df").alias("dam_node_key"))]).drop_nulls()
-    votes = votes.group_by("crr_node_key", "dam_node_key").len().rename({"len": "n_votes"})
-    taken_crr, taken_dam = by_sp["crr_node_key"].implode(), by_sp["dam_node_key"].implode()
-    votes = votes.filter(~pl.col("crr_node_key").is_in(taken_crr) & ~pl.col("dam_node_key").is_in(taken_dam))
-    best_crr = votes.group_by("crr_node_key").agg(pl.col("n_votes").max().alias("_max_c"), pl.len().alias("n_candidates"))
-    best_dam = votes.group_by("dam_node_key").agg(pl.col("n_votes").max().alias("_max_d"))
-    degree_crr = pl.concat([ends.select(pl.col("cf").alias("k")), ends.select(pl.col("ct").alias("k"))]).group_by("k").len().rename({"k": "crr_node_key", "len": "_deg_c"})
-    degree_dam = pl.concat([ends.select(pl.col("df").alias("k")), ends.select(pl.col("dt").alias("k"))]).group_by("k").len().rename({"k": "dam_node_key", "len": "_deg_d"})
-    scored = (votes.join(best_crr, on="crr_node_key").join(best_dam, on="dam_node_key")
-              .join(degree_crr, on="crr_node_key").join(degree_dam, on="dam_node_key")
+            .join(crr_branch.select(pl.col("branch_id").alias("crr_branch_id"), pl.col("from_bus_key").alias("cf"), pl.col("to_bus_key").alias("ct")), on="crr_branch_id")
+            .join(dam_branch.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("from_bus_key").alias("df"), pl.col("to_bus_key").alias("dt")), on="dam_branch_id"))
+    votes = pl.concat([ends.select(pl.col("cf").alias("crr_bus_key"), pl.col("df").alias("dam_bus_key")),
+                       ends.select(pl.col("ct").alias("crr_bus_key"), pl.col("dt").alias("dam_bus_key")),
+                       ends.select(pl.col("cf").alias("crr_bus_key"), pl.col("dt").alias("dam_bus_key")),
+                       ends.select(pl.col("ct").alias("crr_bus_key"), pl.col("df").alias("dam_bus_key"))]).drop_nulls()
+    votes = votes.group_by("crr_bus_key", "dam_bus_key").len().rename({"len": "n_votes"})
+    taken_crr, taken_dam = by_sp["crr_bus_key"].implode(), by_sp["dam_bus_key"].implode()
+    votes = votes.filter(~pl.col("crr_bus_key").is_in(taken_crr) & ~pl.col("dam_bus_key").is_in(taken_dam))
+    best_crr = votes.group_by("crr_bus_key").agg(pl.col("n_votes").max().alias("_max_c"), pl.len().alias("n_candidates"))
+    best_dam = votes.group_by("dam_bus_key").agg(pl.col("n_votes").max().alias("_max_d"))
+    degree_crr = pl.concat([ends.select(pl.col("cf").alias("k")), ends.select(pl.col("ct").alias("k"))]).group_by("k").len().rename({"k": "crr_bus_key", "len": "_deg_c"})
+    degree_dam = pl.concat([ends.select(pl.col("df").alias("k")), ends.select(pl.col("dt").alias("k"))]).group_by("k").len().rename({"k": "dam_bus_key", "len": "_deg_d"})
+    scored = (votes.join(best_crr, on="crr_bus_key").join(best_dam, on="dam_bus_key")
+              .join(degree_crr, on="crr_bus_key").join(degree_dam, on="dam_bus_key")
               .filter((pl.col("n_votes") == pl.col("_max_c")) & (pl.col("n_votes") == pl.col("_max_d"))
                       & ((pl.col("n_votes") >= 2) | ((pl.col("_deg_c") == 1) & (pl.col("_deg_d") == 1)))))
     # A node whose top vote ties between two partners stays unmatched.
-    ties = scored.group_by("crr_node_key").len().filter(pl.col("len") > 1)["crr_node_key"]
-    by_ends = (scored.filter(~pl.col("crr_node_key").is_in(ties.implode())).unique(subset=["dam_node_key"], keep="none")
-               .select("crr_node_key", "dam_node_key", pl.lit(None, pl.String).alias("settlement_point"), pl.lit("branch_endpoints").alias("match_method"),
+    ties = scored.group_by("crr_bus_key").len().filter(pl.col("len") > 1)["crr_bus_key"]
+    by_ends = (scored.filter(~pl.col("crr_bus_key").is_in(ties.implode())).unique(subset=["dam_bus_key"], keep="none")
+               .select("crr_bus_key", "dam_bus_key", pl.lit(None, pl.String).alias("settlement_point"), pl.lit("branch_endpoints").alias("match_method"),
                        pl.col("n_votes").cast(pl.UInt32), pl.col("n_candidates").cast(pl.UInt32)))
 
     matched = pl.concat([by_sp.select(NODE_COLUMNS), by_ends.select(NODE_COLUMNS)])
-    rest_crr = (crr_keys.filter(~pl.col("crr_node_key").is_in(matched["crr_node_key"].implode()))
-                .join(best_crr.select("crr_node_key", "n_candidates"), on="crr_node_key", how="left")
-                .select("crr_node_key", pl.lit(None, pl.String).alias("dam_node_key"), pl.lit("unmatched").alias("match_method"),
+    rest_crr = (crr_keys.filter(~pl.col("crr_bus_key").is_in(matched["crr_bus_key"].implode()))
+                .join(best_crr.select("crr_bus_key", "n_candidates"), on="crr_bus_key", how="left")
+                .select("crr_bus_key", pl.lit(None, pl.String).alias("dam_bus_key"), pl.lit("unmatched").alias("match_method"),
                         pl.lit(None, pl.String).alias("settlement_point"), pl.lit(None, pl.UInt32).alias("n_votes"), pl.col("n_candidates").fill_null(0).cast(pl.UInt32)))
-    rest_dam = (dam_keys.filter(~pl.col("dam_node_key").is_in(matched["dam_node_key"].implode()))
-                .select(pl.lit(None, pl.String).alias("crr_node_key"), "dam_node_key", pl.lit("unmatched").alias("match_method"),
+    rest_dam = (dam_keys.filter(~pl.col("dam_bus_key").is_in(matched["dam_bus_key"].implode()))
+                .select(pl.lit(None, pl.String).alias("crr_bus_key"), "dam_bus_key", pl.lit("unmatched").alias("match_method"),
                         pl.lit(None, pl.String).alias("settlement_point"), pl.lit(None, pl.UInt32).alias("n_votes"), pl.lit(0, pl.UInt32).alias("n_candidates")))
-    return _registered(pl.concat([matched, rest_crr, rest_dam]).select(NODE_COLUMNS).sort("match_method", "crr_node_key", "dam_node_key"), "match_node")
+    return _registered(pl.concat([matched, rest_crr, rest_dam]).select(NODE_COLUMNS).sort("match_method", "crr_bus_key", "dam_bus_key"), "match_bus")
 
 
 # ------------------------------------------------------------------ contingencies

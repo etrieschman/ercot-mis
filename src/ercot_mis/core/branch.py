@@ -3,7 +3,7 @@
 A branch is identified across snapshots by ``branch_id``: the DAM ``Branch Name``, the
 CRR RAW line comment, or the CRR ``Autos`` name for transformers (with a
 ``XF <from> <to> <ckt>`` fallback when the workbook has no row). Endpoints carry both
-the snapshot's PSS/E numbers and the stable ``node_key``s from ``core.node``, so a
+the snapshot's PSS/E numbers and the stable ``bus_key``s from ``core.node``, so a
 CRR bus tie has equal endpoint keys after contraction and is flagged ``is_tie``.
 
 Ratings are facts from two sources kept side by side in ``core.branch_rating``:
@@ -24,7 +24,7 @@ VERSION = 4  # bump when columns or identities change
 # (from, to). CRR line comments always follow the RAW; CRR transformer names follow the
 # ``Autos`` sheet, which is swapped relative to the RAW for a large minority. A CSV's
 # "From-To" flow direction refers to the name's order, so consumers flip the sign here.
-BRANCH_COLUMNS = ("branch_id", "kind", "from_bus", "to_bus", "ckt", "from_node_key", "to_node_key",
+BRANCH_COLUMNS = ("branch_id", "kind", "from_bus", "to_bus", "ckt", "from_bus_key", "to_bus_key",
                   "is_in_service", "is_tie", "is_name_reversed", "r_pu", "x_pu", "b_pu", "tap_ratio", "angle_deg",
                   "is_monitored", "is_secured", "is_temporary")
 RATING_COLUMNS = ("branch_id", "rating_source", "time_of_use", "base_mw", "emergency_mw", "rate_c_mw")
@@ -43,13 +43,13 @@ def autos_by_key(autos: pl.DataFrame) -> pl.DataFrame:
 
 
 def _keys(nodes: pl.DataFrame) -> pl.DataFrame:
-    return nodes.select("psse_bus_number", "node_key")
+    return nodes.select("psse_bus_number", "bus_key")
 
 
 def _with_endpoints(frame: pl.DataFrame, nodes: pl.DataFrame) -> pl.DataFrame:
     keys = _keys(nodes)
-    return (frame.join(keys.rename({"psse_bus_number": "from_bus", "node_key": "from_node_key"}), on="from_bus", how="left")
-            .join(keys.rename({"psse_bus_number": "to_bus", "node_key": "to_node_key"}), on="to_bus", how="left"))
+    return (frame.join(keys.rename({"psse_bus_number": "from_bus", "bus_key": "from_bus_key"}), on="from_bus", how="left")
+            .join(keys.rename({"psse_bus_number": "to_bus", "bus_key": "to_bus_key"}), on="to_bus", how="left"))
 
 
 def _raw_parts(psse_branch: pl.DataFrame, psse_transformer: pl.DataFrame) -> pl.DataFrame:

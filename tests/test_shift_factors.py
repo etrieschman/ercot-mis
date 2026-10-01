@@ -11,8 +11,8 @@ from ercot_mis.shift_factors import DcSystem
 
 
 def _system() -> tuple[DcSystem, dict[str, int]]:
-    node = pl.DataFrame({"psse_bus_number": [1, 2, 3, 4], "station": ["S1", "S2", "S3", "S4"], "kv": [138.0] * 4, "bus_type": [3, 1, 1, 1],
-                         "node_group": [1, 2, 3, 4], "is_tie_member": [False] * 4, "node_key": ["N1", "N2", "N3", "N4"]})
+    node = pl.DataFrame({"psse_bus_number": [1, 2, 3, 4], "substation": ["S1", "S2", "S3", "S4"], "kv": [138.0] * 4, "bus_type": [3, 1, 1, 1],
+                         "bus_group": [1, 2, 3, 4], "is_tie_member": [False] * 4, "bus_key": ["N1", "N2", "N3", "N4"]})
     branch = pl.DataFrame({"branch_id": ["A", "B", "C", "D"], "kind": ["line"] * 4, "from_bus": [1, 2, 1, 3], "to_bus": [2, 3, 3, 4],
                            "is_in_service": [True] * 4, "is_tie": [False] * 4, "x_pu": [0.1] * 4, "tap_ratio": [None] * 4,
                            "is_monitored": [True] * 4, "is_secured": [True] * 4}, schema_overrides={"tap_ratio": pl.Float64})

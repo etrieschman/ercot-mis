@@ -10,7 +10,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   (gitignored) or `$ERCOT_MIS_DATA`. Never copy it into code, tests, docs, commit
   messages, issues or PR text.
 - When inspecting local data, print **structure only**: column names, record
-  counts, sizes, date ranges, report group names. Never print bus, station,
+  counts, sizes, date ranges, report group names. Never print bus, substation,
   device, contingency or constraint names, and never print document file names —
   ERCOT file names embed the participant DUNS.
 - DUNS and API user come from the environment or `.env`. Never echo them.
@@ -31,7 +31,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | transport | own thin clients: EWS (certificate) and Public API (archive files, not JSON rows) |
 | transforms | Python parsers → `raw`; Python (polars) → `core`, `out`. The `.sql` runner was dropped on 2026-10-01; DuckDB remains for the catalog and ad hoc SQL |
 | storage | Parquet on disk (zstd, hive-partitioned), Arrow in memory, DuckDB catalog + SQL engine, polars for reading. **Catalog writes are short-lived**: `Session` reads through a read-only connection and takes the writer only to record a listing, a blob or an artifact, never across a download or a parse |
-| node identity | **equipment-based `node_key`**, not PSS/E number or name (DAM renumbers every hour; names are station names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `scripts/measure_identity.py` |
+| bus identity | **equipment-based `bus_key`**, not PSS/E number or name (DAM renumbers every hour; names are substation names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `scripts/measure_identity.py` |
 | fidelity | **defaults do what ERCOT does; our analysis choices are named options.** `out.network` keeps CRR ties as branches and enforces the monitored breakers, as the auction does; contraction is `Options(contract_ties=True)`. Every assumption, its status and how it was checked lives in `docs/assumptions.md` (update it in the same commit as the code) |
 | data location | `data/` in this repo by default; `ERCOT_MIS_DATA` overrides |
 | network output | standardized tables + optional `ercot_mis.shift_factors` (DC solve and shift-factor rows, base case and under a contingency) |
@@ -43,6 +43,19 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | shift factors | `SYS-608-CD` tracked (listed into catalog) but not pulled |
 | schedule | daily at 07:00 via launchd (`scripts/daily_pull.py`, installed as `~/Library/LaunchAgents/ercot-mis.daily-pull.plist`); required because EWS keeps nothing past the display window |
 
+### Vocabulary (settled 2026-10-01; the user's research and node-breaker convention)
+
+- **node** = the finest connection point a model gives: one RAW record. PSS/E calls it a
+  "bus"; only columns quoting the file keep that word (`psse_bus_number`).
+- **bus** = nodes joined by closed breakers. `bus_key` identifies it; matching
+  (`core.match_bus`, `session.match_buses`) and settlement point weights
+  (`core.settlement_point_bus`) are at bus level. A DAM node is a bus on its own.
+- **substation** = the physical yard (several voltage levels). Never "station", except
+  where a raw column quotes ERCOT's header.
+- `out.network` vertices are "nodes" (model nodes by default; buses with `contract_ties`).
+
+Do not write "node" for the merged thing or "bus" for a CRR bus section again.
+
 ### Layers and naming
 
 - `archive/` — original ERCOT zips, content-addressed by sha256, never edited or
@@ -52,20 +65,20 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 - `core` — tidy keyed tables. Network tables are **shared by CRR and DAM** and keyed
   by `snapshot_id` (`crr:annual:2029.1st6:seq6:2029-01:r2`, `crr:monthly:2026-10:r1`,
   `dam:2026-10-14:he07:r1`). Built so far: `core.snapshot` (one row per model, revision
-  = order of `posted_at` within a logical package), `core.node` (one row per RAW bus
-  per snapshot: `node_key`, `station`, `kv`, `node_group`, `is_tie_member`, attachments),
-  `core.branch` (stable `branch_id`, endpoints as node keys, tie/in-service/monitored/
+  = order of `posted_at` within a logical package), `core.node` (one row per node, that is per RAW record,
+  per snapshot: `bus_key`, `substation`, `kv`, `bus_group`, `is_tie_member`, attachments),
+  `core.branch` (stable `branch_id`, endpoints as bus keys, tie/in-service/monitored/
   secured flags), `core.branch_rating` (RAW rate A/B/C and CRR CSV ratings per TOU,
   side by side), `core.contingency` + `core.contingency_outage` (each model's own
-  vocabulary resolved to branch/node keys, `is_resolved`, split-bus rows kept),
+  vocabulary resolved to branch/bus keys, `is_resolved`, split-bus rows kept),
   `core.gtc` + `core.gtc_member` (CRR from its CSV with members; DAM hourly limits from
   the GTL workbook with `crr_gtc_id` from the manual crosswalk in
   `data/overrides/gtc_names.csv`, members empty), and `core.match_branch` /
-  `core.settlement_point` + `core.settlement_point_node` (kind, node weights summing to
+  `core.settlement_point` + `core.settlement_point_bus` (kind, bus weights summing to
   one from CRR participation factors or DAM `Sp`/`Hb`/`Ld`), `core.load` (one row per load:
   node, service status, MW; DAM zone, distribution factor and rollover flags), and `core.match_branch` /
-  `core.match_node` per (CRR snapshot, DAM snapshot) via `session.match_branches` and
-  `session.match_nodes`, and `core.match_contingency` via `session.match_contingencies`
+  `core.match_bus` per (CRR snapshot, DAM snapshot) via `session.match_branches` and
+  `session.match_buses`, and `core.match_contingency` via `session.match_contingencies`
   (name, then translated branch set; member-set differences recorded).
   Planned: `core.constraint`, `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_award`,
   `core.hourly_shadow_price`, `core.tou_hours`. `core.diff_branch`
@@ -98,7 +111,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
   then branches by the workbook's `Operations_Name` with the documented normalization
   (never exact: some match DAM `Branch Name` after dropping punctuation, most as a
   prefix), then buses through matched branch endpoints (**not** by name or number:
-  CRR and DAM numbers are unrelated, DAM names are stations), then contingencies by
+  CRR and DAM numbers are unrelated, DAM names are substations), then contingencies by
   name with member sets compared in the matched vocabulary; GTCs by name then members/factors/limit. `match_*` records
   identity, `diff_*` records differences — never smooth differences over. Every match
   carries `match_method`; unmatched records are output. Manual overrides live in
@@ -203,23 +216,23 @@ src/ercot_mis/
     build.py        parse packages in a process pool, write Parquet with identity columns, register artifacts
   core/             layer 2: tidy keyed tables shared by CRR and DAM
     snapshot.py     snapshot IDs and revisions from the catalog and member names
-    node.py         equipment-based node keys; CRR tie contraction (dam_nodes, crr_nodes)
+    node.py         equipment-based bus keys; CRR tie contraction (dam_nodes, crr_nodes)
     branch.py       core.branch and core.branch_rating (crr_branches, dam_branches)
-    contingency.py  core.contingency and core.contingency_outage, resolved to branch/node keys
+    contingency.py  core.contingency and core.contingency_outage, resolved to branch/bus keys
     gtc.py          core.gtc and core.gtc_member (CRR members; DAM hourly limits + crosswalk)
-    match.py        core.match_branch (exact -> ops+ckt -> prefix -> prefix+x), core.match_node (settlement
+    match.py        core.match_branch (exact -> ops+ckt -> prefix -> prefix+x), core.match_bus (settlement
                     point -> matched branch endpoints by vote), core.match_contingency (name -> members)
-    settlement_point.py  core.settlement_point and core.settlement_point_node (kind, node weights; both models)
+    settlement_point.py  core.settlement_point and core.settlement_point_bus (kind, bus weights; both models)
     load.py         core.load: every load with its node, service status, MW; DAM zone, LDF and rollover flags
     diff.py         core.diff_branch, core.diff_settlement_point and core.diff_load: both models side by side
     build.py        writes every core table per package
   out/              layer 3: what consumers read
-    network.py      Network for one snapshot: contracted nodes, branches with limits, contingency
+    network.py      Network for one snapshot: nodes (or buses when ties are contracted), branches with limits, contingency
                     index sets, signed GTC members, settlement point weights, dropped elements with
                     reasons; Options = judgment calls
   shift_factors.py  DcSystem: the one place shift factors are computed (factorize once; outaged() re-solves under a
                     contingency, with split buses and islanding); needs the `shift-factors` extra (numpy, scipy)
-  viewer/           single-file station-by-station network viewer (template.html + data builder); output is CEII
+  viewer/           single-file substation-by-substation network viewer (template.html + data builder); output is CEII
 scripts/daily_pull.py        fetch pulled EWS products, list tracked ones, then build_raw + build_core; launchd template in scripts/launchd/
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs, GTL hours)
@@ -301,16 +314,16 @@ the top of the list as soon as the rest of that day's list (2 to 5) is done:
    bus mapping parsed).
 2. **Tie labels**: measured on 2026-10-01. The Outages file's breaker and disconnect
    rows cannot be joined to RAW ties by name (see `crr-network-model.md`), so "normally
-   open or open for an outage" is only answerable per station. What the data does give
+   open or open for an outage" is only answerable per substation. What the data does give
    per branch is `core.branch.is_temporary` (the workbook's temporary split-bus label),
-   now built and shown in the viewer. Open: a station-level table of switch outages
-   active in the model's month (needs CRR stations in core, today a viewer display
+   now built and shown in the viewer. Open: a substation-level table of switch outages
+   active in the model's month (needs CRR substations in core, today a viewer display
    choice), and `core.node.is_temporary`. `core.load` and `core.diff_load` are built;
    add their counts to `measure_identity.py`.
 3. **Viewer** (`ercot_mis/viewer/`, `session.viewer(left, right)`): built on 2026-10-01
    as one self-contained HTML per snapshot or pair under `data/reports/viewer/`,
-   never published; two panes on one station, click a neighbour to recentre, search,
-   back, side panel, CEII banner. CRR buses take their station from the matched DAM
+   never published; two panes on one substation, click a neighbour to recentre, search,
+   back, side panel, CEII banner. CRR buses take their substation from the matched DAM
    node (a display choice, documented in the module). **Look at it only on synthetic
    data** (`tests/fixtures/synthetic/viewer_data.json` into the template): a
    screenshot of a real page sends names off the machine, and so does the URL hash.
@@ -319,7 +332,7 @@ the top of the list as soon as the rest of that day's list (2 to 5) is done:
    line connects), buses joined by closed ties drawn as one bar unless "show breakers"
    is on, a three-winding transformer drawn as one symbol at its star bus, settlement
    point names in the side panel, CRR buses also placed along matched lines. `?nohash`
-   on the URL keeps the station name out of it. Next: `diff_load` in the side panel;
+   on the URL keeps the substation name out of it. Next: `diff_load` in the side panel;
    prices and flows as overlays.
 4. **Planning-stage inputs**: the Public API catalogue was swept on 2026-10-01
    (`docs/datasets/planning-inputs.md`; candidates are `track` in `products.py`). Two

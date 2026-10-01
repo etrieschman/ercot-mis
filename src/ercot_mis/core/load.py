@@ -10,7 +10,7 @@ One row per load per snapshot:
 - ``load_id``: the DAM's load name; for CRR, whose RAW names only the bus, the bus
   name and the PSS/E load id (``<bus name>:<id>``, with ``#<bus number>`` when two
   buses share a name);
-- ``psse_bus``, ``psse_load_id``, ``node_key``: where it is attached;
+- ``psse_bus``, ``psse_load_id``, ``bus_key``: where it is attached;
 - ``is_in_service`` and ``mw`` from the RAW record (status and constant-power MW);
 - DAM only, from the ``Ld`` file: ``load_zone``, ``weather_zone``, ``is_ercot_load``,
   ``is_conforming``, ``mw_ldf`` (the distribution factor the zone price is weighted
@@ -18,7 +18,7 @@ One row per load per snapshot:
   moves to when it is out).
 
 The CRR model has no per-load zone or factor; its zone weights are per bus, in
-``core.settlement_point_node``.
+``core.settlement_point_bus``.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ import polars as pl
 
 VERSION = 2
 
-COLUMNS = ("load_id", "psse_bus", "psse_load_id", "node_key", "is_in_service", "mw", "load_zone", "weather_zone",
+COLUMNS = ("load_id", "psse_bus", "psse_load_id", "bus_key", "is_in_service", "mw", "load_zone", "weather_zone",
            "is_ercot_load", "is_conforming", "mw_ldf", "is_rollover_capable", "n_rollover_targets")
 _DAM_ONLY = {"load_zone": pl.String, "weather_zone": pl.String, "is_ercot_load": pl.Boolean, "is_conforming": pl.Boolean,
              "mw_ldf": pl.Float64, "is_rollover_capable": pl.Boolean, "n_rollover_targets": pl.Int64}
@@ -39,7 +39,7 @@ def _yes(expr: pl.Expr) -> pl.Expr:
 
 def crr_loads(nodes: pl.DataFrame, psse_load: pl.DataFrame) -> pl.DataFrame:
     """From one month's ``psse_load``; the RAW comment is ``<bus number> <bus name> <load id> <owner>``."""
-    to_node = nodes.select(pl.col("psse_bus_number").alias("psse_bus"), "node_key")
+    to_node = nodes.select(pl.col("psse_bus_number").alias("psse_bus"), "bus_key")
     tokens = pl.col("comment").str.strip_chars().str.split(" ")
     bus_name = tokens.list.slice(1, tokens.list.len() - 3).list.join(" ")
     return (psse_load.select((pl.coalesce(bus_name, pl.col("i").cast(pl.String)) + ":" + pl.col("id").cast(pl.String).str.strip_chars()).alias("load_id"),
@@ -55,7 +55,7 @@ def crr_loads(nodes: pl.DataFrame, psse_load: pl.DataFrame) -> pl.DataFrame:
 
 def dam_loads(nodes: pl.DataFrame, psse_load: pl.DataFrame, loads: pl.DataFrame) -> pl.DataFrame:
     """From one hour's ``psse_load`` and ``dam_loads`` (joined on bus and load id)."""
-    to_node = nodes.select(pl.col("psse_bus_number").alias("psse_bus"), "node_key")
+    to_node = nodes.select(pl.col("psse_bus_number").alias("psse_bus"), "bus_key")
     raw = psse_load.select(pl.col("i").cast(pl.Int64).alias("psse_bus"), pl.col("id").cast(pl.String).str.strip_chars().alias("psse_load_id"),
                            (pl.col("status") == 1).alias("_raw_in_service"), pl.col("pl").cast(pl.Float64).alias("mw"))
     return (loads.select(pl.col("load_name").cast(pl.String).alias("load_id"), pl.col("psse_bus_number").cast(pl.Int64).alias("psse_bus"),

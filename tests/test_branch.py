@@ -39,9 +39,9 @@ def test_crr_branches_name_lines_by_comment_transformers_by_autos_and_keep_both_
     marked, _ = branch.crr_branches(nodes, raw_branch, raw_xf, autos, monitored, mapping)
     assert {r["branch_id"] for r in marked.to_dicts() if r["is_temporary"]} == {"3 B 4 C 1"}
     tie = by["1 A1 2 A2 1"]
-    assert tie["is_tie"] and tie["from_node_key"] == tie["to_node_key"] and not tie["is_monitored"]
+    assert tie["is_tie"] and tie["from_bus_key"] == tie["to_bus_key"] and not tie["is_monitored"]
     line = by["2 A2 3 B 1"]
-    assert line["is_monitored"] and line["is_secured"] and line["from_node_key"] != line["to_node_key"] and line["kind"] == "line"
+    assert line["is_monitored"] and line["is_secured"] and line["from_bus_key"] != line["to_bus_key"] and line["kind"] == "line"
     assert not by["3 B 4 C 1"]["is_in_service"]
     xf = by["AUTO_A"]
     assert xf["kind"] == "transformer" and xf["tap_ratio"] == 1.05 and xf["is_monitored"]
@@ -70,6 +70,6 @@ def test_dam_branches_take_names_and_flags_from_the_csvs():
     assert set(by) == {"L1", "L2", "X1"}
     assert not by["L1"]["is_monitored"] and by["L1"]["is_secured"]
     assert by["L2"]["is_monitored"] and not by["L2"]["is_secured"]
-    assert by["X1"]["kind"] == "transformer" and by["X1"]["from_node_key"] != by["X1"]["to_node_key"]
+    assert by["X1"]["kind"] == "transformer" and by["X1"]["from_bus_key"] != by["X1"]["to_bus_key"]
     assert not branches["is_tie"].any()
     assert ratings["rating_source"].unique().to_list() == ["psse_raw"] and ratings.height == 3
