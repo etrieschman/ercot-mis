@@ -63,6 +63,18 @@ VERSION = 1
 
 INF = math.inf
 
+# The row of docs/assumptions.md behind every option and every reason an element is
+# dropped. tests/test_register.py fails when one is missing here or from the register.
+REGISTER_ROWS = {
+    "option": {
+        "contract_ties": "TOP-01", "rating_source": "RAT-04", "time_of_use": "RAT-06", "limits": "RAT-09",
+        "contingency_rating": "RAT-04", "keep_out_of_service": "TOP-03", "drop_empty_contingencies": "RAT-10",
+    },
+    "dropped_branches": {"out_of_service": "TOP-03", "contracted_tie": "TOP-01", "loop": "TOP-01", "island": "TOP-05"},
+    "dropped_nodes": {"isolated": "TOP-05", "island": "TOP-05"},
+    "dropped_contingencies": {"empty": "RAT-10"},
+}
+
 
 @dataclass(frozen=True)
 class Options:
@@ -353,6 +365,10 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
                          .with_columns(pl.col("n_nodes").fill_null(0).cast(pl.UInt32), pl.col("weight_dropped").fill_null(0.0))
                          .select("settlement_point_id", "kind", "n_nodes", "weight_dropped").sort("settlement_point_id"))
 
+    for name, frame in (("dropped_branches", dropped_branches), ("dropped_nodes", dropped_nodes), ("dropped_contingencies", dropped_contingencies)):
+        unknown = set(frame["reason"].unique()) - set(REGISTER_ROWS[name])
+        if unknown:
+            raise ValueError(f"{name} reason(s) {sorted(unknown)} have no row in docs/assumptions.md")
     return Network(snapshot_id, options, slack, slack_source, nodes, branches, contingencies, gtcs, gtc_members,
                    settlement_points, settlement_point_nodes, dropped_branches, dropped_nodes.sort("node_id"), dropped_contingencies)
 

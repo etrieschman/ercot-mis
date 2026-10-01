@@ -26,6 +26,22 @@ import polars as pl
 
 VERSION = 3
 
+# The row of docs/assumptions.md behind every match_method (tests/test_register.py).
+REGISTER_ROWS = {
+    "match_branch": {"exact": "MAT-01", "ops+ckt": "MAT-01", "prefix": "MAT-02", "prefix+x": "MAT-02", "unmatched": "MAT-05"},
+    "match_node": {"settlement_point": "MAT-03", "branch_endpoints": "MAT-03", "unmatched": "MAT-05"},
+    "match_contingency": {"name": "MAT-04", "members": "MAT-04", "unmatched": "MAT-05"},
+}
+
+
+def _registered(frame: pl.DataFrame, table: str) -> pl.DataFrame:
+    """``frame`` unchanged; raises when a ``match_method`` has no register row."""
+    unknown = set(frame["match_method"].unique()) - set(REGISTER_ROWS[table])
+    if unknown:
+        raise ValueError(f"{table} method(s) {sorted(unknown)} have no row in docs/assumptions.md")
+    return frame
+
+
 COLUMNS = ("crr_branch_id", "dam_branch_id", "match_method", "operations_name", "n_candidates")
 
 # The DAM model clamps every branch reactance to at least this (per unit): CRR bus ties
@@ -105,7 +121,7 @@ def match_branches(crr_branch: pl.DataFrame, mapping_lines: pl.DataFrame, mappin
     leftover = dam.filter(~pl.col("dam_branch_id").is_in(matched["dam_branch_id"].drop_nulls().implode())).select(
         pl.lit(None, pl.String).alias("crr_branch_id"), "dam_branch_id", pl.lit("unmatched").alias("match_method"),
         pl.lit(None, pl.String).alias("operations_name"), pl.lit(0, pl.UInt32).alias("n_candidates"))
-    return pl.concat([matched, leftover]).select(COLUMNS).sort("match_method", "crr_branch_id", "dam_branch_id")
+    return _registered(pl.concat([matched, leftover]).select(COLUMNS).sort("match_method", "crr_branch_id", "dam_branch_id"), "match_branch")
 
 
 # ------------------------------------------------------------------ nodes
@@ -183,7 +199,7 @@ def match_nodes(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl
     rest_dam = (dam_keys.filter(~pl.col("dam_node_key").is_in(matched["dam_node_key"].implode()))
                 .select(pl.lit(None, pl.String).alias("crr_node_key"), "dam_node_key", pl.lit("unmatched").alias("match_method"),
                         pl.lit(None, pl.String).alias("settlement_point"), pl.lit(None, pl.UInt32).alias("n_votes"), pl.lit(0, pl.UInt32).alias("n_candidates")))
-    return pl.concat([matched, rest_crr, rest_dam]).select(NODE_COLUMNS).sort("match_method", "crr_node_key", "dam_node_key")
+    return _registered(pl.concat([matched, rest_crr, rest_dam]).select(NODE_COLUMNS).sort("match_method", "crr_node_key", "dam_node_key"), "match_node")
 
 
 # ------------------------------------------------------------------ contingencies
@@ -257,4 +273,4 @@ def match_contingencies(crr_outages: pl.DataFrame, dam_outages: pl.DataFrame, br
         pl.lit(None, pl.String).alias("crr_contingency_id"), pl.col("contingency_id").alias("dam_contingency_id"),
         pl.lit("unmatched").alias("match_method"), pl.lit(0, pl.UInt32).alias("n_crr_branches"), pl.col("branches").list.len().cast(pl.UInt32).alias("n_dam_branches"),
         pl.lit(0, pl.UInt32).alias("n_shared_branches"), pl.col("n_dam_other_rows").cast(pl.UInt32), "has_split_bus", pl.lit(0, pl.UInt32).alias("n_candidates"))
-    return pl.concat([matched, rest, dam_rest]).select(CONTINGENCY_COLUMNS).sort("match_method", "crr_contingency_id", "dam_contingency_id")
+    return _registered(pl.concat([matched, rest, dam_rest]).select(CONTINGENCY_COLUMNS).sort("match_method", "crr_contingency_id", "dam_contingency_id"), "match_contingency")
