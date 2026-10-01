@@ -24,7 +24,8 @@ body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.4 -apple-sy
 #panes.two { grid-template-columns: 1fr 1fr; }
 .pane { border-right:1px solid var(--line); min-width:0; }
 .pane h2 { margin:0; padding:6px 12px; font-size:12px; font-weight:600; color:var(--dim); border-bottom:1px solid var(--line); }
-svg { width:100%; height:auto; display:block; }
+svg { width:100%; height:64vh; display:block; cursor:grab; touch-action:none; }
+svg.drag { cursor:grabbing; }
 .br { stroke-linejoin:round; }
 svg text { fill:var(--ink); font-size:10px; user-select:none; }
 .bus { stroke:var(--bus); stroke-width:5; stroke-linecap:round; cursor:pointer; }
@@ -39,7 +40,10 @@ svg text { fill:var(--ink); font-size:10px; user-select:none; }
 .sw { fill:var(--panel); stroke-width:1.4; cursor:pointer; }
 .sw.closed.same { fill:var(--same); } .sw.closed.differs { fill:var(--differs); } .sw.closed.only { fill:var(--only); }
 .dot { fill:var(--bus); pointer-events:none; }
-.pane { overflow-x:auto; }
+.pane .what { padding:4px 12px; color:var(--dim); font-size:12px; border-bottom:1px solid var(--line); }
+#mode button.on { background:var(--ink); color:var(--bg); }
+#mode button { border-radius:0; margin:0; }
+#mode button:first-child { border-radius:4px 0 0 4px; } #mode button:last-child { border-radius:0 4px 4px 0; border-left:none; }
 #bar label { white-space:nowrap; }
 .nb rect { fill:var(--panel); stroke:var(--line); cursor:pointer; rx:4; }
 .nb:hover rect { stroke:var(--hit); }
@@ -67,7 +71,8 @@ tr.click { cursor:pointer; } tr.click:hover td { color:var(--hit); }
   <button id="back" title="Previous substation">&larr;</button>
   <input id="search" list="substations" placeholder="Substation (Enter to go)">
   <datalist id="substations"></datalist>
-  <label title="Off: each bar is a bus, that is, the model's nodes joined by closed breakers, as a bus-branch model sees them. On: every node and breaker of the model is drawn."><input type="checkbox" id="breakers"> show nodes and breakers</label>
+  <span id="mode" title="Bus view: each bar is a bus, that is, all the nodes that closed breakers join into one electrical point. Node view: each bar is one node of the model, and the breakers between nodes are drawn (closed: filled square, open: hollow)."><button id="mode-bus" class="on">Bus view</button><button id="mode-node">Node view</button></span>
+  <span class="muted">scroll to zoom, drag to move, double-click to fit</span>
   <span class="legend" id="legend"></span>
 </div>
 <div id="main">
@@ -112,10 +117,27 @@ const trail = [];
 // Neighbouring substations sit in a row above and a row below. A branch leaves its bar vertically,
 // runs along a lane of its own, and drops onto its target. A dot marks where a line connects;
 // a line crossing a bar without a dot passes behind it.
+// The whole drawing fits the pane; the wheel zooms about the pointer, dragging moves, double-click fits again.
+function fit(svg, W, H) { svg._home = [0, 0, W, H]; svg._box = [0, 0, W, H]; svg.setAttribute("viewBox", svg._box.join(" ")); }
+function panZoom(svg) {
+  const point = ev => { const r = svg.getBoundingClientRect(), [x, y, w, h] = svg._box, k = Math.max(w / r.width, h / r.height);
+    return [x + w / 2 + (ev.clientX - r.left - r.width / 2) * k, y + h / 2 + (ev.clientY - r.top - r.height / 2) * k, k]; };
+  svg.addEventListener("wheel", ev => { ev.preventDefault(); const [px, py] = point(ev), [x, y, w, h] = svg._box, f = Math.min(Math.max(ev.deltaY > 0 ? 1.15 : 1 / 1.15, 0.05 * svg._home[2] / w), 4 * svg._home[2] / w);
+    svg._box = [px - (px - x) * f, py - (py - y) * f, w * f, h * f]; svg.setAttribute("viewBox", svg._box.join(" ")); }, { passive: false });
+  let from = null;
+  svg.addEventListener("pointerdown", ev => { from = { x: ev.clientX, y: ev.clientY, box: svg._box.slice(), moved: false }; });
+  svg.addEventListener("pointermove", ev => { if (!from) return; const dx = ev.clientX - from.x, dy = ev.clientY - from.y; if (!from.moved && Math.hypot(dx, dy) < 4) return;
+    from.moved = true; svg.classList.add("drag"); const k = point(ev)[2]; svg._box = [from.box[0] - dx * k, from.box[1] - dy * k, from.box[2], from.box[3]]; svg.setAttribute("viewBox", svg._box.join(" ")); });
+  const end = () => { if (from && from.moved) svg._dragged = true; from = null; svg.classList.remove("drag"); };
+  svg.addEventListener("pointerup", end); svg.addEventListener("pointerleave", end);
+  svg.addEventListener("dblclick", () => { svg._box = svg._home.slice(); svg.setAttribute("viewBox", svg._box.join(" ")); });
+  svg.addEventListener("click", ev => { if (svg._dragged) { svg._dragged = false; ev.stopPropagation(); } }, true);  // a drag is not a click
+}
+
 function drawPane(m, name, svg) {
   svg.replaceChildren();
   const st = m.substations.get(name);
-  if (!st) { svg.setAttribute("viewBox", "0 0 760 200"); el("text", { x: 380, y: 100, "text-anchor": "middle", class: "kv" }, svg).textContent = "not in this model"; return; }
+  if (!st) { fit(svg, 760, 200); svg.previousElementSibling.textContent = ""; el("text", { x: 380, y: 100, "text-anchor": "middle", class: "kv" }, svg).textContent = "not in this model"; return; }
   const collapse = !showBreakers;
   // Bars.
   const barOf = new Map(), bars = [], stars = new Map();
@@ -126,7 +148,7 @@ function drawPane(m, name, svg) {
     if (!bar) { bar = { id, kv: b.kv, buses: [], slots: [] }; bars.push(bar); }
     bar.buses.push(b); bar.kv = Math.max(bar.kv, b.kv); barOf.set(b.n, bar);
   }
-  if (!bars.length) { svg.setAttribute("viewBox", "0 0 760 200"); el("text", { x: 380, y: 100, "text-anchor": "middle", class: "kv" }, svg).textContent = "no buses to draw here in this model"; return; }
+  if (!bars.length) { fit(svg, 760, 200); el("text", { x: 380, y: 100, "text-anchor": "middle", class: "kv" }, svg).textContent = "no buses to draw here in this model"; return; }
   const levels = [...new Set(bars.map(b => Math.round(b.kv)))].sort((a, b) => b - a);
   bars.forEach(b => b.row = levels.indexOf(Math.round(b.kv)));
   // What attaches to each bar.
@@ -167,7 +189,11 @@ function drawPane(m, name, svg) {
   const rowY = []; let y = firstRow;
   levels.forEach((_, i) => { rowY.push(y); y += Math.max(84, 52 + between[i] * lane + 14 * inner.filter(x => x.a.row === i + 1 && x.b.row === i + 1).length); });
   const lastRow = rowY[rowY.length - 1], botY = lastRow + 44 + outBot.length * lane + 26, H = botY + boxH + 24;
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.style.minWidth = Math.min(W, 1600) * 0.75 + "px";
+  fit(svg, W, H);
+  const nNodes = st.buses.filter(b => !b.star).length, nBuses = new Set(st.buses.filter(b => !b.star).map(b => b.key)).size;
+  svg.previousElementSibling.textContent = collapse
+    ? `Bus view: each bar is a bus. ${nBuses} bus${nBuses === 1 ? "" : "es"} here, made of ${nNodes} node${nNodes === 1 ? "" : "s"}${nNodes > nBuses ? " (bars marked \u00D7N hold N nodes joined by closed breakers)" : ""}.`
+    : `Node view: each bar is a node. ${nNodes} node${nNodes === 1 ? "" : "s"} here, forming ${nBuses} bus${nBuses === 1 ? "" : "es"}${m.kind === "dam" ? "; a DAM model has no breakers, so its nodes are its buses" : ""}.`;
   bars.forEach(b => b.y = rowY[b.row]);
   // Neighbour boxes, ordered by where their branches come from.
   const where = new Map();
@@ -246,16 +272,16 @@ function count(m, name) {
   if (!st) return null;
   const ins = st.branches.filter(r => r.sa === r.sb), out = st.branches.filter(r => r.sa !== r.sb), loads = st.buses.flatMap(b => b.loads);
   return {
-    "Nodes (model records, without star points)": st.buses.filter(b => !b.star).length, "Buses (nodes joined by closed breakers)": new Set(st.buses.filter(b => !b.star).map(b => b.key)).size, "Lines out of substation (in / out of service)": `${out.filter(r => r.on).length} / ${out.filter(r => !r.on).length}`,
-    "Ties (closed / open)": `${ins.filter(r => r.tie && r.on).length} / ${ins.filter(r => r.tie && !r.on).length}`,
+    "Nodes": st.buses.filter(b => !b.star).length, "Buses": new Set(st.buses.filter(b => !b.star).map(b => b.key)).size, "Lines to other substations (in / out of service)": `${out.filter(r => r.on).length} / ${out.filter(r => !r.on).length}`,
+    "Breakers (closed / open)": `${ins.filter(r => r.tie && r.on).length} / ${ins.filter(r => r.tie && !r.on).length}`,
     "Transformers (in / out)": `${ins.filter(r => r.k === "T" && r.on).length} / ${ins.filter(r => r.k === "T" && !r.on).length}`,
-    "Branches with a limit": st.branches.filter(r => limited(m, r)).length,
+    "Branches with an enforced limit": st.branches.filter(r => limited(m, r)).length,
     "Loads (in / out of service)": `${loads.filter(l => l.on).length} / ${loads.filter(l => !l.on).length}`,
     "Load MW in service": fmt(loads.filter(l => l.on).reduce((a, l) => a + (l.mw || 0), 0)),
     "Load MW out of service": fmt(loads.filter(l => !l.on).reduce((a, l) => a + (l.mw || 0), 0)),
     "Three-winding transformers": st.buses.filter(b => b.star).length,
-    "Generators": st.buses.reduce((a, b) => a + b.gen.length, 0), "Resource nodes and DC ties": new Set(st.buses.flatMap(b => b.sp)).size,
-    "Hubs and load zones it is part of": new Set(st.buses.flatMap(b => b.agg)).size,
+    "Generators": st.buses.reduce((a, b) => a + b.gen.length, 0), "Settlement points located here": new Set(st.buses.flatMap(b => b.sp)).size,
+    "Hubs and load zones its buses belong to": new Set(st.buses.flatMap(b => b.agg)).size,
     "Neighbouring substations": new Set(out.map(r => r.sa === name ? r.sb : r.sa)).size,
   };
 }
@@ -273,15 +299,15 @@ function summary(name) {
   const cell = (xs, others) => `<td>${xs.map(x => two && !others.includes(x) ? `<span class="diff">${esc(x)}</span>` : esc(x)).join("<br>")}</td>`;
   if (sps.some(x => x.length) || aggs.some(x => x.length))
     html += "<h3>Settlement points</h3>" + table(["", ...models.map(m => m.id)], [
-      `<tr><td>Resource nodes, DC ties</td>${sps.map((xs, i) => cell(xs, sps[1 - i] || [])).join("")}</tr>`,
-      `<tr><td>Hubs, load zones</td>${aggs.map((xs, i) => cell(xs, aggs[1 - i] || [])).join("")}</tr>`]);
+      `<tr><td>Located here (resource nodes, DC ties)</td>${sps.map((xs, i) => cell(xs, sps[1 - i] || [])).join("")}</tr>`,
+      `<tr><td>Hubs and load zones these buses belong to</td>${aggs.map((xs, i) => cell(xs, aggs[1 - i] || [])).join("")}</tr>`]);
   models.forEach(m => {
     const st = m.substations.get(name); if (!st) return;
     const rows = st.branches.slice().sort((a, b) => a.id < b.id ? -1 : 1).map(r => {
       const to = (r.sa === r.sb ? (r.tie ? "tie" : "inside") : (r.sa === name ? r.sb : r.sa)) + (r.temp ? " (temporary)" : ""), s = status(m, r);
-      return `<tr class="click" data-m="${m.id}" data-id="${esc(r.id)}"><td>${esc(r.id)}</td><td>${r.k}</td><td>${esc(to)}</td><td>${r.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${limited(m, r) ? fmt(r.base, 0) : ""}</td><td>${two ? (s === "same" ? "" : `<span class="diff">${s === "only" ? "this side only" : "differs"}</span>`) : ""}</td></tr>`;
+      return `<tr class="click" data-m="${m.id}" data-id="${esc(r.id)}"><td>${esc(r.id)}</td><td>${r.k}</td><td>${esc(to)}</td><td>${r.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${limited(m, r) ? fmt(r.base, 0) : ""}</td></tr>`;
     });
-    html += `<h3>Branches: ${esc(m.id)}</h3>` + table(["id", "", "to", "service", "limit MW", two ? "vs other" : ""], rows);
+    html += `<h3>Branches: ${esc(m.id)}</h3>` + table(["id", "", "to", "service", "limit MW"], rows);
   });
   return html;
 }
@@ -293,13 +319,13 @@ function detail(m, kind, item) {
     const uniq = f => [...new Set(buses.flatMap(f))];
     const lrows = loads.map(l => `<tr><td>${esc(l.id)}</td><td class="num">${l.n}</td><td>${l.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${fmt(l.mw)}</td><td class="num">${fmt(l.ldf, 4)}</td><td>${esc(l.zone)}</td></tr>`);
     const list = (title, xs) => xs.length ? `<h3>${title}</h3><p>${xs.map(esc).join(", ")}</p>` : "";
-    return `<h3>${buses.length > 1 ? "Bus of " + buses.length + " nodes joined by closed breakers" : "Bus (one node)"}, ${esc(m.id)}</h3>` + table(["PSS/E number", "base kV", "name in RAW", "PSS/E type"], rows)
+    return `<h3>${showBreakers ? "Node" : buses.length > 1 ? "Bus made of " + buses.length + " nodes joined by closed breakers" : "Bus (a single node)"}, ${esc(m.id)}</h3>` + table(["node number", "base kV", "name in the model file", "type"], rows)
       + `<p class="muted">Bus key: ${esc(buses[0].key)}</p>` + (lrows.length ? "<h3>Loads</h3>" + table(["load", "node", "service", "MW", "LDF", "zone"], lrows) : "")
-      + list("Generators", uniq(b => b.gen)) + list("Resource nodes and DC ties here", uniq(b => b.sp)) + list("Hubs and load zones this bus is part of", uniq(b => b.agg));
+      + list("Generators", uniq(b => b.gen)) + list("Settlement points located on this bus (resource nodes, DC ties)", uniq(b => b.sp)) + list("Hubs and load zones this bus belongs to", uniq(b => b.agg));
   }
   if (kind === "bus") {
     const rows = [["PSS/E number", item.n], ["Base kV", item.kv], ["Name in RAW", item.name], ["Type", item.type === 4 ? "4 (isolated)" : item.type], ["Bus key", item.key],
-                  ["Generators", item.gen.join(", ")], ["Resource nodes", item.sp.join(", ")], ["Part of", item.agg.join(", ")], ["Note", item.star ? "fictitious star point of a three-winding transformer" : ""]].map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`);
+                  ["Generators", item.gen.join(", ")], ["Settlement points located here", item.sp.join(", ")], ["Hubs and load zones", item.agg.join(", ")], ["Note", item.star ? "fictitious star point of a three-winding transformer" : ""]].map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`);
     const loads = item.loads.map(l => `<tr><td>${esc(l.id)}</td><td>${l.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${fmt(l.mw)}</td><td class="num">${fmt(l.ldf, 4)}</td><td>${esc(l.zone)}</td></tr>`);
     return `<h3>Node, ${esc(m.id)}</h3>` + table(["", ""], rows) + (loads.length ? `<h3>Loads on this node</h3>` + table(["load", "service", "MW", "LDF", "zone"], loads) : "");
   }
@@ -349,7 +375,7 @@ function start() {
   if (!DATA) { document.getElementById("side").textContent = "No data: build this page with session.viewer(...)."; return; }
   const panes = document.getElementById("panes");
   if (two) panes.classList.add("two");
-  models.forEach((m, i) => { const div = document.createElement("div"); div.className = "pane"; div.innerHTML = `<h2>${esc(m.id)}</h2>`; panes.appendChild(div); const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, id: "svg" + i }, div); svg.addEventListener("click", () => { selected = null; document.querySelectorAll(".sel").forEach(e => e.classList.remove("sel")); render(); }); });
+  models.forEach((m, i) => { const div = document.createElement("div"); div.className = "pane"; div.innerHTML = `<h2>${esc(m.id)}</h2><div class="what"></div>`; panes.appendChild(div); const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, id: "svg" + i }, div); fit(svg, W, H); panZoom(svg); svg.addEventListener("click", () => { selected = null; document.querySelectorAll(".sel").forEach(e => e.classList.remove("sel")); render(); }); });
   const all = [...new Set(models.flatMap(m => [...m.substations.keys()]))].sort();
   document.getElementById("substations").innerHTML = all.map(s => `<option value="${esc(s)}">`).join("");
   const sw = (c, t, extra = "") => `<span><i class="sw" style="border-color:var(${c});${extra}"></i>${t}</span>`;
@@ -358,7 +384,9 @@ function start() {
   const search = document.getElementById("search");
   search.addEventListener("change", () => go(search.value.trim()));
   search.addEventListener("keydown", e => { if (e.key === "Enter") go(search.value.trim()); });
-  document.getElementById("breakers").addEventListener("change", e => { showBreakers = e.target.checked; go(current, false); });
+  const setMode = nodes => { showBreakers = nodes; document.getElementById("mode-node").classList.toggle("on", nodes); document.getElementById("mode-bus").classList.toggle("on", !nodes); go(current, false); };
+  document.getElementById("mode-bus").addEventListener("click", () => setMode(false));
+  document.getElementById("mode-node").addEventListener("click", () => setMode(true));
   document.getElementById("back").addEventListener("click", () => { const p = trail.pop(); if (p) go(p, false); });
   const wanted = decodeURIComponent(location.hash.slice(1));
   let first = wanted && all.includes(wanted) ? wanted : null;
