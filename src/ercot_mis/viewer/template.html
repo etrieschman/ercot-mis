@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CEII: ercot-mis network viewer</title>
+<style>
+:root { --bg:#fbfbfa; --panel:#fff; --ink:#1c1c1c; --dim:#6b6b6b; --line:#d9d9d6; --bus:#2b2b2b; --off:#c0392b;
+        --same:#5a6570; --differs:#e08a00; --only:#7b4bd1; --hit:#0a7cff; --warn-bg:#8a1c1c; --warn-ink:#fff; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#161718; --panel:#1f2123; --ink:#e9e9e7; --dim:#9a9a97; --line:#3a3c3f; --bus:#e9e9e7; --off:#ff7b6b;
+          --same:#9aa5b0; --differs:#ffb340; --only:#b392ff; --hit:#5aa9ff; --warn-bg:#7a1616; --warn-ink:#fff; }
+}
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.4 -apple-system, "Segoe UI", sans-serif; }
+#ceii { position:sticky; top:0; z-index:5; background:var(--warn-bg); color:var(--warn-ink); padding:6px 14px; font-weight:600; letter-spacing:.02em; }
+#bar { display:flex; gap:10px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+#bar input { font:inherit; padding:4px 8px; width:220px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; }
+#bar button { font:inherit; padding:4px 10px; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:4px; cursor:pointer; }
+#bar .legend span { margin-right:12px; white-space:nowrap; }
+#bar .sw { display:inline-block; width:18px; height:0; border-top:3px solid; vertical-align:middle; margin-right:4px; }
+#main { display:grid; grid-template-columns: minmax(0,1fr) 380px; gap:0; }
+#panes { display:grid; gap:0; }
+#panes.two { grid-template-columns: 1fr 1fr; }
+.pane { border-right:1px solid var(--line); min-width:0; }
+.pane h2 { margin:0; padding:6px 12px; font-size:12px; font-weight:600; color:var(--dim); border-bottom:1px solid var(--line); }
+svg { width:100%; height:auto; display:block; }
+svg text { fill:var(--ink); font-size:10px; user-select:none; }
+.bus { stroke:var(--bus); stroke-width:5; stroke-linecap:round; cursor:pointer; }
+.bus.dead { stroke:var(--dim); opacity:.5; }
+.br { fill:none; cursor:pointer; stroke-width:1.6; }
+.br.tie { stroke-width:1; }
+.br.limited { stroke-width:3; }
+.br.out { stroke-dasharray:4 3; opacity:.75; }
+.br.same { stroke:var(--same); } .br.differs { stroke:var(--differs); } .br.only { stroke:var(--only); }
+.xf { fill:var(--panel); stroke-width:1.4; }
+.nb rect { fill:var(--panel); stroke:var(--line); cursor:pointer; rx:4; }
+.nb:hover rect { stroke:var(--hit); }
+.nb text { cursor:pointer; }
+.load { cursor:pointer; stroke:var(--bus); fill:var(--bus); }
+.load.out { fill:none; stroke:var(--off); }
+.gen { fill:none; stroke:var(--bus); }
+.sel { stroke:var(--hit) !important; }
+.kv { fill:var(--dim); font-size:10px; }
+#side { padding:10px 14px; overflow:auto; max-height:calc(100vh - 80px); position:sticky; top:34px; }
+#side h3 { margin:14px 0 4px; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); }
+table { border-collapse:collapse; width:100%; }
+td, th { text-align:left; padding:2px 6px 2px 0; border-bottom:1px solid var(--line); vertical-align:top; word-break:break-word; }
+th { color:var(--dim); font-weight:500; }
+td.num { text-align:right; font-variant-numeric:tabular-nums; }
+tr.click { cursor:pointer; } tr.click:hover td { color:var(--hit); }
+.diff { color:var(--differs); font-weight:600; }
+.muted { color:var(--dim); }
+@media (max-width: 900px) { #main { grid-template-columns: 1fr; } #panes.two { grid-template-columns: 1fr; } #side { position:static; max-height:none; } }
+</style>
+</head>
+<body>
+<div id="ceii">ERCOT CEII / Protected Information: station, bus and equipment names. Local use only. Do not share, upload or publish this file.</div>
+<div id="bar">
+  <button id="back" title="Previous station">&larr;</button>
+  <input id="search" list="stations" placeholder="Station (Enter to go)">
+  <datalist id="stations"></datalist>
+  <span class="legend" id="legend"></span>
+</div>
+<div id="main">
+  <div id="panes"></div>
+  <div id="side"></div>
+</div>
+<script id="data" type="application/json">/*DATA*/null</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("data").textContent);
+const W = 640, H = 540, NS = "http://www.w3.org/2000/svg";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = (v, d = 1) => v == null ? "" : (typeof v === "number" ? (Math.abs(v) >= 1e9 ? "none" : v.toFixed(d)) : esc(v));
+const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+
+// Index each model: buses by number, stations, branches by station.
+const models = (DATA ? DATA.models : []).map((m, side) => {
+  const bus = new Map(m.buses.map(b => [b.n, b]));
+  const stations = new Map();
+  for (const b of m.buses) { if (!stations.has(b.st)) stations.set(b.st, { buses: [], branches: [] }); stations.get(b.st).buses.push(b); b.loads = []; }
+  for (const l of m.loads) { const b = bus.get(l.bus); if (b) b.loads.push(l); }
+  for (const r of m.branches) {
+    const a = bus.get(r.f), b = bus.get(r.t);
+    if (!a || !b) continue;
+    r.sa = a.st; r.sb = b.st;
+    stations.get(a.st).branches.push(r);
+    if (b.st !== a.st) stations.get(b.st).branches.push(r);
+  }
+  const cmp = DATA.compare ? DATA.compare[side === 0 ? "left" : "right"] : null;
+  const byId = new Map(m.branches.map(r => [r.id, r]));
+  return { ...m, bus, stations, cmp, byId };
+});
+const two = models.length === 2;
+const status = (m, r) => !m.cmp ? "same" : !(r.id in m.cmp) ? "only" : m.cmp[r.id].same ? "same" : "differs";
+const limited = (m, r) => (m.kind === "dam" ? r.sec : r.mon) && r.base > 0 && r.base < 9999;
+
+let current = null, selected = null;
+const trail = [];
+
+function drawPane(m, name, svg) {
+  svg.replaceChildren();
+  const st = m.stations.get(name);
+  if (!st) { el("text", { x: W / 2, y: H / 2, "text-anchor": "middle", class: "kv" }, svg).textContent = "not in this model"; return; }
+  // Buses: one row per voltage level, highest on top.
+  const levels = [...new Set(st.buses.map(b => Math.round(b.kv)))].sort((a, b) => b - a);
+  const top = 150, rowH = Math.min(70, (H - 300) / Math.max(1, levels.length - 1 || 1));
+  const pos = new Map();
+  levels.forEach((kv, i) => {
+    const row = st.buses.filter(b => Math.round(b.kv) === kv).sort((a, b) => a.n - b.n);
+    const y = levels.length === 1 ? H / 2 : top + i * rowH;
+    const span = W * 0.5, w = Math.min(90, span / row.length - 8), x0 = W / 2 - (row.length * (w + 8)) / 2;
+    el("text", { x: x0 - 8, y: y + 3, "text-anchor": "end", class: "kv" }, svg).textContent = kv + " kV";
+    row.forEach((b, j) => pos.set(b.n, { x1: x0 + j * (w + 8), x2: x0 + j * (w + 8) + w, y, b }));
+  });
+  // Neighbours on an ellipse.
+  const groups = new Map();
+  for (const r of st.branches) if (r.sa !== r.sb) { const other = r.sa === name ? r.sb : r.sa; if (!groups.has(other)) groups.set(other, []); groups.get(other).push(r); }
+  const names = [...groups.keys()].sort();
+  const where = new Map();
+  names.forEach((n, i) => { const a = -Math.PI / 2 + (2 * Math.PI * (i + 0.5)) / names.length; where.set(n, { x: W / 2 + W * 0.41 * Math.cos(a), y: H / 2 + H * 0.43 * Math.sin(a) }); });
+  const lines = el("g", {}, svg), boxes = el("g", {}, svg), bars = el("g", {}, svg);
+  const cls = r => `br ${status(m, r)}${r.on ? "" : " out"}${r.tie ? " tie" : ""}${limited(m, r) ? " limited" : ""}`;
+  const pick = (node, kind, item) => node.addEventListener("click", ev => { ev.stopPropagation(); select(m, kind, item, node); });
+  // Branches leaving the station.
+  for (const [other, rs] of groups) rs.forEach((r, i) => {
+    const p = pos.get(r.sa === name ? r.f : r.t), q = where.get(other), x = (p.x1 + p.x2) / 2 + (i - (rs.length - 1) / 2) * 6;
+    const line = el("path", { d: `M${x},${p.y} L${q.x + (i - (rs.length - 1) / 2) * 6},${q.y}`, class: cls(r) }, lines);
+    line.dataset.id = r.id; pick(line, "branch", r);
+  });
+  // Branches inside the station.
+  const inside = st.branches.filter(r => r.sa === r.sb);
+  const seen = new Map();
+  inside.forEach(r => {
+    const p = pos.get(r.f), q = pos.get(r.t); if (!p || !q) return;
+    const k = Math.min(r.f, r.t) + ":" + Math.max(r.f, r.t), n = seen.get(k) || 0; seen.set(k, n + 1);
+    const px = (p.x1 + p.x2) / 2, qx = (q.x1 + q.x2) / 2;
+    let d;
+    if (p.y === q.y) { const lift = 16 + 9 * n; d = `M${px},${p.y} C${px},${p.y - lift} ${qx},${q.y - lift} ${qx},${q.y}`; }
+    else { const off = (n - 0.5) * 8; d = `M${px + off},${p.y} L${qx + off},${q.y}`; }
+    const line = el("path", { d, class: cls(r) }, lines);
+    line.dataset.id = r.id; pick(line, "branch", r);
+    if (r.k === "T") { const c = el("circle", { cx: (px + qx) / 2 + (p.y === q.y ? 0 : (n - 0.5) * 8), cy: (p.y + q.y) / 2 - (p.y === q.y ? 12 + 7 * n : 0), r: 4, class: `xf ${cls(r)}` }, lines); pick(c, "branch", r); }
+  });
+  for (const [n, q] of where) {
+    const g = el("g", { class: "nb" }, boxes), label = n.length > 15 ? n.slice(0, 14) + "…" : n;
+    el("rect", { x: q.x - 46, y: q.y - 10, width: 92, height: 20 }, g);
+    el("text", { x: q.x, y: q.y + 3.5, "text-anchor": "middle" }, g).textContent = label;
+    el("title", {}, g).textContent = n + " (" + groups.get(n).length + " branch" + (groups.get(n).length > 1 ? "es" : "") + ")";
+    g.addEventListener("click", () => go(n));
+  }
+  for (const { x1, x2, y, b } of pos.values()) {
+    const bar = el("line", { x1, x2, y1: y, y2: y, class: "bus" + (b.type === 4 ? " dead" : "") }, bars);
+    el("title", {}, bar).textContent = `bus ${b.n}  ${b.kv} kV  ${b.name}`;
+    pick(bar, "bus", b);
+    const on = b.loads.filter(l => l.on).length, off = b.loads.length - on;
+    let x = x1 + 6;
+    if (on) { pick(el("path", { d: `M${x - 4},${y + 6} h8 l-4,7 z`, class: "load" }, bars), "bus", b); x += 12; }
+    if (off) { pick(el("path", { d: `M${x - 4},${y + 6} h8 l-4,7 z`, class: "load out" }, bars), "bus", b); x += 12; }
+    if (b.gen.length) { el("circle", { cx: x, cy: y + 10, r: 4, class: "gen" }, bars); el("text", { x: x - 2.6, y: y + 12.6, style: "font-size:7px" }, bars).textContent = "G"; }
+  }
+}
+
+function count(m, name) {
+  const st = m.stations.get(name);
+  if (!st) return null;
+  const ins = st.branches.filter(r => r.sa === r.sb), out = st.branches.filter(r => r.sa !== r.sb), loads = st.buses.flatMap(b => b.loads);
+  return {
+    "Buses": st.buses.length, "Lines out of station (in / out of service)": `${out.filter(r => r.on).length} / ${out.filter(r => !r.on).length}`,
+    "Ties (closed / open)": `${ins.filter(r => r.tie && r.on).length} / ${ins.filter(r => r.tie && !r.on).length}`,
+    "Transformers (in / out)": `${ins.filter(r => r.k === "T" && r.on).length} / ${ins.filter(r => r.k === "T" && !r.on).length}`,
+    "Branches with a limit": st.branches.filter(r => limited(m, r)).length,
+    "Loads (in / out of service)": `${loads.filter(l => l.on).length} / ${loads.filter(l => !l.on).length}`,
+    "Load MW in service": fmt(loads.filter(l => l.on).reduce((a, l) => a + (l.mw || 0), 0)),
+    "Load MW out of service": fmt(loads.filter(l => !l.on).reduce((a, l) => a + (l.mw || 0), 0)),
+    "Generators": st.buses.reduce((a, b) => a + b.gen.length, 0), "Settlement points": new Set(st.buses.flatMap(b => b.sp)).size,
+    "Neighbouring stations": new Set(out.map(r => r.sa === name ? r.sb : r.sa)).size,
+  };
+}
+
+function table(head, rows) {
+  return `<table><tr>${head.map(h => `<th>${esc(h)}</th>`).join("")}</tr>${rows.join("")}</table>`;
+}
+
+function summary(name) {
+  const counts = models.map(m => count(m, name)), keys = Object.keys(counts.find(Boolean) || {});
+  const rows = keys.map(k => { const v = counts.map(c => c ? c[k] : ""); const d = two && String(v[0]) !== String(v[1]); return `<tr><td>${esc(k)}</td>${v.map(x => `<td class="num${d ? " diff" : ""}">${esc(x)}</td>`).join("")}</tr>`; });
+  let html = `<h3>${esc(name)}</h3>` + table(["", ...models.map(m => m.id)], rows);
+  models.forEach(m => {
+    const st = m.stations.get(name); if (!st) return;
+    const rows = st.branches.slice().sort((a, b) => a.id < b.id ? -1 : 1).map(r => {
+      const to = r.sa === r.sb ? (r.tie ? "tie" : "inside") : (r.sa === name ? r.sb : r.sa), s = status(m, r);
+      return `<tr class="click" data-m="${m.id}" data-id="${esc(r.id)}"><td>${esc(r.id)}</td><td>${r.k}</td><td>${esc(to)}</td><td>${r.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${limited(m, r) ? fmt(r.base, 0) : ""}</td><td>${two ? (s === "same" ? "" : `<span class="diff">${s === "only" ? "this side only" : "differs"}</span>`) : ""}</td></tr>`;
+    });
+    html += `<h3>Branches: ${esc(m.id)}</h3>` + table(["id", "", "to", "service", "limit MW", two ? "vs other" : ""], rows);
+  });
+  return html;
+}
+
+function detail(m, kind, item) {
+  if (kind === "bus") {
+    const rows = [["PSS/E bus", item.n], ["Base kV", item.kv], ["Name in RAW", item.name], ["Type", item.type === 4 ? "4 (isolated)" : item.type], ["Node key", item.key],
+                  ["Generators", item.gen.join(", ")], ["Settlement points", item.sp.join(", ")]].map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`);
+    const loads = item.loads.map(l => `<tr><td>${esc(l.id)}</td><td>${l.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${fmt(l.mw)}</td><td class="num">${fmt(l.ldf, 4)}</td><td>${esc(l.zone)}</td></tr>`);
+    return `<h3>Bus, ${esc(m.id)}</h3>` + table(["", ""], rows) + (loads.length ? `<h3>Loads on this bus</h3>` + table(["load", "service", "MW", "LDF", "zone"], loads) : "");
+  }
+  const other = m.cmp && m.cmp[item.id] ? models[1 - models.indexOf(m)] : null, o = other ? other.byId.get(m.cmp[item.id].other) : null;
+  const fields = [["Id", r => r.id], ["Kind", r => r.k === "T" ? "transformer" : r.tie ? "bus tie" : "line"], ["From bus", r => r.f], ["To bus", r => r.t], ["Circuit", r => r.ckt],
+                  ["In service", r => r.on ? "yes" : "no"], ["Reactance pu", r => fmt(r.x, 5)], ["Monitored", r => r.mon ? "yes" : "no"], ["Secured", r => r.sec ? "yes" : "no"],
+                  ["Base limit MW", r => fmt(r.base, 0)], ["Emergency limit MW", r => fmt(r.emer, 0)], ["RAW rate A", r => fmt(r.ra, 0)], ["RAW rate B", r => fmt(r.rb, 0)],
+                  ["Contingencies that remove it", r => r.ctg.length]];
+  const cmpOn = new Set(["In service", "Reactance pu", "Base limit MW", "Emergency limit MW"]);
+  const rows = fields.map(([k, f]) => { const a = f(item), b = o ? f(o) : ""; const d = o && cmpOn.has(k) && String(a) !== String(b); return `<tr><td>${k}</td><td${d ? ' class="diff"' : ""}>${esc(a)}</td>${two ? `<td${d ? ' class="diff"' : ""}>${esc(b)}</td>` : ""}</tr>`; });
+  const note = two && !o ? `<p class="muted">No counterpart in ${esc(models[1 - models.indexOf(m)].id)}.</p>` : "";
+  const ctg = item.ctg.length ? `<h3>Contingencies (${item.ctg.length})</h3><p class="muted">${item.ctg.slice(0, 60).map(esc).join(", ")}${item.ctg.length > 60 ? ", …" : ""}</p>` : "";
+  return `<h3>Branch</h3>` + table(["", m.id, ...(two ? [other ? other.id : "other side"] : [])], rows) + note + `<p class="muted">Limits: ${esc(m.limit_source)}${o ? "; " + esc(other.limit_source) : ""}.</p>` + ctg;
+}
+
+function select(m, kind, item, node) {
+  document.querySelectorAll(".sel").forEach(e => e.classList.remove("sel"));
+  if (node) node.classList.add("sel");
+  if (kind === "branch") {  // light up the counterpart in the other pane
+    const other = m.cmp && m.cmp[item.id] ? m.cmp[item.id].other : null;
+    document.querySelectorAll("path.br").forEach(p => { if (p.dataset.id === item.id || (other && p.dataset.id === other)) p.classList.add("sel"); });
+  }
+  selected = { m, kind, item };
+  render();
+}
+
+function render() {
+  const side = document.getElementById("side");
+  side.innerHTML = (selected ? detail(selected.m, selected.kind, selected.item) : "") + summary(current);
+  side.querySelectorAll("tr.click").forEach(tr => tr.addEventListener("click", () => {
+    const m = models.find(x => x.id === tr.dataset.m), r = m.byId.get(tr.dataset.id);
+    select(m, "branch", r, null);
+  }));
+}
+
+function go(name, push = true) {
+  if (!models.some(m => m.stations.has(name))) return;
+  if (push && current) trail.push(current);
+  current = name; selected = null;
+  document.getElementById("search").value = name;
+  models.forEach((m, i) => drawPane(m, name, document.getElementById("svg" + i)));
+  history.replaceState(null, "", "#" + encodeURIComponent(name));
+  render();
+}
+
+function start() {
+  if (!DATA) { document.getElementById("side").textContent = "No data: build this page with session.viewer(...)."; return; }
+  const panes = document.getElementById("panes");
+  if (two) panes.classList.add("two");
+  models.forEach((m, i) => { const div = document.createElement("div"); div.className = "pane"; div.innerHTML = `<h2>${esc(m.id)}</h2>`; panes.appendChild(div); const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, id: "svg" + i }, div); svg.addEventListener("click", () => { selected = null; document.querySelectorAll(".sel").forEach(e => e.classList.remove("sel")); render(); }); });
+  const all = [...new Set(models.flatMap(m => [...m.stations.keys()]))].sort();
+  document.getElementById("stations").innerHTML = all.map(s => `<option value="${esc(s)}">`).join("");
+  const sw = (c, t, extra = "") => `<span><i class="sw" style="border-color:var(${c});${extra}"></i>${t}</span>`;
+  document.getElementById("legend").innerHTML = (two ? sw("--same", "same on both sides") + sw("--differs", "matched, differs (service or reactance)") + sw("--only", "this side only") : "")
+    + sw("--same", "out of service", "border-top-style:dashed") + sw("--same", "has an enforced limit", "border-top-width:5px") + "<span>▼ load in service</span><span style='color:var(--off)'>▽ load out</span>";
+  const search = document.getElementById("search");
+  search.addEventListener("change", () => go(search.value.trim()));
+  search.addEventListener("keydown", e => { if (e.key === "Enter") go(search.value.trim()); });
+  document.getElementById("back").addEventListener("click", () => { const p = trail.pop(); if (p) go(p, false); });
+  const wanted = decodeURIComponent(location.hash.slice(1));
+  let first = wanted && all.includes(wanted) ? wanted : null;
+  if (!first) { let best = -1; for (const [n, s] of models[0].stations) if (!n.startsWith("~") && s.branches.length > best && s.branches.length < 40) { best = s.branches.length; first = n; } }
+  go(first || all[0], false);
+}
+start();
+</script>
+</body>
+</html>

@@ -27,7 +27,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | scope | ERCOT only, in ERCOT vocabulary (settlement point, electrical bus, TOU block, EMIL ID, report type) |
 | job | pull and standardize; the only writer of data; consumers read |
 | interface | **Python API only**, used from Python files and notebooks; no CLI for now |
-| entry point | `em.open()` → `Session`; methods `list`, `fetch`, `ingest`, `probe`, `build_raw`, `build_core`, `raw`, `core`, `match_*`, `diff_*`, `network` |
+| entry point | `em.open()` → `Session`; methods `list`, `fetch`, `ingest`, `probe`, `build_raw`, `build_core`, `raw`, `core`, `match_*`, `diff_*`, `network`, `viewer` |
 | transport | own thin clients: EWS (certificate) and Public API (archive files, not JSON rows) |
 | transforms | Python parsers → `raw`; Python (polars) → `core`, `out`. The `.sql` runner was dropped on 2026-10-01; DuckDB remains for the catalog and ad hoc SQL |
 | storage | Parquet on disk (zstd, hive-partitioned), Arrow in memory, DuckDB catalog + SQL engine, polars for reading. **Catalog writes are short-lived**: `Session` reads through a read-only connection and takes the writer only to record a listing, a blob or an artifact, never across a download or a parse |
@@ -216,6 +216,7 @@ src/ercot_mis/
     network.py      Network for one snapshot: contracted nodes, branches with limits, contingency
                     index sets, signed GTC members, settlement point weights, dropped elements with
                     reasons; Options = judgment calls
+  viewer/           single-file station-by-station network viewer (template.html + data builder); output is CEII
 scripts/daily_pull.py        fetch pulled EWS products, list tracked ones, then build_raw + build_core; launchd template in scripts/launchd/
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs, GTL hours)
@@ -285,23 +286,28 @@ First, check health (2 min):
   November model is archived and the first two have not been rerun on it.
 
 Then, in the order agreed:
-1. **Price identity, the rest of the residual.** It grows in the evening peak. Leads:
-   nodes a contingency cuts off (PRC-03, the `SpCtg` file, NAM-07); the DAM
-   contingency rows that are not branches (generators, loads, split buses); the one
-   binding GTC whose CRR members are not all in the DAM network. Then move GTC
-   borrowing from the script into `out.network` (NAM-05) and price buses too (needs
-   the NP4-160-SG bus mapping parsed).
+1. **Price identity, the rest of the residual.** Hours without a binding GTC now
+   reproduce to about a dollar at worst (two fixes on 2026-10-01: direction read to the
+   tenth of a kV; split-bus contingency rows applied). Hours with a binding GTC keep a
+   broad residual: the borrowed CRR members fix the points near the interface and are
+   not the whole definition (PRC-04; parse NP3-770-M). Then move split-bus rows
+   (NAM-09) and GTC members (NAM-05) from the script into `out.network`, look at the
+   points a contingency cuts off (PRC-03), and price buses too (needs the NP4-160-SG
+   bus mapping parsed).
 2. **Tie labels**: label every open CRR tie as normally open or open for an outage
    from the Outages file's normal-state and outage-state columns (first check its
    breaker rows can be tied to RAW ties). `core.load` and `core.diff_load`
    (`session.diff_loads`, per matched node since the models share no load name) are
    built; add their counts to `measure_identity.py`.
-3. **Viewer**: one self-contained HTML per pair of snapshots (any two: annual, monthly,
-   DAM hour) under `data/reports/`, never published. Two panes centred on one station,
-   click a neighbour to recentre both, search box, the centred station at bus level
-   with tie status, loads and generators, neighbours collapsed; colours for matched /
-   differs / one side only; a side panel of summary tables; a permanent CEII banner.
-   Network only; prices and flows are later overlays.
+3. **Viewer** (`ercot_mis/viewer/`, `session.viewer(left, right)`): built on 2026-10-01
+   as one self-contained HTML per snapshot or pair under `data/reports/viewer/`,
+   never published; two panes on one station, click a neighbour to recentre, search,
+   back, side panel, CEII banner. CRR buses take their station from the matched DAM
+   node (a display choice, documented in the module). **Look at it only on synthetic
+   data** (`tests/fixtures/synthetic/viewer_data.json` into the template): a
+   screenshot of a real page sends names off the machine, and so does the URL hash.
+   Next: the user's first impressions; loads compared in the side panel
+   (`diff_load`); layout for very large stations; later overlays for prices and flows.
 4. **EMIL sweep** for planning-stage data (pin id, classification, window, then track,
    then pull): transmission outage scheduler reports, resource outage capacity and
    unplanned resource outages, 60-day DAM and SCED disclosures, actual load and

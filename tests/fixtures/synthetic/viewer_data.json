@@ -1,0 +1,546 @@
+{
+ "models": [
+  {
+   "id": "crr:monthly:2030-01:r1",
+   "kind": "crr",
+   "limit_source": "CRR monitored CSV, PeakWD",
+   "buses": [
+    {
+     "n": 1,
+     "kv": 345,
+     "st": "ALPHA",
+     "name": "ALPHA_1",
+     "type": 1,
+     "key": "k1",
+     "sp": [],
+     "gen": []
+    },
+    {
+     "n": 2,
+     "kv": 345,
+     "st": "ALPHA",
+     "name": "ALPHA_2",
+     "type": 1,
+     "key": "k2",
+     "sp": [],
+     "gen": []
+    },
+    {
+     "n": 3,
+     "kv": 138,
+     "st": "ALPHA",
+     "name": "ALPHA_3",
+     "type": 1,
+     "key": "k3",
+     "sp": [],
+     "gen": []
+    },
+    {
+     "n": 4,
+     "kv": 138.1,
+     "st": "ALPHA",
+     "name": "ALPHA_4",
+     "type": 1,
+     "key": "k4",
+     "sp": [
+      "RN_ALPHA"
+     ],
+     "gen": []
+    },
+    {
+     "n": 9,
+     "kv": 138,
+     "st": "ALPHA",
+     "name": "ALPHA_TMP",
+     "type": 1,
+     "key": "k9",
+     "sp": [],
+     "gen": []
+    },
+    {
+     "n": 5,
+     "kv": 345,
+     "st": "BRAVO",
+     "name": "BRAVO_1",
+     "type": 1,
+     "key": "k5",
+     "sp": [],
+     "gen": []
+    },
+    {
+     "n": 6,
+     "kv": 138,
+     "st": "CHARLIE",
+     "name": "CHARLIE_1",
+     "type": 1,
+     "key": "k6",
+     "sp": [],
+     "gen": []
+    },
+    {
+     "n": 7,
+     "kv": 138,
+     "st": "DELTA",
+     "name": "DELTA_1",
+     "type": 1,
+     "key": "k7",
+     "sp": [],
+     "gen": []
+    },
+    {
+     "n": 8,
+     "kv": 345,
+     "st": "ECHO",
+     "name": "ECHO_1",
+     "type": 1,
+     "key": "k8",
+     "sp": [],
+     "gen": []
+    }
+   ],
+   "branches": [
+    {
+     "id": "TIE_12",
+     "k": "L",
+     "f": 1,
+     "t": 2,
+     "ckt": "1",
+     "x": 0.0001,
+     "on": true,
+     "tie": true,
+     "mon": true,
+     "sec": false,
+     "base": 900,
+     "emer": 990.0,
+     "ra": 900,
+     "rb": 990.0,
+     "ctg": []
+    },
+    {
+     "id": "TIE_34",
+     "k": "L",
+     "f": 3,
+     "t": 4,
+     "ckt": "1",
+     "x": 0.0001,
+     "on": false,
+     "tie": true,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": null,
+     "rb": null,
+     "ctg": []
+    },
+    {
+     "id": "TIE_39",
+     "k": "L",
+     "f": 3,
+     "t": 9,
+     "ckt": "1",
+     "x": 0.0001,
+     "on": false,
+     "tie": true,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": null,
+     "rb": null,
+     "ctg": []
+    },
+    {
+     "id": "XF_A1",
+     "k": "T",
+     "f": 1,
+     "t": 3,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": true,
+     "sec": false,
+     "base": 400,
+     "emer": 440.0,
+     "ra": 400,
+     "rb": 440.0,
+     "ctg": [
+      "C1",
+      "C2"
+     ]
+    },
+    {
+     "id": "XF_A2",
+     "k": "T",
+     "f": 2,
+     "t": 4,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": null,
+     "rb": null,
+     "ctg": []
+    },
+    {
+     "id": "L_AB",
+     "k": "L",
+     "f": 1,
+     "t": 5,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": true,
+     "sec": false,
+     "base": 1200,
+     "emer": 1320.0,
+     "ra": 1200,
+     "rb": 1320.0,
+     "ctg": [
+      "C1"
+     ]
+    },
+    {
+     "id": "L_AB2",
+     "k": "L",
+     "f": 2,
+     "t": 5,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": null,
+     "rb": null,
+     "ctg": []
+    },
+    {
+     "id": "L_AC",
+     "k": "L",
+     "f": 3,
+     "t": 6,
+     "ckt": "1",
+     "x": 0.01,
+     "on": false,
+     "tie": false,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": null,
+     "rb": null,
+     "ctg": []
+    },
+    {
+     "id": "L_AD",
+     "k": "L",
+     "f": 4,
+     "t": 7,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": true,
+     "sec": false,
+     "base": 220,
+     "emer": 242.0,
+     "ra": 220,
+     "rb": 242.0,
+     "ctg": []
+    },
+    {
+     "id": "L_AE",
+     "k": "L",
+     "f": 2,
+     "t": 8,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": false,
+     "base": null,
+     "emer": null,
+     "ra": null,
+     "rb": null,
+     "ctg": []
+    }
+   ],
+   "loads": [
+    {
+     "id": "ALPHA_3:1",
+     "bus": 3,
+     "on": false,
+     "mw": 12.0,
+     "ldf": null,
+     "zone": null
+    },
+    {
+     "id": "ALPHA_4:1",
+     "bus": 4,
+     "on": true,
+     "mw": 20.0,
+     "ldf": null,
+     "zone": null
+    },
+    {
+     "id": "ALPHA_TMP:1",
+     "bus": 9,
+     "on": false,
+     "mw": 30.0,
+     "ldf": null,
+     "zone": null
+    }
+   ]
+  },
+  {
+   "id": "dam:2030-01-15:he12:r1",
+   "kind": "dam",
+   "limit_source": "RAW rate A / B",
+   "buses": [
+    {
+     "n": 101,
+     "kv": 345,
+     "st": "ALPHA",
+     "name": "ALPHA",
+     "type": 1,
+     "key": "k101",
+     "sp": [],
+     "gen": [
+      "ALPHA_G1"
+     ]
+    },
+    {
+     "n": 103,
+     "kv": 138,
+     "st": "ALPHA",
+     "name": "ALPHA",
+     "type": 1,
+     "key": "k103",
+     "sp": [
+      "RN_ALPHA"
+     ],
+     "gen": []
+    },
+    {
+     "n": 105,
+     "kv": 345,
+     "st": "BRAVO",
+     "name": "BRAVO",
+     "type": 1,
+     "key": "k105",
+     "sp": [],
+     "gen": []
+    },
+    {
+     "n": 106,
+     "kv": 138,
+     "st": "CHARLIE",
+     "name": "CHARLIE",
+     "type": 1,
+     "key": "k106",
+     "sp": [],
+     "gen": []
+    },
+    {
+     "n": 107,
+     "kv": 138,
+     "st": "DELTA",
+     "name": "DELTA",
+     "type": 1,
+     "key": "k107",
+     "sp": [],
+     "gen": []
+    },
+    {
+     "n": 108,
+     "kv": 345,
+     "st": "ECHO",
+     "name": "ECHO",
+     "type": 1,
+     "key": "k108",
+     "sp": [],
+     "gen": []
+    }
+   ],
+   "branches": [
+    {
+     "id": "XFA1",
+     "k": "T",
+     "f": 101,
+     "t": 103,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": true,
+     "base": 400,
+     "emer": 440.0,
+     "ra": 400,
+     "rb": 440.0,
+     "ctg": []
+    },
+    {
+     "id": "XFA2",
+     "k": "T",
+     "f": 101,
+     "t": 103,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": true,
+     "base": 380,
+     "emer": 418.0,
+     "ra": 380,
+     "rb": 418.0,
+     "ctg": []
+    },
+    {
+     "id": "LAB_1",
+     "k": "L",
+     "f": 101,
+     "t": 105,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": true,
+     "base": 1250,
+     "emer": 1375.0,
+     "ra": 1250,
+     "rb": 1375.0,
+     "ctg": []
+    },
+    {
+     "id": "LAB_2",
+     "k": "L",
+     "f": 101,
+     "t": 105,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": true,
+     "base": 1250,
+     "emer": 1375.0,
+     "ra": 1250,
+     "rb": 1375.0,
+     "ctg": []
+    },
+    {
+     "id": "LAC_1",
+     "k": "L",
+     "f": 103,
+     "t": 106,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": true,
+     "base": 200,
+     "emer": 220.0,
+     "ra": 200,
+     "rb": 220.0,
+     "ctg": []
+    },
+    {
+     "id": "LAD_1",
+     "k": "L",
+     "f": 103,
+     "t": 107,
+     "ckt": "1",
+     "x": 0.01,
+     "on": true,
+     "tie": false,
+     "mon": false,
+     "sec": true,
+     "base": 220,
+     "emer": 242.0,
+     "ra": 220,
+     "rb": 242.0,
+     "ctg": []
+    }
+   ],
+   "loads": [
+    {
+     "id": "ALPHA_MODULAR",
+     "bus": 103,
+     "on": true,
+     "mw": 42.0,
+     "ldf": 0.0012,
+     "zone": "LZ_X"
+    }
+   ]
+  }
+ ],
+ "reference_dam": "dam:2030-01-15:he12:r1",
+ "compare": {
+  "left": {
+   "XF_A1": {
+    "other": "XFA1",
+    "same": true
+   },
+   "XF_A2": {
+    "other": "XFA2",
+    "same": true
+   },
+   "L_AB": {
+    "other": "LAB_1",
+    "same": true
+   },
+   "L_AB2": {
+    "other": "LAB_2",
+    "same": true
+   },
+   "L_AC": {
+    "other": "LAC_1",
+    "same": false
+   },
+   "L_AD": {
+    "other": "LAD_1",
+    "same": true
+   }
+  },
+  "right": {
+   "XFA1": {
+    "other": "XF_A1",
+    "same": true
+   },
+   "XFA2": {
+    "other": "XF_A2",
+    "same": true
+   },
+   "LAB_1": {
+    "other": "L_AB",
+    "same": true
+   },
+   "LAB_2": {
+    "other": "L_AB2",
+    "same": true
+   },
+   "LAC_1": {
+    "other": "L_AC",
+    "same": false
+   },
+   "LAD_1": {
+    "other": "L_AD",
+    "same": true
+   }
+  }
+ }
+}

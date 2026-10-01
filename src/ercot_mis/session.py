@@ -446,6 +446,15 @@ class Session:
         path.chmod(0o600)
         return result
 
+    def viewer(self, left: str, right: str | None = None, *, reference_dam: str | None = None) -> Path:
+        """Write the single-file network viewer for one snapshot or a pair and return its path.
+
+        The page holds CEII and stays inside the data folder (``reports/viewer/``). See ``ercot_mis.viewer``.
+        """
+        from . import viewer
+
+        return viewer.build(self, left, right, reference_dam=reference_dam)
+
     def network(self, snapshot_id: str, options=None):
         """One snapshot as a DC model reads it: ``out.network``, computed on demand.
 
