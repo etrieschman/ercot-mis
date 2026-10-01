@@ -159,7 +159,8 @@
      "emer": 990.0,
      "ra": 900,
      "rb": 990.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "TIE_34",
@@ -176,7 +177,8 @@
      "emer": null,
      "ra": null,
      "rb": null,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "TIE_39",
@@ -193,7 +195,8 @@
      "emer": null,
      "ra": null,
      "rb": null,
-     "ctg": []
+     "ctg": [],
+     "temp": true
     },
     {
      "id": "XF_A1",
@@ -213,7 +216,8 @@
      "ctg": [
       "C1",
       "C2"
-     ]
+     ],
+     "temp": false
     },
     {
      "id": "XF_A2",
@@ -230,7 +234,8 @@
      "emer": null,
      "ra": null,
      "rb": null,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "L_AB",
@@ -249,7 +254,8 @@
      "rb": 1320.0,
      "ctg": [
       "C1"
-     ]
+     ],
+     "temp": false
     },
     {
      "id": "L_AB2",
@@ -266,7 +272,8 @@
      "emer": null,
      "ra": null,
      "rb": null,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "L_AC",
@@ -283,7 +290,8 @@
      "emer": null,
      "ra": null,
      "rb": null,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "L_AD",
@@ -300,7 +308,8 @@
      "emer": 242.0,
      "ra": 220,
      "rb": 242.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "L_AE",
@@ -317,7 +326,8 @@
      "emer": null,
      "ra": null,
      "rb": null,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "XF3_H",
@@ -334,7 +344,8 @@
      "emer": null,
      "ra": 300.0,
      "rb": 330.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "XF3_L",
@@ -351,7 +362,8 @@
      "emer": null,
      "ra": 300.0,
      "rb": 330.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "XF3_T",
@@ -368,7 +380,8 @@
      "emer": null,
      "ra": 300.0,
      "rb": 330.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     }
    ],
    "loads": [
@@ -520,7 +533,8 @@
      "emer": 440.0,
      "ra": 400,
      "rb": 440.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "XFA2",
@@ -537,7 +551,8 @@
      "emer": 418.0,
      "ra": 380,
      "rb": 418.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "LAB_1",
@@ -554,7 +569,8 @@
      "emer": 1375.0,
      "ra": 1250,
      "rb": 1375.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "LAB_2",
@@ -571,7 +587,8 @@
      "emer": 1375.0,
      "ra": 1250,
      "rb": 1375.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "LAC_1",
@@ -588,7 +605,8 @@
      "emer": 220.0,
      "ra": 200,
      "rb": 220.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "LAD_1",
@@ -605,7 +623,8 @@
      "emer": 242.0,
      "ra": 220,
      "rb": 242.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "XF3H",
@@ -622,7 +641,8 @@
      "emer": null,
      "ra": 300.0,
      "rb": 330.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "XF3L",
@@ -639,7 +659,8 @@
      "emer": null,
      "ra": 300.0,
      "rb": 330.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     },
     {
      "id": "XF3T",
@@ -656,7 +677,8 @@
      "emer": null,
      "ra": 300.0,
      "rb": 330.0,
-     "ctg": []
+     "ctg": [],
+     "temp": false
     }
    ],
    "loads": [

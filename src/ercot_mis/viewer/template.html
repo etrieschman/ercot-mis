@@ -278,7 +278,7 @@ function summary(name) {
   models.forEach(m => {
     const st = m.stations.get(name); if (!st) return;
     const rows = st.branches.slice().sort((a, b) => a.id < b.id ? -1 : 1).map(r => {
-      const to = r.sa === r.sb ? (r.tie ? "tie" : "inside") : (r.sa === name ? r.sb : r.sa), s = status(m, r);
+      const to = (r.sa === r.sb ? (r.tie ? "tie" : "inside") : (r.sa === name ? r.sb : r.sa)) + (r.temp ? " (temporary)" : ""), s = status(m, r);
       return `<tr class="click" data-m="${m.id}" data-id="${esc(r.id)}"><td>${esc(r.id)}</td><td>${r.k}</td><td>${esc(to)}</td><td>${r.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${limited(m, r) ? fmt(r.base, 0) : ""}</td><td>${two ? (s === "same" ? "" : `<span class="diff">${s === "only" ? "this side only" : "differs"}</span>`) : ""}</td></tr>`;
     });
     html += `<h3>Branches: ${esc(m.id)}</h3>` + table(["id", "", "to", "service", "limit MW", two ? "vs other" : ""], rows);
@@ -307,7 +307,7 @@ function detail(m, kind, item) {
   const fields = [["Id", r => r.id], ["Kind", r => r.k === "T" ? "transformer" : r.tie ? "bus tie" : "line"], ["From bus", r => r.f], ["To bus", r => r.t], ["Circuit", r => r.ckt],
                   ["In service", r => r.on ? "yes" : "no"], ["Reactance pu", r => fmt(r.x, 5)], ["Monitored", r => r.mon ? "yes" : "no"], ["Secured", r => r.sec ? "yes" : "no"],
                   ["Base limit MW", r => fmt(r.base, 0)], ["Emergency limit MW", r => fmt(r.emer, 0)], ["RAW rate A", r => fmt(r.ra, 0)], ["RAW rate B", r => fmt(r.rb, 0)],
-                  ["Contingencies that remove it", r => r.ctg.length]];
+                  ["Temporary (added for an outage)", r => r.temp ? "yes" : "no"], ["Contingencies that remove it", r => r.ctg.length]];
   const cmpOn = new Set(["In service", "Reactance pu", "Base limit MW", "Emergency limit MW"]);
   const rows = fields.map(([k, f]) => { const a = f(item), b = o ? f(o) : ""; const d = o && cmpOn.has(k) && String(a) !== String(b); return `<tr><td>${k}</td><td${d ? ' class="diff"' : ""}>${esc(a)}</td>${two ? `<td${d ? ' class="diff"' : ""}>${esc(b)}</td>` : ""}</tr>`; });
   const note = two && !o ? `<p class="muted">No counterpart in ${esc(models[1 - models.indexOf(m)].id)}.</p>` : "";

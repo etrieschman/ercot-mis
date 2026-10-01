@@ -298,11 +298,14 @@ the top of the list as soon as the rest of that day's list (2 to 5) is done:
    (NAM-09) and GTC members (NAM-05) from the script into `out.network`, look at the
    points a contingency cuts off (PRC-03), and price buses too (needs the NP4-160-SG
    bus mapping parsed).
-2. **Tie labels**: label every open CRR tie as normally open or open for an outage
-   from the Outages file's normal-state and outage-state columns (first check its
-   breaker rows can be tied to RAW ties). `core.load` and `core.diff_load`
-   (`session.diff_loads`, per matched node since the models share no load name) are
-   built; add their counts to `measure_identity.py`.
+2. **Tie labels**: measured on 2026-10-01. The Outages file's breaker and disconnect
+   rows cannot be joined to RAW ties by name (see `crr-network-model.md`), so "normally
+   open or open for an outage" is only answerable per station. What the data does give
+   per branch is `core.branch.is_temporary` (the workbook's temporary split-bus label),
+   now built and shown in the viewer. Open: a station-level table of switch outages
+   active in the model's month (needs CRR stations in core, today a viewer display
+   choice), and `core.node.is_temporary`. `core.load` and `core.diff_load` are built;
+   add their counts to `measure_identity.py`.
 3. **Viewer** (`ercot_mis/viewer/`, `session.viewer(left, right)`): built on 2026-10-01
    as one self-contained HTML per snapshot or pair under `data/reports/viewer/`,
    never published; two panes on one station, click a neighbour to recentre, search,

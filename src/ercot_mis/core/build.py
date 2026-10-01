@@ -43,7 +43,7 @@ def _raw(session, table: str, emil_id: str, blob_sha256: str) -> pl.DataFrame | 
 
 DAM_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "psse_load", "dam_lines", "dam_transformers", "dam_generators", "dam_loads",
               "dam_settlement_points", "dam_hub_buses", "dam_contingencies")
-CRR_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "psse_load", "crr_mapping_autos", "crr_sources_and_sinks",
+CRR_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "psse_load", "crr_mapping_autos", "crr_mapping_lines", "crr_sources_and_sinks",
               "crr_monitored_lines_and_transformers", "crr_contingencies", "crr_non_thermal_constraints")
 
 
@@ -90,7 +90,7 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame)
             if r["psse_bus"].is_empty():
                 continue
             nodes = node.crr_nodes(r["psse_bus"], r["psse_branch"], r["psse_transformer"], r["crr_mapping_autos"], r["crr_sources_and_sinks"])
-            branches, ratings = branch.crr_branches(nodes, r["psse_branch"], r["psse_transformer"], r["crr_mapping_autos"], r["crr_monitored_lines_and_transformers"])
+            branches, ratings = branch.crr_branches(nodes, r["psse_branch"], r["psse_transformer"], r["crr_mapping_autos"], r["crr_monitored_lines_and_transformers"], r["crr_mapping_lines"])
             contingencies, outages = contingency.crr_contingencies(branches, r["crr_contingencies"])
             gtcs, members = gtc.crr_gtcs(branches, r["crr_non_thermal_constraints"])
             points, point_nodes = settlement_point.crr_settlement_points(nodes, r["crr_sources_and_sinks"])

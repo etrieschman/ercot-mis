@@ -130,10 +130,10 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
                    "sp": on_node.get(key, []), "agg": part_of.get(key, []), "gen": labels(att, "G:"), "star": bus in stars}
                   for bus, kv, name, bus_type, key, att in node.select("psse_bus_number", "kv", "station", "bus_type", "node_key", "attachments").rows()],
         "branches": [{"id": i, "k": kind[0].upper(), "f": f, "t": t, "ckt": ckt, "x": x, "on": on, "tie": tie, "mon": bool(mon), "sec": bool(sec),
-                      "base": base, "emer": emer, "ra": ra, "rb": rb, "ctg": c or []}
-                     for i, kind, f, t, ckt, x, on, tie, mon, sec, base, emer, ra, rb, c in branch.select(
+                      "base": base, "emer": emer, "ra": ra, "rb": rb, "ctg": c or [], "temp": bool(temp)}
+                     for i, kind, f, t, ckt, x, on, tie, mon, sec, base, emer, ra, rb, c, temp in branch.select(
                          "branch_id", "kind", "from_bus", "to_bus", "ckt", "x_pu", "is_in_service", "is_tie", "is_monitored", "is_secured",
-                         "base_mw", "emergency_mw", "rate_a", "rate_b", "ctg").rows()],
+                         "base_mw", "emergency_mw", "rate_a", "rate_b", "ctg", "is_temporary").rows()],
         "loads": [{"id": i, "bus": bus, "on": on, "mw": mw, "ldf": ldf, "zone": zone}
                   for i, bus, on, mw, ldf, zone in load.select("load_id", "psse_bus", "is_in_service", "mw", "mw_ldf", "load_zone").rows()],
     }

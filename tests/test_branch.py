@@ -34,6 +34,10 @@ def test_crr_branches_name_lines_by_comment_transformers_by_autos_and_keep_both_
 
     by = {r["branch_id"]: r for r in branches.to_dicts()}
     assert set(by) == {"1 A1 2 A2 1", "2 A2 3 B 1", "3 B 4 C 1", "AUTO_A"}
+    assert not any(r["is_temporary"] for r in by.values())
+    mapping = pl.DataFrame({"crr_tag": ["3 B 4 C 1", "2 A2 3 B 1"], "op_eqcode": ["Temporary Split-Bus Topology (Outages)", "SOME_LINE_1"]})
+    marked, _ = branch.crr_branches(nodes, raw_branch, raw_xf, autos, monitored, mapping)
+    assert {r["branch_id"] for r in marked.to_dicts() if r["is_temporary"]} == {"3 B 4 C 1"}
     tie = by["1 A1 2 A2 1"]
     assert tie["is_tie"] and tie["from_node_key"] == tie["to_node_key"] and not tie["is_monitored"]
     line = by["2 A2 3 B 1"]

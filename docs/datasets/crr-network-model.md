@@ -48,6 +48,17 @@ dynamic line ratings; the monitored CSV already carries the resulting ratings).
 - Device-type spelling differs by file: contingency CSV `LINE`/`XFMR`; monitored CSV
   `Line`/`XFMR`; GTC CSV and all XML `Line`/`Transformer`. Normalize in core.
 - GTC CSV header has spaces after commas.
+- **Temporary topology is labeled.** The mapping workbook's operations equipment code
+  is a name for standing equipment and a sentence for branches ERCOT added as temporary
+  split-bus topology for outages. `core.branch.is_temporary` carries it. The ties that
+  join such a temporary bus to the standing bus have no workbook row of their own, so a
+  temporary bus is one a temporary branch touches.
+- **Switch outages cannot be tied to RAW ties by name.** The Outages file lists
+  breakers and disconnects by station and device name with their normal and outage
+  state; the RAW names a tie only by its two buses, and the workbook gives an
+  operations name to a minority of ties, none of them a device name from the Outages
+  file. Why a tie is open can be told per station (does the station have a switch
+  outage in the model's month), not per device.
 - The RAW names a load only by its bus (the comment is bus number, bus name, load id,
   owner), so `core.load` builds `load_id` from the bus name and the load id. A few
   annual RAWs repeat a load record (same bus and id, sometimes a different MW); core

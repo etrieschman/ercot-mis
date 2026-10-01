@@ -18,7 +18,7 @@ import polars as pl
 
 from .node import TIE_REACTANCE
 
-VERSION = 3  # bump when columns or identities change
+VERSION = 4  # bump when columns or identities change
 
 # ``is_name_reversed``: the branch's name lists its ends in the opposite order to the RAW's
 # (from, to). CRR line comments always follow the RAW; CRR transformer names follow the
@@ -26,7 +26,7 @@ VERSION = 3  # bump when columns or identities change
 # "From-To" flow direction refers to the name's order, so consumers flip the sign here.
 BRANCH_COLUMNS = ("branch_id", "kind", "from_bus", "to_bus", "ckt", "from_node_key", "to_node_key",
                   "is_in_service", "is_tie", "is_name_reversed", "r_pu", "x_pu", "b_pu", "tap_ratio", "angle_deg",
-                  "is_monitored", "is_secured")
+                  "is_monitored", "is_secured", "is_temporary")
 RATING_COLUMNS = ("branch_id", "rating_source", "time_of_use", "base_mw", "emergency_mw", "rate_c_mw")
 
 
@@ -89,13 +89,17 @@ def dam_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
                      (pl.col("monitored_and_secured").str.to_uppercase().str.starts_with("Y")).alias("is_secured"))
         for frame in (dam_lines, dam_transformers)])
     frame = _with_endpoints(_raw_parts(psse_branch, psse_transformer).join(named, on=["from_bus", "to_bus", "ckt"], how="left"), nodes)
-    return _finish(frame.with_columns(pl.lit(False).alias("is_name_reversed")), tie_reactance)
+    return _finish(frame.with_columns(pl.lit(False).alias("is_name_reversed"), pl.lit(False).alias("is_temporary")), tie_reactance)
 
 
 def crr_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transformer: pl.DataFrame,
-                 autos: pl.DataFrame, monitored: pl.DataFrame,
+                 autos: pl.DataFrame, monitored: pl.DataFrame, mapping_lines: pl.DataFrame | None = None,
                  tie_reactance: float = TIE_REACTANCE) -> tuple[pl.DataFrame, pl.DataFrame]:
     """``core.branch`` and ``core.branch_rating`` for one CRR month.
+
+    ``is_temporary`` marks the branches the mapping workbook labels as temporary split-bus
+    topology added for outages (its operations equipment code says so in words): ERCOT put
+    them in this model for an outage, they are not part of the standing network.
 
     Lines are named by the RAW comment, transformers by ``Autos`` (from, to, ckt).
     ``is_monitored`` is whether the monitored-element CSV lists the branch; CRR has no
@@ -111,6 +115,10 @@ def crr_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
     listed = monitored.select(pl.col("device_name").alias("branch_id")).unique().with_columns(pl.lit(True).alias("is_monitored"))
     frame = (_with_endpoints(frame, nodes).join(listed, on="branch_id", how="left")
              .with_columns(pl.col("is_monitored").fill_null(False)).with_columns(pl.col("is_monitored").alias("is_secured")))
+    temporary = (mapping_lines.filter(pl.col("op_eqcode").cast(pl.String).str.to_uppercase().str.contains("TEMPORARY SPLIT"))
+                 .select(pl.col("crr_tag").alias("branch_id")).unique().with_columns(pl.lit(True).alias("is_temporary"))
+                 if mapping_lines is not None else pl.DataFrame(schema={"branch_id": pl.String, "is_temporary": pl.Boolean}))
+    frame = frame.join(temporary, on="branch_id", how="left").with_columns(pl.col("is_temporary").fill_null(False))
     branch, raw_ratings = _finish(frame, tie_reactance)
     csv_ratings = monitored.select(pl.col("device_name").alias("branch_id"), pl.lit("crr_monitored").alias("rating_source"),
                                    "time_of_use", pl.col("base_case_rating").alias("base_mw"),
