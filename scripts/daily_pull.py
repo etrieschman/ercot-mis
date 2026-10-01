@@ -1,4 +1,4 @@
-"""Daily pull: archive every EWS document before it rolls off, then build the layers.
+"""Daily pull: archive every EWS document before it rolls off, the day's public prices, then build the layers.
 
 EWS keeps nothing older than each product's display window (31 days for DAM network
 models, 365 for CRR models), so run this every day. It fetches pulled products, lists
@@ -16,7 +16,7 @@ DAM_OPERATING_DATES there. Schedule it with launchd: see scripts/launchd/.
 import json
 import subprocess
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import polars as pl
 
@@ -26,6 +26,11 @@ from ercot_mis.raw.build import parsed_products
 # DAM network models are ~29 MB a day (~10 GB a year). None captures every day;
 # a set of dates captures only those.
 DAM_OPERATING_DATES: set[date] | None = None
+
+# Public API products pulled every day (DAM shadow prices, bus LMPs, settlement point
+# prices); older days are backfilled by hand with ``fetch(product, since=...)``.
+PUBLIC_API_DAILY = ("NP4-191-CD", "NP4-183-CD", "NP4-190-CD")
+PUBLIC_API_LOOKBACK_DAYS = 7
 
 # Per-product ceiling for one run; a first run over a full window stays well under it.
 MAX_GB = 5
@@ -77,15 +82,17 @@ def main() -> int:
     with em.open() as mis:
         status_path = mis.data_dir / "logs" / "last_run.json"
         for spec in em.PRODUCTS.values():
-            if spec.source != "ews":
+            if spec.source == "public_api" and spec.emil_id not in PUBLIC_API_DAILY:
                 continue
+            # The Public API keeps years of history; a daily run only looks at the last few days.
+            since = None if spec.source == "ews" else date.today() - timedelta(days=PUBLIC_API_LOOKBACK_DAYS)
             try:
                 if spec.take == "track":
                     listed = mis.list(spec.emil_id)
                     print(f"  {spec.emil_id}: tracked, {listed.height} listed")
                     continue
                 dates = DAM_OPERATING_DATES if spec.emil_id == "NP4-500-SG" else None
-                result = mis.fetch(spec.emil_id, operating_dates=dates, max_gb=MAX_GB)
+                result = mis.fetch(spec.emil_id, since, operating_dates=dates, max_gb=MAX_GB)
             except Exception as error:  # one product's failure must not stop the others
                 failed += 1
                 print(f"  {spec.emil_id}: FAILED {type(error).__name__}: {error}")

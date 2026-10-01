@@ -29,11 +29,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ..products import Product, get_product
-from . import crr, dam, gtl, psse, table
+from . import crr, dam, gtl, prices, psse, table
 
 LAYER = "raw"
 COMPRESSION = "zstd"
-_MODULES = {"NP7-801-M": (crr,), "NP7-800-M": (crr,), "NP4-500-SG": (dam,), "NP3-766-M": (gtl,)}
+_MODULES = {"NP7-801-M": (crr,), "NP7-800-M": (crr,), "NP4-500-SG": (dam,), "NP3-766-M": (gtl,),
+            "NP4-191-CD": (prices,), "NP4-183-CD": (prices,), "NP4-190-CD": (prices,)}
 
 
 def parsed_products() -> tuple[str, ...]:

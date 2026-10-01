@@ -116,3 +116,22 @@ def test_dam_lines_and_loads():
     assert table.num_columns == 35
     assert table.to_pylist()[0]["fraction_of_this_load_to_1st_target_load"] == 1.0
     assert table.to_pylist()[0]["10th_target_load_name"] is None
+
+
+def test_price_files_are_told_apart_by_their_header():
+    from ercot_mis.raw import prices
+    from ercot_mis.raw.table import ParseError
+
+    member = prices.classify_member("prices.csv")
+    lmp = prices.parse_member(member, b"DeliveryDate,HourEnding,BusName,LMP,DSTFlag\r\n01/02/2030,24:00,BUS_A,12.5,N\r\n")
+    assert list(lmp) == ["dam_lmps"] and lmp["dam_lmps"].to_pylist() == [
+        {"delivery_date": "01/02/2030", "hour_ending": "24:00", "bus_name": "BUS_A", "lmp": 12.5, "dst_flag": "N"}]
+    shadow = prices.parse_member(member, (
+        b"DeliveryDate,HourEnding,ConstraintID,ConstraintName,ContingencyName,ConstraintLimit,ConstraintValue,ViolationAmount,"
+        b"ShadowPrice,FromStation,ToStation,FromStationkV,ToStationkV,DeliveryTime,DSTFlag\n"
+        b"01/02/2030,01:00,7,LINE_A,BASE CASE,100,100,0,3.25,STA,STB,138,138,01/01/2030 12:00:00,N\n"))
+    row = shadow["dam_shadow_prices"].to_pylist()[0]
+    assert row["constraint_id"] == 7 and row["shadow_price"] == 3.25 and row["from_station_kv"] == 138.0
+    assert not prices.classify_member("prices.xml").is_parsed
+    with pytest.raises(ParseError, match="matches no known table"):
+        prices.parse_member(member, b"A,B\n1,2\n")
