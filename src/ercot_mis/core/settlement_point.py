@@ -3,14 +3,14 @@ point sits in the network.
 
 ERCOT settles prices at settlement points (resource nodes, hubs, load zones); each
 resolves to one or more electrical buses with weights. The CRR model calls those
-buses price nodes and ships the weights in its SourcesAndSinks file; the DAM model
+buses "price nodes" and ships the weights in its SourcesAndSinks file; the DAM model
 gives one bus per resource node (``Sp``), the hub buses (``Hb``) and each load's
 zone and distribution factor (``Ld``). This module puts both in one shape:
 
 - ``settlement_point``: one row per settlement point per snapshot with its ``kind``
   (``resource_node``, ``hub``, ``load_zone``, ``dc_tie``), the model's own type text,
-  how many nodes it reaches and how many rows could not be resolved;
-- ``settlement_point_bus``: one row per (settlement point, node) with ``weight``
+  how many buses it reaches and how many rows could not be resolved;
+- ``settlement_point_bus``: one row per (settlement point, bus) with ``weight``
   (normalized to sum to one over the resolved rows), the ``raw_weight`` as the file
   gave it, the ``source`` file and the PSS/E bus it came through.
 
@@ -34,7 +34,7 @@ VERSION = 2
 AVERAGE_HUB_MEMBERS = ("HB_NORTH", "HB_SOUTH", "HB_HOUSTON", "HB_WEST")
 
 SP_COLUMNS = ("settlement_point_id", "kind", "type_text", "n_buses", "n_unresolved", "weight_sum_raw")
-NODE_COLUMNS = ("settlement_point_id", "bus_key", "weight", "raw_weight", "source", "node_number", "is_resolved")
+BUS_COLUMNS = ("settlement_point_id", "bus_key", "weight", "raw_weight", "source", "node_number", "is_resolved")
 
 _EMPTY_NODES = {"settlement_point_id": pl.String, "bus_key": pl.String, "weight": pl.Float64, "raw_weight": pl.Float64,
                 "source": pl.String, "node_number": pl.Int64, "is_resolved": pl.Boolean}
@@ -58,10 +58,10 @@ def _kind_from_type(type_text: pl.Expr) -> pl.Expr:
 
 
 def _finish(points: pl.DataFrame, rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Resolve buses to nodes was done by the caller; here weights are normalized and counts taken.
+    """The caller resolved each row's node to its bus; here weights are normalized and counts taken.
 
     ``rows`` has settlement_point_id, bus_key (null when unresolved), raw_weight, source, psse_bus.
-    Rows landing on the same node (CRR buses of one contracted node) are merged.
+    Rows landing on the same bus (several CRR nodes joined by closed breakers) are merged.
     """
     rows = rows.with_columns(pl.col("bus_key").is_not_null().alias("is_resolved"))
     resolved = (rows.filter(pl.col("is_resolved"))
@@ -73,14 +73,14 @@ def _finish(points: pl.DataFrame, rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.
                 .with_columns(pl.lit(True).alias("is_resolved")))
     unresolved = rows.filter(~pl.col("is_resolved")).select("settlement_point_id", "bus_key", pl.lit(None, pl.Float64).alias("weight"),
                                                               "raw_weight", "source", "node_number", "is_resolved")
-    nodes = pl.concat([resolved.select(NODE_COLUMNS), unresolved.select(NODE_COLUMNS)]).sort("settlement_point_id", "bus_key")
-    counts = (nodes.group_by("settlement_point_id")
+    buses = pl.concat([resolved.select(BUS_COLUMNS), unresolved.select(BUS_COLUMNS)]).sort("settlement_point_id", "bus_key")
+    counts = (buses.group_by("settlement_point_id")
               .agg(pl.col("is_resolved").sum().cast(pl.UInt32).alias("n_buses"), (~pl.col("is_resolved")).sum().cast(pl.UInt32).alias("n_unresolved"),
                    pl.col("raw_weight").filter(pl.col("is_resolved")).sum().alias("weight_sum_raw")))
     points = (points.join(counts, on="settlement_point_id", how="left")
               .with_columns(pl.col("n_buses").fill_null(0), pl.col("n_unresolved").fill_null(0))
               .select(SP_COLUMNS).sort("settlement_point_id"))
-    return points, nodes
+    return points, buses
 
 
 def crr_settlement_points(nodes: pl.DataFrame, sources_sinks: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:

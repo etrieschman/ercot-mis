@@ -17,7 +17,7 @@ def test_crr_points_normalize_weights_merge_contracted_buses_and_flag_unknown_bu
         "participation_factor": [1.0, 100.0, 300.0, 400.0, 0.25, 0.75, 1.0, 1.0],
     })
     points, rows = spm.crr_settlement_points(nodes, ss)
-    assert list(points.columns) == list(spm.SP_COLUMNS) and list(rows.columns) == list(spm.NODE_COLUMNS)
+    assert list(points.columns) == list(spm.SP_COLUMNS) and list(rows.columns) == list(spm.BUS_COLUMNS)
     by = {r["settlement_point_id"]: r for r in points.to_dicts()}
     assert (by["RN_X"]["kind"], by["HB_H"]["kind"], by["LZ_Z"]["kind"], by["DCTIE"]["kind"]) == ("resource_node", "hub", "load_zone", "dc_tie")
     assert (by["HB_H"]["n_buses"], by["HB_H"]["weight_sum_raw"]) == (2, 800.0)  # buses 1 and 2 merged into node A

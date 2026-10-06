@@ -124,9 +124,9 @@ def match_branches(crr_branch: pl.DataFrame, mapping_lines: pl.DataFrame, mappin
     return _registered(pl.concat([matched, leftover]).select(COLUMNS).sort("match_method", "crr_branch_id", "dam_branch_id"), "match_branch")
 
 
-# ------------------------------------------------------------------ nodes
+# ------------------------------------------------------------------ buses
 
-NODE_COLUMNS = ("crr_bus_key", "dam_bus_key", "match_method", "settlement_point", "n_votes", "n_candidates")
+BUS_COLUMNS = ("crr_bus_key", "dam_bus_key", "match_method", "settlement_point", "n_votes", "n_candidates")
 
 
 def _settlement_points(nodes: pl.DataFrame) -> pl.DataFrame:
@@ -138,18 +138,18 @@ def _settlement_points(nodes: pl.DataFrame) -> pl.DataFrame:
 
 def match_buses(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl.DataFrame, dam_branch: pl.DataFrame,
                 branch_matches: pl.DataFrame) -> pl.DataFrame:
-    """One row per CRR node with its DAM node, plus unmatched DAM nodes.
+    """One row per CRR bus with its DAM bus, plus unmatched DAM buses (a DAM node is a bus on its own).
 
     Methods, first that succeeds wins:
 
-    1. ``settlement_point``: settlement point names attached to exactly one node on
+    1. ``settlement_point``: settlement point names attached to exactly one bus on
        each side (zones and hubs attach to many CRR buses and are skipped) vote for a
-       (CRR node, DAM node) pair; a pair is accepted when every point on either node
+       (CRR bus, DAM bus) pair; a pair is accepted when every point on either bus
        agrees on it, so several resource nodes on one bus count as one match with
        ``n_votes`` points behind it;
-    2. ``branch_endpoints``: over the matched branches, count how often a CRR node
-       and a DAM node sit at the same end (either orientation); accept a pair when it
-       is the top vote for both nodes and either has at least two votes or both nodes
+    2. ``branch_endpoints``: over the matched branches, count how often a CRR bus
+       and a DAM bus sit at the same end (either orientation); accept a pair when it
+       is the top vote for both buses and either has at least two votes or both buses
        have a single matched branch;
     3. ``unmatched``, with the number of competing candidates.
     """
@@ -185,13 +185,13 @@ def match_buses(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl
               .join(degree_crr, on="crr_bus_key").join(degree_dam, on="dam_bus_key")
               .filter((pl.col("n_votes") == pl.col("_max_c")) & (pl.col("n_votes") == pl.col("_max_d"))
                       & ((pl.col("n_votes") >= 2) | ((pl.col("_deg_c") == 1) & (pl.col("_deg_d") == 1)))))
-    # A node whose top vote ties between two partners stays unmatched.
+    # A bus whose top vote ties between two partners stays unmatched.
     ties = scored.group_by("crr_bus_key").len().filter(pl.col("len") > 1)["crr_bus_key"]
     by_ends = (scored.filter(~pl.col("crr_bus_key").is_in(ties.implode())).unique(subset=["dam_bus_key"], keep="none")
                .select("crr_bus_key", "dam_bus_key", pl.lit(None, pl.String).alias("settlement_point"), pl.lit("branch_endpoints").alias("match_method"),
                        pl.col("n_votes").cast(pl.UInt32), pl.col("n_candidates").cast(pl.UInt32)))
 
-    matched = pl.concat([by_sp.select(NODE_COLUMNS), by_ends.select(NODE_COLUMNS)])
+    matched = pl.concat([by_sp.select(BUS_COLUMNS), by_ends.select(BUS_COLUMNS)])
     rest_crr = (crr_keys.filter(~pl.col("crr_bus_key").is_in(matched["crr_bus_key"].implode()))
                 .join(best_crr.select("crr_bus_key", "n_candidates"), on="crr_bus_key", how="left")
                 .select("crr_bus_key", pl.lit(None, pl.String).alias("dam_bus_key"), pl.lit("unmatched").alias("match_method"),
@@ -199,7 +199,7 @@ def match_buses(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl
     rest_dam = (dam_keys.filter(~pl.col("dam_bus_key").is_in(matched["dam_bus_key"].implode()))
                 .select(pl.lit(None, pl.String).alias("crr_bus_key"), "dam_bus_key", pl.lit("unmatched").alias("match_method"),
                         pl.lit(None, pl.String).alias("settlement_point"), pl.lit(None, pl.UInt32).alias("n_votes"), pl.lit(0, pl.UInt32).alias("n_candidates")))
-    return _registered(pl.concat([matched, rest_crr, rest_dam]).select(NODE_COLUMNS).sort("match_method", "crr_bus_key", "dam_bus_key"), "match_bus")
+    return _registered(pl.concat([matched, rest_crr, rest_dam]).select(BUS_COLUMNS).sort("match_method", "crr_bus_key", "dam_bus_key"), "match_bus")
 
 
 # ------------------------------------------------------------------ contingencies

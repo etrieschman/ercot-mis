@@ -73,7 +73,7 @@ def _keys(nodes: pl.DataFrame, attachments: pl.DataFrame, group: str) -> pl.Data
     nodes = nodes.with_columns(text.map_elements(_digest, return_dtype=pl.String).alias("bus_key"))
     counts = nodes.group_by("bus_key").len().rename({"len": "_n"})
     nodes = nodes.join(counts, on="bus_key").with_columns((pl.col("_n") > 1).alias("is_ambiguous")).drop("_n")
-    # Buses with the same key (usually isolated buses at one substation) get an ordinal so keys stay unique.
+    # Nodes with the same key (usually isolated nodes at one substation) get an ordinal so keys stay unique.
     return nodes.with_columns(
         pl.when(pl.col("is_ambiguous"))
         .then(pl.col("bus_key") + "#" + pl.col(group).rank("ordinal").over("bus_key").cast(pl.String))
@@ -83,7 +83,7 @@ def _keys(nodes: pl.DataFrame, attachments: pl.DataFrame, group: str) -> pl.Data
 
 def dam_nodes(bus: pl.DataFrame, lines: pl.DataFrame, transformers: pl.DataFrame, generators: pl.DataFrame,
               loads: pl.DataFrame, settlement_points: pl.DataFrame) -> pl.DataFrame:
-    """One row per RAW bus of one DAM hourly model, with its stable ``bus_key``.
+    """One row per node (one RAW record) of one DAM hourly model, with its stable ``bus_key``.
 
     Inputs are the raw tables of one hour (``psse_bus``, ``dam_lines``, ``dam_transformers``,
     ``dam_generators``, ``dam_loads``, ``dam_settlement_points``).
@@ -124,7 +124,7 @@ def tie_groups(branch: pl.DataFrame, tie_reactance: float = TIE_REACTANCE) -> pl
 
 def crr_nodes(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame, autos: pl.DataFrame,
               sources_sinks: pl.DataFrame, tie_reactance: float = TIE_REACTANCE) -> pl.DataFrame:
-    """One row per RAW bus of a CRR model with its ``bus_key`` after contracting bus ties.
+    """One row per node (one RAW record) of a CRR model, with the ``bus_key`` of the bus its closed breakers join it to.
 
     Inputs are ``psse_bus``, ``psse_branch``, ``psse_transformer``, ``crr_mapping_autos``
     and ``crr_sources_and_sinks``. Lines are named by their RAW comment, transformers by

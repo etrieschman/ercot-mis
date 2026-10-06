@@ -4,7 +4,7 @@ EWS keeps nothing older than each product's display window (31 days for DAM netw
 models, 365 for CRR models), so run this every day. It fetches pulled products, lists
 tracked EWS ones so their availability is recorded, then parses every new package into
 the raw layer and rebuilds core for it (packages already built are skipped by their
-cache key), then runs the price identity check on the newest days. It exits non-zero
+cache key), then runs the price check on the newest days. It exits non-zero
 if anything failed; failed documents and packages are retried on the next run.
 
 Each run logs what is still at risk: EWS documents ERCOT currently offers that are not
@@ -39,7 +39,7 @@ DAM_OPERATING_DATES: set[date] | None = None
 # by hand with ``fetch(product, since=...)``. A month covers any gap short of losing EWS data.
 PUBLIC_API_LOOKBACK_DAYS = 31
 
-# The price identity check runs for this many of the newest days with prices and a model.
+# The price check runs for this many of the newest days with prices and a model.
 PRICE_CHECK_DAYS = 2
 
 # Per-product ceiling for one run; a first run over a full window stays well under it.

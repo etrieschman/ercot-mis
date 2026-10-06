@@ -68,7 +68,8 @@ The header picks the table (`raw/prices.py`): `dam_shadow_prices`, `dam_lmps`,
   substation the two voltages tell the ends apart, and only to the tenth of a kV: a line
   between two nodes of one level differs in the tenths digit alone.
 - Shadow prices are non-negative; they enter the price with a minus sign in the
-  model's own orientation (settled by the data in `check_prices.py`, both signs tried).
+  model's own orientation (PRC-01, a fixed convention; the flipped sign is reported as a
+  diagnostic and has been worse in every hour measured).
 - Hours are matched to DAM models on `interval_start_utc` built from (delivery date, hour
   ending, `dst_flag`); the flag marks the repeated hour of the long day (NAM-08).
 - The system price file writes the hour without a leading zero (`1:00`); the price files
@@ -81,7 +82,7 @@ The header picks the table (`raw/prices.py`): `dam_shadow_prices`, `dam_lmps`,
 
 `scripts/check_prices.py` writes `data/reports/prices/<snapshot>.json` per DAM hour:
 how many binding rows resolve to a branch, a contingency or a GTC, and the residual of
-the price identity at the settlement points.
+the price check at the settlement points.
 
 ## Open questions
 

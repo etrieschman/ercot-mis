@@ -80,7 +80,7 @@ def test_match_buses_by_settlement_point_then_branch_endpoints():
     dam_only = result.filter(pl.col("crr_bus_key").is_null())
     assert dam_only["dam_bus_key"].to_list() == ["d9"] and dam_only["match_method"][0] == "unmatched"
     assert result.filter(pl.col("match_method") != "unmatched")["dam_bus_key"].is_unique().all()
-    assert list(result.columns) == list(match.NODE_COLUMNS)
+    assert list(result.columns) == list(match.BUS_COLUMNS)
 
 
 def test_match_contingencies_by_name_then_by_translated_branch_set():

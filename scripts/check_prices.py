@@ -11,7 +11,10 @@ case, or with the contingency's branches removed), prices every settlement point
 through its node weights, and compares with what ERCOT published. The system price
 is the published DAM System Lambda (NP4-523-CD); for hours before it was pulled it is
 fitted as the median difference. What is left is the residual; if the network, the
-names and the contingency definitions are right, it is zero at every point.
+names and the contingency definitions are right, it is zero at every point. A binding
+row the model cannot apply (a name it lacks, a contingency whose branches it lacks) is
+counted in ``rows_by_outcome`` and lowers ``share_of_shadow_price_used``; the headline
+is a test of the model only when that share is one.
 
 It needs no awards and no re-clearing: the shadow prices already carry everything
 the DAM's commitment and ancillary services did. It tests shift factors only on the
@@ -126,7 +129,13 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
     kv = dict(net.nodes.select("index", "kv").rows())
     branch_of = {k: (j, f, t) for k, j, f, t in net.branches.select(key(pl.col("branch_id")), "index", "from_index", "to_index").rows()}
     ctg_of = {k: idx for k, idx in net.contingencies.select(key(pl.col("contingency_id")), "branch_indexes").rows()}
-    dropped_ctg = set(net.dropped_contingencies.select(key(pl.col("contingency_id")))["contingency_id"])
+    # Of a contingency the network applies: how many of its branch rows it could not (unresolved names, branches it dropped).
+    ctg_missing = {k: int(u) + int(d) for k, u, d in net.contingencies.select(key(pl.col("contingency_id")), "n_unresolved", "n_dropped").rows()}
+    # Of a contingency the network dropped as empty: why it was empty.
+    dropped_info = {k: (int(d), int(u), int(o)) for k, d, u, o in
+                    net.dropped_contingencies.select(key(pl.col("contingency_id")), "n_dropped", "n_unresolved", "n_other_rows").rows()}
+    limit_flags = {k: f"secured={s} monitored={m} limited={l}" for k, s, m, l in net.branches.select(key(pl.col("branch_id")), "is_secured", "is_monitored", "is_limited").rows()}
+    rows_by_flags: dict[str, int] = {}
 
     def direction(f: int, t: int, from_station: str, to_station: str, from_kv: float, to_kv: float) -> float | None:
         if substation[f] != substation[t]:
@@ -190,13 +199,20 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
             why = "constraint_not_a_branch"
         else:
             j, f, t = branch_of[name]
+            rows_by_flags[limit_flags[name]] = rows_by_flags.get(limit_flags[name], 0) + 1  # RAT-09: which flags the binding branches carry
             sign = direction(f, t, from_station, to_station, from_kv, to_kv)
             if sign is None:
                 why = "direction_not_recognized"
             elif ctg == BASE_CASE:
                 why, solver = "used_base_case", system
-            elif ctg in dropped_ctg:
-                why, solver = "used_contingency_empty_in_model", system
+            elif ctg in dropped_info:
+                n_dropped, n_unresolved, n_other = dropped_info[ctg]
+                if n_dropped or n_unresolved:
+                    # ERCOT bound a row under a contingency whose branches our model lacks or has out of service:
+                    # a topology discrepancy, recorded and not priced (RAT-10).
+                    why = "binding_under_contingency_absent_in_model"
+                else:
+                    why, solver = "used_non_topological_contingency", system  # only generator, load or settlement point rows: the DC topology is the base case
             elif ctg not in ctg_of:
                 why = "contingency_unknown"
             elif j in ctg_of[ctg]:
@@ -210,6 +226,8 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
                     why, solver = "constraint_islanded_by_its_contingency", None
                 else:
                     why = "used_contingency_islanding" if solver.n_islanded else "used_contingency_split_bus" if splits.get(ctg) else "used_contingency"
+                    if ctg_missing.get(ctg):
+                        why = "used_contingency_partial"  # applied with fewer branches than ERCOT's definition names
         outcome[why] = outcome.get(why, 0) + 1
         mu_by_outcome[why] = round(mu_by_outcome.get(why, 0.0) + mu, 2)
         if solver is not None:
@@ -233,7 +251,11 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
               "contingencies_solved": len(systems), "max_nodes_islanded_by_a_contingency": islanded_nodes,
               "priced_points_published": prices.height, "points_compared": points.height,
               "price_spread_published": round(float(observed.max() - observed.min()), 2)}
-    # The sign convention of the published shadow prices is settled by the data, not assumed.
+    # PRC-01: price = system price - sum over binding rows of shadow price x shift factor, with the shift factor in the
+    # branch's own from-to orientation and the row's direction sign (PRC-02). The convention is fixed; the residual
+    # under the opposite sign is kept as a diagnostic (it was worse in every hour measured).
+    SIGN = -1.0
+
     def residual_for(sign: float) -> np.ndarray:
         base = observed - sign * c
         return base - (system_price if system_price is not None else np.median(base))
@@ -244,12 +266,15 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
                 "p99_abs": round(float(np.quantile(a, 0.99)), 3), "max_abs": round(float(a.max()), 2),
                 "within_0.01": int((a <= 0.01).sum()), "within_1.00": int((a <= 1.0).sum())}
 
-    for sign, label in ((-1.0, "minus"), (1.0, "plus")):
-        result[f"residual_{label}"] = quantiles(residual_for(sign))
-    best = min((-1.0, 1.0), key=lambda s: np.abs(residual_for(s)).sum())
-    centred = residual_for(best)
+    best = SIGN
+    centred = residual_for(SIGN)
     resid = np.abs(centred)
-    result["sign"] = "minus" if best < 0 else "plus"
+    result["residual"] = quantiles(centred)
+    result["residual_if_sign_flipped"] = quantiles(residual_for(-SIGN))
+    # The headline is only a test of the model when every binding row was applied; otherwise the misses mix
+    # modeling error with rows that were skipped, and the share says how much shadow price was skipped.
+    result["residual_when_every_row_applied"] = result["residual"] if result["share_of_shadow_price_used"] == 1.0 else None
+    result["binding_rows_by_limit_flags"] = dict(sorted(rows_by_flags.items()))
     result["system_price"] = {"source": "published" if system_price is not None else "fitted_median",
                               "fitted_median_minus_published": (round(float(np.median(observed - best * c) - system_price), 3)
                                                                 if system_price is not None else None)}
@@ -333,11 +358,13 @@ def summary_line(day: date, results: list[dict]) -> str:
     """One log line for a day: hours checked, the residual's typical, tail and worst values, and the system price source."""
     if not results:
         return f"price check {day}: no hours with prices and a model"
-    best = [min(r["residual_minus"], r["residual_plus"], key=lambda x: x["p99_abs"]) for r in results]
+    best = [r["residual"] for r in results]
     sources = {r["system_price"]["source"] for r in results}
     gtc_hours = sum(1 for r in results if any(k.startswith("used_gtc") for k in r["rows_by_outcome"]))
+    skipped = [r for r in results if (r["share_of_shadow_price_used"] or 1.0) < 1.0]
+    note = f", {len(skipped)} hours with shadow price not applied (least share {min(r['share_of_shadow_price_used'] for r in skipped):.2f})" if skipped else ""
     return (f"price check {day}: {len(results)} hours, p50 {max(b['p50_abs'] for b in best):.2f}, p99 {max(b['p99_abs'] for b in best):.2f}, "
-            f"max {max(b['max_abs'] for b in best):.2f} $/MWh (worst hour), {gtc_hours} hours with a binding GTC, system price {'/'.join(sorted(sources))}")
+            f"max {max(b['max_abs'] for b in best):.2f} $/MWh (worst hour), {gtc_hours} hours with a binding GTC, system price {'/'.join(sorted(sources))}{note}")
 
 
 def main() -> None:

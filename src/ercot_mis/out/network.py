@@ -9,12 +9,14 @@ named option in :class:`Options` defaulting to ERCOT practice.
 
 What the assembly does, in order:
 
-1. **Nodes.** By default every RAW bus is a node, as ERCOT's engines solve it: the CRR
-   auction keeps its bus ties (closed breakers at the minimum reactance) as branches
-   and enforces the ones it monitors. ``contract_ties`` merges CRR buses joined by
-   in-service ties into one node instead (``core.node`` carries the grouping); that is
-   an analysis choice, measured to move PTDF entries by small amounts and to drop the
-   monitored ties' limits. DAM RAWs have no ties, so the option does nothing there.
+1. **Vertices.** By default every model node (one RAW record) is a vertex, as ERCOT's
+   engines solve it: the CRR auction keeps its bus ties (closed breakers at the minimum
+   reactance) as branches and enforces the ones it monitors. ``contract_ties`` makes
+   each CRR bus (its nodes joined by in-service ties, ``core.node`` carries the grouping)
+   one vertex instead; that is an analysis choice, measured to move shift factors by
+   small amounts and to drop the monitored ties' limits. DAM RAWs have no ties, so the
+   option does nothing there. The frames keep the word ``node`` for a vertex;
+   ``n_members`` says how many model nodes it stands for.
 2. **Branches.** Out-of-service branches are dropped. A branch whose two ends are the
    same node (a contracted tie, or a real branch in parallel with a tie group) carries
    no flow in a DC model and is dropped. Nodes with no branch left, and any component
@@ -81,8 +83,9 @@ class Options:
     """The judgment calls, each defaulting to ERCOT practice for the model at hand."""
 
     contract_ties: bool = False
-    """CRR: merge buses joined by in-service bus ties into one node (an analysis choice;
-    ERCOT solves with the ties and enforces the monitored ones). No effect on DAM."""
+    """CRR: make each bus (nodes joined by in-service bus ties) one vertex instead of keeping
+    every node (an analysis choice; ERCOT solves with the ties and enforces the monitored
+    ones). No effect on DAM."""
 
     rating_source: str | None = None
     """``"crr_monitored"`` (the CRR CSV; the CRR default) or ``"psse_raw"`` (RAW rates;
@@ -117,9 +120,9 @@ class Network:
     """``"ercot"`` when the slack is a swing bus the RAW marks, ``"fallback"`` when none
     survived and the busiest node stands in."""
     nodes: pl.DataFrame
-    """``index, node_id, raw_name, substation, kv, n_members, node_number, is_slack`` (``substation`` is null
-    for CRR models, whose RAW names nodes); ``n_members`` is how many
-    model nodes the vertex stands for (more than one only when ties are contracted into buses)."""
+    """One row per vertex: a model node, or a bus when ``contract_ties`` is set. ``index, node_id, raw_name,
+    substation, kv, n_members, node_number, is_slack`` (``substation`` is null for CRR models, whose RAW names
+    nodes); ``n_members`` is how many model nodes the vertex stands for (more than one only under contraction)."""
     branches: pl.DataFrame
     """``index, branch_id, kind, from_node_id, to_node_id, from_index, to_index, x_pu,
     tap_ratio, base_limit_mw, contingency_limit_mw, is_limited, is_monitored, is_secured``."""
@@ -214,7 +217,7 @@ def _components(nodes: list[str], edges: pl.DataFrame) -> dict[str, str]:
 
 
 def _node_ids(node: pl.DataFrame, contract_ties: bool) -> pl.DataFrame:
-    """One row per RAW bus with the ``node_id`` it belongs to."""
+    """One row per model node with the vertex (``node_id``) it belongs to: itself, or its bus when ties are contracted."""
     if contract_ties:
         return node.with_columns(pl.col("bus_key").alias("node_id"))
     # Tie members keep their own bus as a node; the key still says which group they are in.
@@ -287,7 +290,7 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
     dropped_branches = branch.filter(pl.col("reason").is_not_null()).select("branch_id", "reason", pl.col("is_monitored").fill_null(False)).sort("branch_id")
     kept = branch.filter(pl.col("reason").is_null())
 
-    # Nodes: one row per node in the main component, with a representative bus.
+    # Vertices: one row per vertex in the main component, with a representative node number.
     nodes = (buses.filter(~pl.col("node_id").is_in(dropped_nodes["node_id"].implode()))
              .group_by("node_id").agg(pl.col("raw_name").first(), pl.col("substation").first(), pl.col("kv").min(), pl.len().alias("n_members"),
                                       pl.col("node_number").min(), (pl.col("node_type") == 3).any().alias("_slack"))

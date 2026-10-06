@@ -11,7 +11,7 @@ flipping it to `pull`, adding it to the daily pull, and writing its parser and n
 
 | purpose | products |
 |---|---|
-| The system price (removes the one free number in the price identity) | NP4-523-CD DAM System Lambda |
+| The system price (removes the one free number in the price check) | NP4-523-CD DAM System Lambda |
 | What the DAM does with settlement points that are cut off | NP4-200-CD De-Energized Settlement Points in Base Case; NP4-158-SG Electrically Similar Settlement Points; NP4-231-CD Electrical Bus Mapping for Heuristic Pricing |
 | Offers, bids and awards, 60 days later (the injections for the flow check; the generation stack) | NP3-966-ER 60-Day DAM Disclosure; NP3-965-ER 60-Day SCED Disclosure |
 | The same, aggregated, 2 days later | NP3-909-ER 2-Day DAM Bids and Offers; NP3-907-EX 2-Day DAM Energy Curves |
