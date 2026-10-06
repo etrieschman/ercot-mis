@@ -275,8 +275,7 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
               "priced_points_published": prices.height, "points_compared": points.height,
               "price_spread_published": round(float(observed.max() - observed.min()), 2)}
     # PRC-01: price = system price - sum over binding rows of shadow price x shift factor, with the shift factor in the
-    # branch's own from-to orientation and the row's direction sign (PRC-02). The convention is fixed; the residual
-    # under the opposite sign is kept as a diagnostic (it was worse in every hour measured).
+    # branch's own from-to orientation and the row's direction sign (PRC-02).
     SIGN = -1.0
 
     def residual_for(sign: float) -> np.ndarray:
@@ -293,7 +292,6 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
     centred = residual_for(SIGN)
     resid = np.abs(centred)
     result["residual"] = quantiles(centred)
-    result["residual_if_sign_flipped"] = quantiles(residual_for(-SIGN))
     # The headline is only a test of the model when every binding row was applied; otherwise the misses mix
     # modeling error with rows that were skipped, and the share says how much shadow price was skipped.
     result["residual_when_every_row_applied"] = result["residual"] if result["share_of_shadow_price_used"] == 1.0 else None
