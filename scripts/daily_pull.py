@@ -1,11 +1,17 @@
-"""Daily pull: archive every EWS document before it rolls off, the day's public prices, then build the layers.
+"""Daily pull: archive every EWS document before it rolls off, the public reports, build the layers, check prices.
 
 EWS keeps nothing older than each product's display window (31 days for DAM network
 models, 365 for CRR models), so run this every day. It fetches pulled products, lists
-tracked ones so their availability is recorded, then parses every new package into the
-raw layer and rebuilds core for it (packages already built are skipped by their cache
-key). It exits non-zero if anything failed; failed documents and packages are retried
-on the next run.
+tracked EWS ones so their availability is recorded, then parses every new package into
+the raw layer and rebuilds core for it (packages already built are skipped by their
+cache key), then runs the price identity check on the newest days. It exits non-zero
+if anything failed; failed documents and packages are retried on the next run.
+
+Each run logs what is still at risk: EWS documents ERCOT currently offers that are not
+archived, and how many days before the oldest rolls off its window. The same facts
+go to ``data/logs/last_run.json`` with the previous run's time, so a gap between runs
+(a sleeping machine) is visible. The Public API keeps years, so a gap there heals
+itself: every run looks back a month.
 
 To capture only some DAM days, copy this file to pulls/ (gitignored) and set
 DAM_OPERATING_DATES there. Schedule it with launchd: see scripts/launchd/.
@@ -18,6 +24,7 @@ import subprocess
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import polars as pl
 
@@ -28,10 +35,12 @@ from ercot_mis.raw.build import parsed_products
 # a set of dates captures only those.
 DAM_OPERATING_DATES: set[date] | None = None
 
-# Public API products pulled every day (DAM shadow prices, bus LMPs, settlement point
-# prices); older days are backfilled by hand with ``fetch(product, since=...)``.
-PUBLIC_API_DAILY = ("NP4-191-CD", "NP4-183-CD", "NP4-190-CD")
-PUBLIC_API_LOOKBACK_DAYS = 7
+# Every pulled Public API product, over this many days back; older days are backfilled
+# by hand with ``fetch(product, since=...)``. A month covers any gap short of losing EWS data.
+PUBLIC_API_LOOKBACK_DAYS = 31
+
+# The price identity check runs for this many of the newest days with prices and a model.
+PRICE_CHECK_DAYS = 2
 
 # Per-product ceiling for one run; a first run over a full window stays well under it.
 MAX_GB = 5
@@ -76,16 +85,61 @@ def _report(label: str, result: pl.DataFrame) -> int:
     return counts.get("failed", 0)
 
 
+def at_risk(mis: em.Session, listed_since: datetime) -> dict:
+    """EWS documents ERCOT offers right now that are not archived, and days before the oldest rolls off.
+
+    Reads the catalog's listing from this run (no new EWS calls). A document that failed
+    to download, or was skipped by ``DAM_OPERATING_DATES``, counts; one that already rolled
+    off is gone and is not counted.
+    """
+    now = datetime.now(timezone.utc)
+    unarchived, nearest = 0, None
+    for spec in em.PRODUCTS.values():
+        if spec.source != "ews" or spec.take != "pull" or not spec.display_days:
+            continue
+        docs = mis.catalog().documents(spec.emil_id)
+        missing = docs.filter(~pl.col("is_archived") & (pl.col("last_listed_at") >= listed_since) & pl.col("posted_at").is_not_null())
+        if missing.is_empty():
+            continue
+        unarchived += missing.height
+        oldest = missing["posted_at"].min()
+        days_left = spec.display_days - (now - oldest).total_seconds() / 86400
+        nearest = days_left if nearest is None else min(nearest, days_left)
+    return {"unarchived_ews_documents": unarchived, "days_until_oldest_rolls_off": None if nearest is None else round(nearest, 1)}
+
+
+def check_prices_recent(mis: em.Session, days: int = PRICE_CHECK_DAYS) -> int:
+    """The price identity on the newest days with prices and a model; one log line per day. Returns the failure count."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import check_prices
+
+    failed = 0
+    for day in check_prices.days_with_prices(mis)[-days:]:
+        began = time.monotonic()
+        try:
+            results = check_prices.run(mis, check_prices.hour_ids(mis, day), quiet=True)
+        except Exception as error:
+            failed += 1
+            print(f"  price check {day}: FAILED {type(error).__name__}: {error}", flush=True)
+            continue
+        print(f"  {check_prices.summary_line(day, results)}, {time.monotonic() - began:.0f}s", flush=True)
+    return failed
+
+
 def main() -> int:
     started = datetime.now(timezone.utc)
     print(f"daily pull {started:%Y-%m-%d %H:%M} UTC", flush=True)
     failed = 0
     with em.open() as mis:
         status_path = mis.data_dir / "logs" / "last_run.json"
+        previous = json.loads(status_path.read_text()) if status_path.is_file() else {}
+        if previous.get("finished_utc"):
+            gap = (started - datetime.fromisoformat(previous["finished_utc"])).total_seconds() / 86400
+            print(f"  previous run finished {previous['finished_utc'][:16]} UTC, {gap:.1f} days ago", flush=True)
         for spec in em.PRODUCTS.values():
-            if spec.source == "public_api" and spec.emil_id not in PUBLIC_API_DAILY:
-                continue
-            # The Public API keeps years of history; a daily run only looks at the last few days.
+            if spec.source == "public_api" and spec.take == "track":
+                continue  # tracked Public API products are not listed daily; the archive keeps them for years
+            # The Public API keeps years of history; a daily run looks back a month.
             since = None if spec.source == "ews" else date.today() - timedelta(days=PUBLIC_API_LOOKBACK_DAYS)
             began = time.monotonic()
             try:
@@ -105,9 +159,14 @@ def main() -> int:
             print(f"  {spec.emil_id}: fetched {done.height} ({done['size_bytes'].sum() / 1e6:.1f} MB), failed {errors.height}, {time.monotonic() - began:.0f}s", flush=True)
             for doc_id, error in errors.select("doc_id", "error").iter_rows():
                 print(f"    doc {doc_id}: {error}")
+        risk = at_risk(mis, started)
+        print(f"  at risk: {risk['unarchived_ews_documents']} EWS documents not archived"
+              + (f", oldest rolls off in {risk['days_until_oldest_rolls_off']} days" if risk["days_until_oldest_rolls_off"] is not None else ""), flush=True)
         failed += build_layers(mis)
+        failed += check_prices_recent(mis)
     status_path.parent.mkdir(mode=0o700, exist_ok=True)
-    status_path.write_text(json.dumps({"started_utc": started.isoformat(), "finished_utc": datetime.now(timezone.utc).isoformat(), "failed": failed}))
+    status_path.write_text(json.dumps({"started_utc": started.isoformat(), "finished_utc": datetime.now(timezone.utc).isoformat(), "failed": failed,
+                                       "previous_finished_utc": previous.get("finished_utc"), **risk}))
     if failed:
         notify("ercot-mis daily pull", f"{failed} failure(s); see data/logs/daily_pull.log")
     return 1 if failed else 0

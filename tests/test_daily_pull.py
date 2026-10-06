@@ -53,3 +53,29 @@ def test_build_layers_counts_an_exception_as_one_failure_and_keeps_going(capsys)
     session = FakeSession(raw=RuntimeError("catalog locked"), core=_result("built", "failed"))
     assert daily_pull.build_layers(session) == len(daily_pull.parsed_products()) + 1
     assert "catalog locked" in capsys.readouterr().out
+
+
+def test_at_risk_counts_only_what_ercot_still_offers_and_we_lack():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    run_started = now - timedelta(minutes=5)
+
+    class Catalog:
+        def documents(self, emil_id):
+            if emil_id != "NP4-500-SG":
+                return pl.DataFrame(schema={"is_archived": pl.Boolean, "last_listed_at": pl.Datetime("us", "UTC"), "posted_at": pl.Datetime("us", "UTC")})
+            return pl.DataFrame({
+                "is_archived": [True, False, False, False],
+                # archived; missing and listed today; missing but rolled off (not listed this run); missing without a posting time
+                "last_listed_at": [now, now, now - timedelta(days=40), now],
+                "posted_at": [now - timedelta(days=3), now - timedelta(days=29), now - timedelta(days=60), None],
+            })
+
+    class Session:
+        def catalog(self):
+            return Catalog()
+
+    risk = daily_pull.at_risk(Session(), run_started)
+    assert risk["unarchived_ews_documents"] == 1
+    assert 1.5 < risk["days_until_oldest_rolls_off"] <= 2.0  # a 31-day window, posted 29 days ago

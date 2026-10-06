@@ -224,31 +224,66 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
     return result
 
 
+def hour_ids(session, day: date) -> list[str]:
+    """Every hour's latest-revision DAM snapshot for one operating day."""
+    snaps = session.core("snapshot").filter(pl.col("model_kind") == "dam").collect()
+    return snaps.filter(pl.col("operating_date") == day).sort("hour", "revision").unique(subset=["hour"], keep="last").sort("hour")["snapshot_id"].to_list()
+
+
+def days_with_prices(session) -> list[date]:
+    """Operating days that have both a DAM model and archived shadow prices, oldest first."""
+    try:
+        posted = {datetime.strptime(d, "%m/%d/%Y").date() for d in session.raw("dam_shadow_prices").select("delivery_date").unique().collect()["delivery_date"]}
+    except FileNotFoundError:
+        return []
+    modelled = set(session.core("snapshot").filter(pl.col("model_kind") == "dam").select("operating_date").unique().collect()["operating_date"])
+    return sorted(posted & modelled)
+
+
+def run(session, snapshot_ids: list[str], *, quiet: bool = False) -> list[dict]:
+    """Check each hour, write ``data/reports/prices/<snapshot>.json``, return the results (hours without prices skipped)."""
+    out = session.data_dir / "reports" / "prices"
+    out.mkdir(mode=0o700, parents=True, exist_ok=True)
+    results = []
+    for snapshot_id in snapshot_ids:
+        result = check_hour(session, snapshot_id)
+        if result is None:
+            if not quiet:
+                print(f"{snapshot_id}: no prices archived for this hour")
+            continue
+        if not quiet:
+            print(json.dumps(result, indent=1))
+        path = out / f"{snapshot_id.replace(':', '-')}.json"
+        path.write_text(json.dumps({"measured_at": datetime.now(timezone.utc).isoformat(), **result}, indent=1))
+        results.append(result)
+    return results
+
+
+def summary_line(day: date, results: list[dict]) -> str:
+    """One log line for a day: hours checked, the residual's typical, tail and worst values, and the system price source."""
+    if not results:
+        return f"price check {day}: no hours with prices and a model"
+    best = [min(r["residual_minus"], r["residual_plus"], key=lambda x: x["p99_abs"]) for r in results]
+    sources = {r["system_price"]["source"] for r in results}
+    gtc_hours = sum(1 for r in results if any(k.startswith("used_gtc") for k in r["rows_by_outcome"]))
+    return (f"price check {day}: {len(results)} hours, p50 {max(b['p50_abs'] for b in best):.2f}, p99 {max(b['p99_abs'] for b in best):.2f}, "
+            f"max {max(b['max_abs'] for b in best):.2f} $/MWh (worst hour), {gtc_hours} hours with a binding GTC, system price {'/'.join(sorted(sources))}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dam", default=None, help="DAM snapshot id (default: hour 12 of the latest day with prices)")
     parser.add_argument("--day", default=None, help="check all 24 hours of this operating date")
     args = parser.parse_args()
     with em.open() as session:
-        snaps = session.core("snapshot").filter(pl.col("model_kind") == "dam").collect()
         if args.day:
-            ids = snaps.filter(pl.col("operating_date") == date.fromisoformat(args.day)).sort("hour", "revision").unique(subset=["hour"], keep="last").sort("hour")["snapshot_id"].to_list()
+            ids = hour_ids(session, date.fromisoformat(args.day))
         elif args.dam:
             ids = [args.dam]
         else:
-            days = {datetime.strptime(d, "%m/%d/%Y").date() for d in session.raw("dam_shadow_prices").select("delivery_date").unique().collect()["delivery_date"]}
-            ids = snaps.filter(pl.col("operating_date").is_in(list(days)) & (pl.col("hour") == 12)).sort("operating_date", "revision")["snapshot_id"].to_list()[-1:]
-        out = session.data_dir / "reports" / "prices"
-        out.mkdir(mode=0o700, parents=True, exist_ok=True)
-        for snapshot_id in ids:
-            result = check_hour(session, snapshot_id)
-            if result is None:
-                print(f"{snapshot_id}: no prices archived for this hour")
-                continue
-            print(json.dumps(result, indent=1))
-            path = out / f"{snapshot_id.replace(':', '-')}.json"
-            path.write_text(json.dumps({"measured_at": datetime.now(timezone.utc).isoformat(), **result}, indent=1))
-            path.chmod(0o600)
+            days = days_with_prices(session)
+            ids = [i for i in hour_ids(session, days[-1]) if i.split(":")[2] == "he12"] if days else []
+        run(session, ids)
 
 
 if __name__ == "__main__":
