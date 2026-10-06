@@ -1,6 +1,7 @@
 # ERCOT data and personal pulls never enter the repository
 data/
 pulls/
+demo/data/
 
 # Identity and credentials
 .env

@@ -70,3 +70,13 @@ def test_every_tracked_file_is_clean():
     paths = [p for p in listed.stdout.split("\n") if p]
     read = lambda rel: (ROOT / rel).read_bytes() if (ROOT / rel).is_file() else None
     assert guard.problems(paths, read, guard.identifiers(ROOT)) == []
+
+
+def test_notebooks_must_be_committed_without_outputs():
+    import json
+
+    clean = json.dumps({"cells": [{"cell_type": "code", "source": "1", "outputs": [], "execution_count": None}]})
+    ran = json.dumps({"cells": [{"cell_type": "code", "source": "1", "outputs": [{"text": "x"}], "execution_count": 3}]})
+    assert _check({"demo/tour.ipynb": clean}) == []
+    found = _check({"demo/tour.ipynb": ran})
+    assert len(found) == 1 and "outputs" in found[0] and "x" not in found[0]

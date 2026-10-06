@@ -96,6 +96,17 @@ def _line(data: bytes, index: int) -> int:
     return data.count(b"\n", 0, index) + 1
 
 
+def notebook_outputs(data: bytes) -> int | None:
+    """How many cells of a notebook carry outputs or an execution count; None when it is not a notebook."""
+    import json
+
+    try:
+        cells = json.loads(data).get("cells", [])
+    except (ValueError, AttributeError):
+        return None
+    return sum(1 for c in cells if c.get("outputs") or c.get("execution_count") is not None)
+
+
 def problems(
     paths: Iterable[str],
     read: Callable[[str], bytes | None],
@@ -116,6 +127,8 @@ def problems(
             continue
         if len(data) > MAX_BYTES:
             found.append(f"{rel}: {len(data):,} bytes; data files belong in data/")
+        if suffix == ".ipynb" and (n := notebook_outputs(data)):
+            found.append(f"{rel}: {n} notebook cell(s) with outputs; strip them (outputs hold ERCOT data)")
         for ident in known:
             index = data.find(ident)
             if index >= 0:

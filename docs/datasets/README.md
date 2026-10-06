@@ -18,9 +18,10 @@ of the last clean run belong to the scripts that measure them (`validate_parsers
 | [dam-network-model.md](dam-network-model.md) | NP4-500-SG | parsed, validated |
 | [identity-and-matching.md](identity-and-matching.md) | keys across CRR and DAM | measured by `scripts/measure_identity.py` |
 | [generic-transmission-limits.md](generic-transmission-limits.md) | NP3-766-M, NP3-770-M | limits parsed; definitions archived |
-| _to write_ | NP4-160-SG, NP3-220-SG, NP5-615-SG | archived, not parsed |
-| [dam-prices.md](dam-prices.md) | NP4-191-CD, NP4-183-CD, NP4-190-CD | parsed; tested by `scripts/check_prices.py` |
-| _to write_ | NP3-966-ER, NP4-159-CD | listed, not pulled yet |
+| [settlement-point-mappings.md](settlement-point-mappings.md) | NP4-160-SG, NP3-220-SG | parsed, not yet used by core |
+| _to write_ | NP5-615-SG | archived, not parsed |
+| [dam-prices.md](dam-prices.md) | NP4-191-CD, NP4-183-CD, NP4-190-CD, NP4-523-CD, NP4-200-CD, NP4-158-SG, NP4-231-CD, NP4-159-CD | parsed; tested by `scripts/check_prices.py` |
+| [dam-disclosure.md](dam-disclosure.md) | NP3-966-ER | parsed; the flow check waits for the first overlapping day |
 | [planning-inputs.md](planning-inputs.md) | outages, offers, load, wind and solar, system lambda (candidates) | tracked in `products.py`, not pulled |
 
 ## Template
