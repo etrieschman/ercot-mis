@@ -160,7 +160,8 @@
      "ra": 900,
      "rb": 990.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": 900
     },
     {
      "id": "TIE_34",
@@ -178,7 +179,8 @@
      "ra": null,
      "rb": null,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     },
     {
      "id": "TIE_39",
@@ -196,7 +198,8 @@
      "ra": null,
      "rb": null,
      "ctg": [],
-     "temp": true
+     "temp": true,
+     "lim": null
     },
     {
      "id": "XF_A1",
@@ -217,7 +220,8 @@
       "C1",
       "C2"
      ],
-     "temp": false
+     "temp": false,
+     "lim": 400
     },
     {
      "id": "XF_A2",
@@ -235,7 +239,8 @@
      "ra": null,
      "rb": null,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     },
     {
      "id": "L_AB",
@@ -255,7 +260,8 @@
      "ctg": [
       "C1"
      ],
-     "temp": false
+     "temp": false,
+     "lim": 1200
     },
     {
      "id": "L_AB2",
@@ -273,7 +279,8 @@
      "ra": null,
      "rb": null,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     },
     {
      "id": "L_AC",
@@ -291,7 +298,8 @@
      "ra": null,
      "rb": null,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     },
     {
      "id": "L_AD",
@@ -309,7 +317,8 @@
      "ra": 220,
      "rb": 242.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": 220
     },
     {
      "id": "L_AE",
@@ -327,7 +336,8 @@
      "ra": null,
      "rb": null,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     },
     {
      "id": "XF3_H",
@@ -345,7 +355,8 @@
      "ra": 300.0,
      "rb": 330.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     },
     {
      "id": "XF3_L",
@@ -363,7 +374,8 @@
      "ra": 300.0,
      "rb": 330.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     },
     {
      "id": "XF3_T",
@@ -381,7 +393,8 @@
      "ra": 300.0,
      "rb": 330.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     }
    ],
    "loads": [
@@ -409,7 +422,12 @@
      "ldf": null,
      "zone": null
     }
-   ]
+   ],
+   "coverage": {
+    "nodes": 11,
+    "branches": 13,
+    "loads": 3
+   }
   },
   {
    "id": "dam:2030-01-15:he12:r1",
@@ -534,7 +552,8 @@
      "ra": 400,
      "rb": 440.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": 400
     },
     {
      "id": "XFA2",
@@ -552,7 +571,8 @@
      "ra": 380,
      "rb": 418.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": 380
     },
     {
      "id": "LAB_1",
@@ -570,7 +590,8 @@
      "ra": 1250,
      "rb": 1375.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": 1250
     },
     {
      "id": "LAB_2",
@@ -588,7 +609,8 @@
      "ra": 1250,
      "rb": 1375.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": 1250
     },
     {
      "id": "LAC_1",
@@ -606,7 +628,8 @@
      "ra": 200,
      "rb": 220.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": 200
     },
     {
      "id": "LAD_1",
@@ -624,7 +647,8 @@
      "ra": 220,
      "rb": 242.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": 220
     },
     {
      "id": "XF3H",
@@ -642,7 +666,8 @@
      "ra": 300.0,
      "rb": 330.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     },
     {
      "id": "XF3L",
@@ -660,7 +685,8 @@
      "ra": 300.0,
      "rb": 330.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     },
     {
      "id": "XF3T",
@@ -678,7 +704,8 @@
      "ra": 300.0,
      "rb": 330.0,
      "ctg": [],
-     "temp": false
+     "temp": false,
+     "lim": null
     }
    ],
    "loads": [
@@ -690,7 +717,12 @@
      "ldf": 0.0012,
      "zone": "LZ_X"
     }
-   ]
+   ],
+   "coverage": {
+    "nodes": 8,
+    "branches": 9,
+    "loads": 1
+   }
   }
  ],
  "reference_dam": "dam:2030-01-15:he12:r1",
@@ -771,5 +803,6 @@
     "same": true
    }
   }
- }
+ },
+ "pair_coverage": null
 }

@@ -107,7 +107,7 @@ const models = (DATA ? DATA.models : []).map((m, side) => {
 });
 const two = models.length === 2;
 const status = (m, r) => !m.cmp ? "same" : !(r.id in m.cmp) ? "only" : m.cmp[r.id].same ? "same" : "differs";
-const limited = (m, r) => (m.kind === "dam" ? r.sec : r.mon) && r.base > 0 && r.base < 9999;
+const limited = (m, r) => r.lim != null && r.lim > 0;  // what out.network enforces (RAT-04, RAT-06, RAT-09)
 
 let current = null, selected = null, showBreakers = false;
 const trail = [];
@@ -305,7 +305,7 @@ function summary(name) {
     const st = m.substations.get(name); if (!st) return;
     const rows = st.branches.slice().sort((a, b) => a.id < b.id ? -1 : 1).map(r => {
       const to = (r.sa === r.sb ? (r.tie ? "tie" : "inside") : (r.sa === name ? r.sb : r.sa)) + (r.temp ? " (temporary)" : ""), s = status(m, r);
-      return `<tr class="click" data-m="${m.id}" data-id="${esc(r.id)}"><td>${esc(r.id)}</td><td>${r.k}</td><td>${esc(to)}</td><td>${r.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${limited(m, r) ? fmt(r.base, 0) : ""}</td></tr>`;
+      return `<tr class="click" data-m="${m.id}" data-id="${esc(r.id)}"><td>${esc(r.id)}</td><td>${r.k}</td><td>${esc(to)}</td><td>${r.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${limited(m, r) ? fmt(r.lim, 0) : ""}</td></tr>`;
     });
     html += `<h3>Branches: ${esc(m.id)}</h3>` + table(["id", "", "to", "service", "limit MW"], rows);
   });
@@ -352,9 +352,24 @@ function select(m, kind, item, node) {
   render();
 }
 
+// What each model carries and what it lacks, model-wide: counts from core.coverage, so a sparse table is read
+// as a fact about the source (the DAM RAW gives every load 0 MW; the CRR RAW names no substations).
+function coverage() {
+  const keys = Object.keys(models[0].coverage || {});
+  if (!keys.length) return "";
+  const label = k => k.replace(/_/g, " ");
+  const rows = keys.map(k => { const v = models.map(m => m.coverage[k]); const d = two && v[0] !== v[1]; return `<tr><td>${esc(label(k))}</td>${v.map(x => `<td class="num${d ? " diff" : ""}">${esc(x)}</td>`).join("")}</tr>`; });
+  let html = `<details><summary>What each model carries</summary>` + table(["", ...models.map(m => m.id)], rows);
+  if (DATA.pair_coverage) {
+    const pr = Object.entries(DATA.pair_coverage).map(([k, v]) => `<tr><td>${esc(label(k))}</td><td class="num">${esc(v)}</td></tr>`);
+    html += `<h3>Matched between the two</h3>` + table(["", "count"], pr);
+  }
+  return html + `</details>`;
+}
+
 function render() {
   const side = document.getElementById("side");
-  side.innerHTML = (selected ? detail(selected.m, selected.kind, selected.item) : "") + summary(current);
+  side.innerHTML = (selected ? detail(selected.m, selected.kind, selected.item) : "") + summary(current) + coverage();
   side.querySelectorAll("tr.click").forEach(tr => tr.addEventListener("click", () => {
     const m = models.find(x => x.id === tr.dataset.m), r = m.byId.get(tr.dataset.id);
     select(m, "branch", r, null);

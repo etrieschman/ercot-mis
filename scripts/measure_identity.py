@@ -467,6 +467,23 @@ def matching(mis: em.Session, crr_month: date, day: date, hour: int) -> None:
          dam_side_quantiles=[round(hubs["shared_weight_dam"].quantile(q), 3) for q in (0, 0.5, 1)])
 
 
+def coverage_section(mis: em.Session, crr_month: date, day: date, hour: int) -> None:
+    """What each model carries (core.coverage), and the matched and unmatched counts of the pair."""
+    from ercot_mis.core import coverage
+
+    section("coverage")
+    snaps = mis.core("snapshot").collect()
+    crr_id = snaps.filter((pl.col("model_kind") == "monthly") & (pl.col("month") == crr_month)).sort("revision")["snapshot_id"][-1]
+    dam_id = snaps.filter((pl.col("operating_date") == day) & (pl.col("hour") == hour)).sort("revision")["snapshot_id"][-1]
+    rows = lambda table, sid: mis.core(table).filter(pl.col("snapshot_id") == sid).collect()  # noqa: E731
+    for label, sid in (("crr", crr_id), ("dam", dam_id)):
+        counts = coverage.snapshot_coverage(rows("node", sid), rows("branch", sid), rows("branch_rating", sid), rows("load", sid),
+                                            rows("settlement_point", sid), rows("settlement_point_bus", sid), rows("contingency_outage", sid),
+                                            mis.network(sid).branches)
+        show(label, snapshot_id=sid, **counts)
+    show("pair", **coverage.pair_coverage(mis.match_branches(crr_id, dam_id), mis.match_buses(crr_id, dam_id), mis.match_contingencies(crr_id, dam_id)))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--month", type=lambda s: date.fromisoformat(s + "-01"), default=None, help="CRR monthly model, YYYY-MM")
@@ -485,6 +502,7 @@ def main() -> None:
         stability(mis, dam_path, day, args.hour, D, C, month)
         node_identity(mis, dam_path, args.hour, D, C)
         matching(mis, month, day, args.hour)
+        coverage_section(mis, month, day, args.hour)
         out = mis.data_dir / "reports" / "identity"
         out.mkdir(mode=0o700, parents=True, exist_ok=True)
         path = out / f"{month:%Y-%m}_{day}_he{args.hour:02d}.json"

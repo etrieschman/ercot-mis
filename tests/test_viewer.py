@@ -32,6 +32,11 @@ class FakeSession:
     def core(self, table):
         return self.tables[table].lazy()
 
+    def network(self, snapshot_id):
+        class Net:  # only the enforced limits are read
+            branches = pl.DataFrame({"branch_id": ["XF1"], "is_limited": [True], "base_limit_mw": [400.0]})
+        return Net()
+
 
 def test_build_writes_an_owner_only_page_with_the_model_embedded(tmp_path):
     path = viewer.build(FakeSession(tmp_path), SID)
@@ -45,7 +50,11 @@ def test_build_writes_an_owner_only_page_with_the_model_embedded(tmp_path):
     assert model["buses"][0]["gen"] == ["ALPHA_G1"] and model["buses"][1]["sp"] == ["RN_ALPHA"] and model["buses"][2]["agg"] == ["LZ_X"]
     assert not any(b["star"] for b in model["buses"])
     line = next(b for b in model["branches"] if b["id"] == "L1")
-    assert (line["k"], line["on"], line["base"], line["ctg"]) == ("L", False, 200.0, ["C1", "C2"])
+    assert (line["k"], line["on"], line["base"], line["lim"], line["ctg"]) == ("L", False, 200.0, None, ["C1", "C2"])
+    assert next(b for b in model["branches"] if b["id"] == "XF1")["lim"] == 400.0  # the network's enforced limit, not a rule of the page
+    cov = model["coverage"]
+    assert (cov["nodes"], cov["branches"], cov["branches_in_service"], cov["branches_with_enforced_limit"], cov["loads_with_mw"]) == (3, 2, 1, 1, 1)
+    assert data["pair_coverage"] is None
     assert model["loads"] == [{"id": "BRAVO_L1", "bus": 3, "on": True, "mw": 12.5, "ldf": 0.001, "zone": "LZ_X"}]
     # The synthetic page data used to look at the template by hand has the same shape.
     sample = json.loads(FIXTURE.read_text())["models"][1]

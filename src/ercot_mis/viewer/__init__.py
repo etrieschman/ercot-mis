@@ -25,6 +25,8 @@ from pathlib import Path
 
 import polars as pl
 
+from ..core import coverage
+
 TEMPLATE = Path(__file__).with_name("template.html")
 
 
@@ -104,13 +106,22 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
     raw = _rows(session, "branch_rating", snapshot_id).filter(pl.col("rating_source") == "psse_raw").select(
         "branch_id", pl.col("base_mw").alias("rate_a"), pl.col("emergency_mw").alias("rate_b")).unique(subset=["branch_id"], keep="first")
     branch = branch.join(rating, on="branch_id", how="left").join(raw, on="branch_id", how="left")
-    ctg = (_rows(session, "contingency_outage", snapshot_id).filter(pl.col("branch_id").is_not_null())
-           .group_by("branch_id").agg(pl.col("contingency_id").unique().sort().alias("ctg")))
+    outages = _rows(session, "contingency_outage", snapshot_id)
+    ctg = outages.filter(pl.col("branch_id").is_not_null()).group_by("branch_id").agg(pl.col("contingency_id").unique().sort().alias("ctg"))
     branch = branch.join(ctg, on="branch_id", how="left")
+    # The enforced limit is the network's (out.network applies the register's rating choices); a branch the
+    # network dropped, or does not limit, has none.
+    enforced = session.network(snapshot_id).branches if hasattr(session, "network") else None
+    limits = (enforced.filter(pl.col("is_limited")).select("branch_id", pl.col("base_limit_mw").alias("lim")) if enforced is not None
+              else pl.DataFrame(schema={"branch_id": pl.String, "lim": pl.Float64}))
+    branch = branch.join(limits, on="branch_id", how="left")
 
     # Settlement points by node: resource nodes and DC ties sit on a bus; hubs and load zones are sets of buses.
-    points = (_rows(session, "settlement_point_bus", snapshot_id).filter(pl.col("is_resolved"))
-              .join(_rows(session, "settlement_point", snapshot_id).select("settlement_point_id", "kind"), on="settlement_point_id"))
+    point_bus, point_rows = _rows(session, "settlement_point_bus", snapshot_id), _rows(session, "settlement_point", snapshot_id)
+    points = point_bus.filter(pl.col("is_resolved")).join(point_rows.select("settlement_point_id", "kind"), on="settlement_point_id")
+    counts = coverage.snapshot_coverage(node, branch, _rows(session, "branch_rating", snapshot_id), load, point_rows, point_bus, outages, enforced)
+    if not dam:
+        counts["nodes_with_substation"] = sum(1 for name in substation.values() if not name.startswith("~"))
     on_node: dict[str, list[str]] = {}
     part_of: dict[str, list[str]] = {}
     for sp_id, key, kind in points.select("settlement_point_id", "bus_key", "kind").sort("settlement_point_id").rows():
@@ -126,14 +137,15 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
     return {
         "id": snapshot_id, "kind": "dam" if dam else "crr",
         "limit_source": "RAW rate A / B" if dam else "CRR monitored CSV, PeakWD",
+        "coverage": counts,
         "buses": [{"n": bus, "kv": kv, "st": substation[bus], "name": name, "type": node_type, "key": key,
                    "sp": on_node.get(key, []), "agg": part_of.get(key, []), "gen": labels(att, "G:"), "star": bus in stars}
                   for bus, kv, name, node_type, key, att in node.select("node_number", "kv", "raw_name", "node_type", "bus_key", "attachments").rows()],
         "branches": [{"id": i, "k": kind[0].upper(), "f": f, "t": t, "ckt": ckt, "x": x, "on": on, "tie": tie, "mon": bool(mon), "sec": bool(sec),
-                      "base": base, "emer": emer, "ra": ra, "rb": rb, "ctg": c or [], "temp": bool(temp)}
-                     for i, kind, f, t, ckt, x, on, tie, mon, sec, base, emer, ra, rb, c, temp in branch.select(
+                      "base": base, "emer": emer, "ra": ra, "rb": rb, "lim": lim, "ctg": c or [], "temp": bool(temp)}
+                     for i, kind, f, t, ckt, x, on, tie, mon, sec, base, emer, ra, rb, lim, c, temp in branch.select(
                          "branch_id", "kind", "from_node", "to_node", "ckt", "x_pu", "is_in_service", "is_tie", "is_monitored", "is_secured",
-                         "base_mw", "emergency_mw", "rate_a", "rate_b", "ctg", "is_temporary").rows()],
+                         "base_mw", "emergency_mw", "rate_a", "rate_b", "lim", "ctg", "is_temporary").rows()],
         "loads": [{"id": i, "bus": bus, "on": on, "mw": mw, "ldf": ldf, "zone": zone}
                   for i, bus, on, mw, ldf, zone in load.select("load_id", "node_number", "is_in_service", "mw", "mw_ldf", "load_zone").rows()],
     }
@@ -171,7 +183,10 @@ def build(session, left: str, right: str | None = None, *, reference_dam: str | 
             snaps = session.core("snapshot").filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision").collect()
             reference_dam = snaps["snapshot_id"][-1]
     data = {"models": [model(session, i, reference_dam) for i in ids], "reference_dam": reference_dam,
-            "compare": comparison(session, left, right) if right else None}
+            "compare": comparison(session, left, right) if right else None, "pair_coverage": None}
+    if right and _is_dam(left) != _is_dam(right):
+        crr, dam = (right, left) if _is_dam(left) else (left, right)
+        data["pair_coverage"] = coverage.pair_coverage(session.match_branches(crr, dam), session.match_buses(crr, dam), session.match_contingencies(crr, dam))
     html = TEMPLATE.read_text().replace("/*DATA*/null", json.dumps(data, separators=(",", ":")).replace("</", "<\\/"))
     if path is None:
         folder = session.data_dir / "reports" / "viewer"
