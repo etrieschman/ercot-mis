@@ -98,5 +98,5 @@ the price check at the settlement points.
   report lists more substations and about nine percent more MW than the model's loads,
   under load identifiers that are not the model's load names.
 - Electrical bus names in the LMP file (ERCOT's term for its finest pricing points) are not
-  the RAW's node names; the mapping
-  (NP4-160-SG) is archived and not parsed, so the check prices settlement points only.
+  the RAW's node names; the mapping (NP4-160-SG) is parsed (`sp_electrical_bus_mapping`)
+  but not yet joined to DAM nodes, so the check prices settlement points only.

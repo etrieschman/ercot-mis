@@ -90,10 +90,10 @@ Do not write "node" for the merged thing or "bus" for a CRR bus section again.
   - `diff_branch`, `diff_settlement_point`, `diff_load` via `session.diff_*`: both models
     side by side with `same_*` verdicts; differences are recorded, never smoothed.
   - `coverage` (a module, not a table): counts of what a snapshot carries and lacks.
-  Planned: `core.constraint`, `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_award`,
-  `core.hourly_shadow_price`, `core.tou_hours`.
+  Planned: `core.constraint`, `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_shadow_price`,
+  `core.tou_hours`.
 - `out` — what consumers read: `out.network` (`session.network(snapshot_id, Options)`,
-  assembled from core on every call, conventions in `docs/out-network.md`), `out.hourly_injection` (q).
+  assembled from core on every call, conventions in `docs/out-network.md`), `out.injection` (`session.injections(day)`: q per settlement point and hour).
 - Layer = folder = DuckDB schema. No PUDL-style `layer_source__type` names.
   Columns: unit suffixes (`_mw`, `_mva`), `is_` booleans, `_code` categoricals.
 - Hourly facts carry `interval_start_utc`, `interval_end_utc` **and** ERCOT's
@@ -186,7 +186,8 @@ identity columns on every row (`emil_id`, `doc_id`, `blob_sha256`, `member_sha25
 `member_path`, CRR `auction/term/sequence/month/time_of_use`, DAM
 `operating_date/hour`). `build_core` writes `core/snapshot.parquet` and, per
 package, `core/<table>/emil_id=<EMIL>/<blob16>.parquet` for node, branch,
-branch_rating, contingency, contingency_outage, gtc and gtc_member; the matchers
+branch_rating, contingency, contingency_outage, gtc, gtc_member, settlement_point,
+settlement_point_bus and load, and `hourly_award` per disclosure day; the matchers
 cache under `core/match_<kind>/v<N>/`. Read with `session.raw(table)` and
 `session.core(table)` (polars lazy scans that span products; identity columns a
 product lacks come back null). Artifacts will carry the most
@@ -202,8 +203,8 @@ The package mirrors the data folder's layers. Each layer package owns its `build
 ```
 src/ercot_mis/
   __init__.py       open() -> Session, re-exports
-  session.py        Session: list, fetch, ingest, probe (fill the archive);
-                    build_raw, build_core (write layers); raw(table), core(table) (read)
+  session.py        Session: list, fetch, ingest, probe (fill the archive); build_raw, build_core (write layers);
+                    raw(table), core(table), query(sql), network, injections, match_*, diff_*, viewer (read)
   config.py         data folder resolution + synced-folder warning; Identity; secrets (env, .env, Keychain)
   products.py       PRODUCTS: EMIL specs (report type, class, window, source, pull/track)
   sources/          how bytes arrive
@@ -280,7 +281,7 @@ measurements live in the scripts that make them and the dated reports under
 | M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS side done and running daily via launchd since 2026-09-15 (retries, status file, notification on failure); 2026-10-01: Public API archive client; DAM prices pulled daily |
 | M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | parsers done (PSS/E both dialects, CRR, DAM, GTL workbook); `scripts/validate_parsers.py` clean on every archived package. Not yet: DynamicRatings, PowerFlowData.jl cross-check (needs Julia) |
 | M3 | core layer + SQL runner, cache skip, lineage, validation checks | 2026-09-17: raw writer with provenance (`build_raw`, process pool, cache skip, `run`/`artifact`/`lineage`); `build_core` writes snapshot, node, branch, branch_rating, contingency, contingency_outage, gtc, gtc_member for every archived package. 2026-09-24: both builds run at the end of the daily pull. 2026-10-01: SQL runner dropped; register lint (`tests/test_register.py`); `scripts/check_prices.py`. Not yet: flow check, status page |
-| M4 | `out.network` + `ftr_align/cases/ercot.py` (on hold) | 2026-09-24: `session.network()` (per-snapshot, own vocabulary, ERCOT's topology by default, settlement point weights, audit frames, `docs/out-network.md`); `scripts/check_network.py` solves it. Not yet: on-disk `out/`, `ercot.py` (needs the sparse PTDF, see next steps) |
+| M4 | `out.network` + `ftr_align/cases/ercot.py` (on hold) | 2026-09-24: `session.network()` (per-snapshot, own vocabulary, ERCOT's topology by default, settlement point weights, audit frames, `docs/out-network.md`); `scripts/check_network.py` solves it. 2026-10-06: the on-disk network cache was removed (assembly is faster). Not yet: `ercot.py` (on hold with the research) |
 | M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | 2026-10-01: prices pulled daily and parsed; price check. 2026-10-06: the price check runs daily; system lambda, de-energized points, electrically similar points, heuristic mapping and LDFs pulled and parsed; hub weights per Protocols 3.5.2; the 60-day disclosure pulled and parsed. Evening of 2026-10-06: `core.hourly_award` and `session.injections` (awards balance to a few MW a day); the flow check itself waits for the first overlapping day (mid-October) |
 | M6 | CRR ↔ DAM matching + scorecard | matchers for branches, buses and contingencies with `match_method` and unmatched rows (`session.match_*`); `scripts/measure_identity.py` reports their rates. 2026-09-24: `prefix+x` tie-break by reactance, `core.diff_branch`, `core.settlement_point[_node]`, `core.diff_settlement_point`. Not yet: `diff_bus`/`diff_contingency`, `subset` contingency method, scorecard |
 | M7 | `shift_factors` (restricted float32 PTDF/LODF, cache budget, cross-test vs `ftr_align.network.compute_ptdf`) | 2026-10-01: `ercot_mis.shift_factors` (sparse factorization, re-solve per contingency), used by the check scripts. The dense PTDF/LODF cache is on hold with the research |
@@ -303,6 +304,10 @@ against what cleared without re-clearing):
 - **Explaining the repo means a notebook cell, not a markdown page.** `demo/tour.ipynb`
   walks through every call against its own gitignored `demo/data/`; the guard refuses
   a notebook with outputs (`nbstripout` before committing).
+- **No statistics in the code.** Core tables follow ERCOT's files and the protocols; the
+  check scripts compare directly (counts, differences, their sizes) and never fit,
+  regress or correlate. Correlations and fits are for exploring a question by hand,
+  never for deciding what the code does.
 
 Built on 2026-10-06 (all on `main`): seven more products parsed (system lambda,
 de-energized points, electrically similar points, heuristic bus mapping, load
