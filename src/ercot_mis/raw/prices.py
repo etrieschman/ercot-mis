@@ -1,12 +1,23 @@
-"""DAM prices from the Public API archive: shadow prices, bus LMPs, settlement point prices.
+"""DAM prices and pricing inputs from the Public API archive.
 
-Each archived document is a zip holding one CSV for one delivery date, all hours. The
-three products share the shape and differ in columns, so the header picks the table:
+Each archived document is a zip holding one CSV (one delivery date, all hours, except
+where noted). The products share the shape and differ in columns, so the header picks
+the table:
 
 - ``dam_shadow_prices`` (NP4-191-CD): one row per binding constraint and hour, with the
   constraint's and the contingency's names, limit, flow, violation and shadow price;
 - ``dam_lmps`` (NP4-183-CD): one row per electrical bus and hour;
-- ``dam_settlement_point_prices`` (NP4-190-CD): one row per settlement point and hour.
+- ``dam_settlement_point_prices`` (NP4-190-CD): one row per settlement point and hour;
+- ``dam_system_lambda`` (NP4-523-CD): the system price, one row per hour;
+- ``dam_deenergized_settlement_points`` (NP4-200-CD): settlement points with no
+  connection in the DAM base case, per hour;
+- ``dam_electrically_similar_settlement_points`` (NP4-158-SG): settlement points ERCOT
+  treats as one electrical location, per hour, grouped by ``group_index``;
+- ``heuristic_pricing_associations`` (NP4-231-CD): the electrical bus whose price a
+  de-energized bus takes, by priority, for DAM and RTM; no date in the rows (the
+  listing's posting time dates the document);
+- ``load_distribution_factors`` (NP4-159-CD): each load's share of its zone per hour,
+  posted for a period of weeks at a time (a large file).
 
 Raw keeps ERCOT's text for ``delivery_date`` (``MM/DD/YYYY``) and ``hour_ending``
 (``HH:00``, ``24:00`` for the last hour) and the ``dst_flag``; numbers are cast.
@@ -18,7 +29,7 @@ from dataclasses import dataclass
 
 import pyarrow as pa
 
-from .table import Column, F, I, ParseError, read_delimited
+from .table import Column, F, I, read_delimited, table_for_header
 
 VERSION = 1
 
@@ -32,8 +43,15 @@ TABLES: dict[str, tuple[Column, ...]] = {
         Column("ToStationkV", F, "to_station_kv"), Column("DeliveryTime"), _DST),
     "dam_lmps": (*_TIME, Column("BusName"), Column("LMP", F), _DST),
     "dam_settlement_point_prices": (*_TIME, Column("SettlementPoint"), Column("SettlementPointPrice", F), _DST),
+    "dam_system_lambda": (*_TIME, Column("SystemLambda", F), _DST),
+    "dam_deenergized_settlement_points": (*_TIME, Column("SettlementPoint"), _DST),
+    "dam_electrically_similar_settlement_points": (*_TIME, Column("SettlementPoint"), Column("GroupIndex", I), Column("UpdateTime"), _DST),
+    "heuristic_pricing_associations": (Column("MarketType"), Column("FromEBName", name="from_electrical_bus"),
+                                       Column("ToEBName", name="to_electrical_bus"), Column("Type"), Column("Priority", I)),
+    "load_distribution_factors": (Column("LdfDate", name="ldf_date"), Column("LdfHour", name="ldf_hour"), Column("SubStation", name="substation"),
+                                  Column("DistributionFactor", F), Column("LoadID", name="load_id"), Column("MVARDistributionFactor", F, "mvar_distribution_factor"),
+                                  Column("MRIDLoad", name="mrid_load"), _DST),
 }
-_BY_HEADER = {tuple(c.header for c in columns): table for table, columns in TABLES.items()}
 
 
 @dataclass(frozen=True)
@@ -55,9 +73,5 @@ def classify_member(path: str) -> PriceMember | None:
 
 
 def parse_member(member: PriceMember, data: bytes) -> dict[str, pa.Table]:
-    first = data.removeprefix(b"\xef\xbb\xbf").partition(b"\n")[0].decode("utf-8", "replace")
-    header = tuple(h.strip() for h in first.rstrip("\r").split(","))
-    table = _BY_HEADER.get(header)
-    if table is None:
-        raise ParseError(f"DAM prices: header matches no known table; found {list(header)}")
+    table = table_for_header(data, TABLES, "DAM prices")
     return {table: read_delimited(data, TABLES[table], table)}

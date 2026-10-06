@@ -135,3 +135,41 @@ def test_price_files_are_told_apart_by_their_header():
     assert not prices.classify_member("prices.xml").is_parsed
     with pytest.raises(ParseError, match="matches no known table"):
         prices.parse_member(member, b"A,B\n1,2\n")
+
+
+def test_pricing_input_files_are_told_apart_by_their_header():
+    from ercot_mis.raw import prices
+
+    member = prices.classify_member("x.csv")
+    lam = prices.parse_member(member, b"DeliveryDate,HourEnding,SystemLambda,DSTFlag\r\n01/02/2030,01:00,25.5,N\r\n")
+    assert lam["dam_system_lambda"].to_pylist() == [{"delivery_date": "01/02/2030", "hour_ending": "01:00", "system_lambda": 25.5, "dst_flag": "N"}]
+    essp = prices.parse_member(member, b"DeliveryDate,HourEnding,SettlementPoint,GroupIndex,UpdateTime,DSTFlag\n01/02/2030,01:00,SP_A,7,01/01/2030 10:00:00,N\n")
+    assert essp["dam_electrically_similar_settlement_points"]["group_index"].to_pylist() == [7]
+    dead = prices.parse_member(member, b"DeliveryDate,HourEnding,SettlementPoint,DSTFlag\n01/02/2030,01:00,SP_A,N\n")
+    assert "dam_deenergized_settlement_points" in dead
+    heur = prices.parse_member(member, b"MarketType,FromEBName,ToEBName,Type,Priority\nDAM,EB_A,EB_B,X,1\n")
+    assert heur["heuristic_pricing_associations"].column_names == ["market_type", "from_electrical_bus", "to_electrical_bus", "type", "priority"]
+    ldf = prices.parse_member(member, b"LdfDate,LdfHour,SubStation,DistributionFactor,LoadID,MVARDistributionFactor,MRIDLoad,DSTFlag\n01/02/2030,1,SUB_A,0.25,L1,0.2,abc,N\n")
+    row = ldf["load_distribution_factors"].to_pylist()[0]
+    assert row["distribution_factor"] == 0.25 and row["substation"] == "SUB_A" and row["mvar_distribution_factor"] == 0.2
+
+
+def test_mapping_files_are_told_apart_by_their_header():
+    from ercot_mis.raw import mappings
+    from ercot_mis.raw.table import ParseError
+
+    member = mappings.classify_member("SP_List_EB_Mapping/Settlement_Points_1_2.csv")
+    assert member.is_parsed and member.operating_date is None
+    assert mappings.classify_member("SP_List_EB_Mapping/") is None
+    full = mappings.parse_member(member, (
+        b"ELECTRICAL_BUS,NODE_NAME,PSSE_BUS_NAME,VOLTAGE_LEVEL,SUBSTATION,SETTLEMENT_LOAD_ZONE,RESOURCE_NODE,HUB_BUS_NAME,HUB,PSSE_BUS_NUMBER\r\n"
+        b"EB_A,N_A,P_A,138,SUB_A,LZ_X,,HB_A,HB_HUB,1234\r\n"))
+    row = full["sp_electrical_bus_mapping"].to_pylist()[0]
+    assert row["psse_bus_number"] == 1234 and row["resource_node"] is None and row["hub"] == "HB_HUB"
+    hubs = mappings.parse_member(member, b"ELECTRICAL_BUS,ELECTRICAL_BUS_KV,HUB_BUS_NAME,HUB\nEB_A,345,HB_A,HB_HUB\n")
+    assert hubs["hub_buses"]["electrical_bus_kv"].to_pylist() == [345.0]
+    ccp = mappings.parse_member(member, b"CCP_NAME,LOGICALREOURCENODENAME\nC,L\n")
+    assert ccp["sp_ccp_resource_names"].column_names == ["ccp_name", "logical_resource_node_name"]
+    assert "sp_hub_and_dc_tie_names" in mappings.parse_member(member, b"NAME\nHB_X\n")
+    with pytest.raises(ParseError):
+        mappings.parse_member(member, b"A,B\n1,2\n")

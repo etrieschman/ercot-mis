@@ -101,15 +101,6 @@ def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[li
         same, crossed = (cf == df) + (ct == dt), (cf == dt) + (ct == df)
         if same != crossed:
             members.append((j, factor if same > crossed else -factor))
-    # Members the DAM's definition has beyond the CRR's, kept by hand in data/overrides/dam_gtc_members.csv
-    # (gtc_id, branch_id, factor in the DAM branch's own from-to, note). Never committed.
-    extra = session.data_dir / "overrides" / "dam_gtc_members.csv"
-    index_of = dict(net.branches.select("branch_id", "index").rows())
-    if extra.is_file():
-        for gtc, branch_id, factor in pl.read_csv(extra, schema_overrides={"factor": pl.Float64}).select(key(pl.col("gtc_id")), "branch_id", "factor").rows():
-            if branch_id in index_of:
-                out.setdefault(gtc, []).append((index_of[branch_id], factor))
-                declared[gtc] = declared.get(gtc, 0) + 1
     return {gtc: (members, declared.get(gtc, len(members)) - len(members)) for gtc, members in out.items()}
 
 

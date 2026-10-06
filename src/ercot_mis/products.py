@@ -60,10 +60,10 @@ PRODUCTS: dict[str, Product] = {
         Product("NP4-159-CD", "Load Distribution Factors", "Public", "public_api", "pull", 12324),
         # Tracked from the Public API catalogue (2026-10-01 sweep): known, not pulled yet.
         # What each is for is in docs/datasets/planning-inputs.md.
-        Product("NP4-523-CD", "DAM System Lambda", "Public", "public_api", "track", 13113),
-        Product("NP4-200-CD", "DAM De-Energized Settlement Points in Base Case", "Public", "public_api", "track", 13063),
-        Product("NP4-158-SG", "DAM Electrically Similar Settlement Points", "Public", "public_api", "track", 13058),
-        Product("NP4-231-CD", "Electrical Bus Mapping for Heuristic Pricing", "Public", "public_api", "track", 13098),
+        Product("NP4-523-CD", "DAM System Lambda", "Public", "public_api", "pull", 13113),
+        Product("NP4-200-CD", "DAM De-Energized Settlement Points in Base Case", "Public", "public_api", "pull", 13063),
+        Product("NP4-158-SG", "DAM Electrically Similar Settlement Points", "Public", "public_api", "pull", 13058),
+        Product("NP4-231-CD", "Electrical Bus Mapping for Heuristic Pricing", "Public", "public_api", "pull", 13098),
         Product("NP4-194-CD", "DAM PTP Obligation Results by Settlement Point", "Public", "public_api", "track", 13042),
         Product("NP3-965-ER", "60-Day SCED Disclosure Reports", "Public", "public_api", "track", 13052),
         Product("NP3-909-ER", "2-Day DAM Bids and Offers Reports", "Public", "public_api", "track", 13055),

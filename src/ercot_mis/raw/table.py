@@ -69,6 +69,21 @@ def empty_table(columns: Sequence[Column]) -> pa.Table:
     return pa.table({c.column_name: pa.array([], c.type) for c in columns})
 
 
+def csv_header(data: bytes) -> tuple[str, ...]:
+    """The first line of a CSV as trimmed header names (UTF-8 BOM and CR tolerated)."""
+    first = data.removeprefix(b"\xef\xbb\xbf").partition(b"\n")[0].decode("utf-8", "replace")
+    return tuple(h.strip() for h in first.rstrip("\r").split(","))
+
+
+def table_for_header(data: bytes, tables: dict[str, Sequence[Column]], label: str) -> str:
+    """Which of ``tables`` a CSV is, by exact header; ``ParseError`` names the header otherwise."""
+    header = csv_header(data)
+    for table, columns in tables.items():
+        if header == tuple(c.header for c in columns):
+            return table
+    raise ParseError(f"{label}: header matches no known table; found {list(header)}")
+
+
 def read_delimited(
     data: bytes,
     columns: Sequence[Column],
