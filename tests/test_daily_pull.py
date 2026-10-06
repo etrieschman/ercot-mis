@@ -73,8 +73,7 @@ def test_at_risk_counts_only_what_ercot_still_offers_and_we_lack():
             })
 
     class Session:
-        def catalog(self):
-            return Catalog()
+        catalog = Catalog()
 
     risk = daily_pull.at_risk(Session(), run_started)
     assert risk["unarchived_ews_documents"] == 1

@@ -97,7 +97,7 @@ def at_risk(mis: em.Session, listed_since: datetime) -> dict:
     for spec in em.PRODUCTS.values():
         if spec.source != "ews" or spec.take != "pull" or not spec.display_days:
             continue
-        docs = mis.catalog().documents(spec.emil_id)
+        docs = mis.catalog.documents(spec.emil_id)
         missing = docs.filter(~pl.col("is_archived") & (pl.col("last_listed_at") >= listed_since) & pl.col("posted_at").is_not_null())
         if missing.is_empty():
             continue
