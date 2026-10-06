@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import polars as pl
 
-VERSION = 2
+VERSION = 3
 
 # The hubs the two average hubs are built from (Protocols 3.5.2.6 and 3.5.2.7): the Panhandle hub is not one.
 AVERAGE_HUB_MEMBERS = ("HB_NORTH", "HB_SOUTH", "HB_HOUSTON", "HB_WEST")
@@ -75,7 +75,7 @@ def _finish(points: pl.DataFrame, rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.
                                                               "raw_weight", "source", "node_number", "is_resolved")
     buses = pl.concat([resolved.select(BUS_COLUMNS), unresolved.select(BUS_COLUMNS)]).sort("settlement_point_id", "bus_key")
     counts = (buses.group_by("settlement_point_id")
-              .agg(pl.col("is_resolved").sum().cast(pl.UInt32).alias("n_buses"), (~pl.col("is_resolved")).sum().cast(pl.UInt32).alias("n_unresolved"),
+              .agg(pl.col("bus_key").filter(pl.col("is_resolved")).n_unique().cast(pl.UInt32).alias("n_buses"), (~pl.col("is_resolved")).sum().cast(pl.UInt32).alias("n_unresolved"),
                    pl.col("raw_weight").filter(pl.col("is_resolved")).sum().alias("weight_sum_raw")))
     points = (points.join(counts, on="settlement_point_id", how="left")
               .with_columns(pl.col("n_buses").fill_null(0), pl.col("n_unresolved").fill_null(0))
@@ -137,11 +137,26 @@ def dam_settlement_points(nodes: pl.DataFrame, settlement_points: pl.DataFrame, 
                          .select(pl.lit(name).alias("settlement_point_id"), "node_number", (pl.col("raw_weight") / pl.col("_hubs")).alias("raw_weight")))
     hubs = pl.concat(parts).with_columns(pl.lit("dam_hub_buses").alias("source"))
 
-    # Load zones: in-service loads of the zone, weighted by their MW distribution factor.
+    # Load zones (SP-02): in-service loads of the zone, weighted by their MW distribution factor. An out-of-service
+    # load the file marks rollover-capable hands its MW to the target loads it names, by the fractions given,
+    # when those targets are in service (the file's own rule; the ``Ld`` README calls it rollover).
     zone_names = points.filter(pl.col("kind").is_in(["load_zone", "dc_tie"]))["settlement_point_id"]
-    zones = (loads.filter(pl.col("load_zone_name").is_in(zone_names.implode()) & pl.col("load_status").str.to_uppercase().str.starts_with("IN"))
+    in_service = pl.col("load_status").str.to_uppercase().str.starts_with("IN")
+    zone_loads = loads.filter(pl.col("load_zone_name").is_in(zone_names.implode()))
+    zones = (zone_loads.filter(in_service)
              .select(pl.col("load_zone_name").cast(pl.String).alias("settlement_point_id"), pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"),
                      pl.col("raw_mw_ldf").cast(pl.Float64).alias("raw_weight"), pl.lit("dam_loads").alias("source")))
+    if "load_rollover_capable" in loads.columns:
+        targets = [(f"{n}_target_load_name", f"fraction_of_this_load_to_{n}_target_load") for n in ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th")
+                   if f"{n}_target_load_name" in loads.columns]
+        rolling = zone_loads.filter(~in_service & pl.col("load_rollover_capable").cast(pl.String).str.to_uppercase().str.starts_with("Y"))
+        receivers = loads.filter(in_service).select(pl.col("load_name").alias("_target"), pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"))
+        rolled = pl.concat([
+            rolling.select(pl.col("load_zone_name").cast(pl.String).alias("settlement_point_id"), pl.col(name).cast(pl.String).alias("_target"),
+                           (pl.col("raw_mw_ldf").cast(pl.Float64) * pl.col(fraction).cast(pl.Float64)).alias("raw_weight"))
+            for name, fraction in targets]).filter(pl.col("_target").is_not_null() & (pl.col("raw_weight") > 0))
+        rolled = rolled.join(receivers, on="_target", how="inner").select("settlement_point_id", "node_number", "raw_weight", pl.lit("dam_loads_rollover").alias("source"))
+        zones = pl.concat([zones, rolled])
     zones = zones.filter(~pl.col("settlement_point_id").is_in(direct["settlement_point_id"].implode()))  # a DC tie with a bus of its own keeps it
 
     rows = pl.concat([direct, hubs, zones], how="diagonal_relaxed").join(to_node, on="node_number", how="left")

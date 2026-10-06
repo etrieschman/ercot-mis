@@ -80,6 +80,11 @@ The header picks the table (`raw/prices.py`): `dam_shadow_prices`, `dam_lmps`,
 
 ## Validation
 
+Beside the residual, each hourly report compares ERCOT's own cut-off lists with ours:
+the `SpCtg` file's settlement points per binding contingency against the points our
+solve leaves without a connected bus, and the base-case de-energized list (NP4-200-CD)
+against the points our network has no node for (NAM-07).
+
 `scripts/check_prices.py` writes `data/reports/prices/<snapshot>.json` per DAM hour:
 how many binding rows resolve to a branch, a contingency or a GTC, and the residual of
 the price check at the settlement points.

@@ -318,6 +318,30 @@ point within about a dollar and hubs to the cent; hours where the evening GTC bi
 worse than before because the inferred members are gone, which is the honest state until
 NP3-770-M is parsed. Zone misses grow with GTC shadow price too.
 
+**Adversarial audit of 2026-10-06 (afternoon)**, four reviews (faithfulness, correctness and
+efficiency, readability, register truthfulness), the confirmed findings fixed the same day:
+hourly facts join on `interval_start_utc` (the long day of 2026-11-01 would have shifted
+every GTC limit by an hour; `clock.py`, NAM-08); the core cache key covers the raw parser,
+the GTL document, the crosswalk and the snapshot ids; the session holds no catalog
+connection (a notebook left open no longer blocks the pull); no-table documents are
+recorded instead of being re-parsed daily; core temporaries live in `core/.partial/`;
+unknown posting times sort oldest and revisions are picked by number (TOP-11); the price
+check has a fixed sign (PRC-01), records a binding row under a contingency our model lacks
+as a discrepancy (RAT-10), flags partial contingencies, counts binding rows by limit flags
+(RAT-09 measured: all secured and limited) and compares ERCOT's cut-off lists with ours
+(NAM-07); load zone weights apply the `Ld` file's rollover (SP-02; under one percent of
+zone MW); the register's overstated rows say what was actually checked and eight missing
+decisions have rows; node, bus and vertex are used consistently in code and docs; the
+README and the network note are current. Still open from the audit, in rough order of
+value: (a) the 68 settlement points our network has no node for that ERCOT prices (mostly
+`Sp` rows that do not resolve; measure which); (b) ERCOT's published load distribution
+factors (NP4-159-CD) against the `Ld` shares; (c) a guard on transformer conventions
+(`ang1 == 0`, `CW == CZ == 1`) and a run with tap forced to one (RAT-01, RAT-11); (d) the
+on-disk network cache reads slower than assembling from core (measured 0.7 s vs 0.3 s) and
+could go; (e) a glossary page or a longer glossary cell; (f) `model_kind` values
+(`dam`/`monthly`/`annual`) are asymmetric; (g) duplicates resolved by `keep="first"` should
+be counted (RAT-12); (h) `measure_identity.py` has a quadratic loop and parses packages twice.
+
 First, check health (2 min):
 - `tail -40 data/logs/daily_pull.log` and `cat data/logs/last_run.json`: `failed 0`;
   the new lines are `previous run finished ... days ago`, `at risk: ...` and one

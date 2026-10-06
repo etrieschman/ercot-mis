@@ -173,6 +173,18 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         return Wc @ sf, plain
 
     node_congestion = np.zeros(net.n_nodes)                 # plain node-level sum, for digging (detail only)
+    # ERCOT's own statement of which settlement points a contingency cuts off (the DAM package's SpCtg file, per
+    # hour), against the points our solve leaves without a connected bus: a test of contingency definitions,
+    # split-bus moves and connectivity that needs no prices (NAM-07).
+    try:
+        spctg = (session.raw("dam_settlement_point_contingencies").filter((pl.col("operating_date") == snap["operating_date"][0]) & (pl.col("hour") == snap["hour"][0]))
+                 .select(key(pl.col("contingency_name")).alias("ctg"), pl.col("settlement_point_name").alias("sp")).collect())
+        ercot_cut = {ctg: set(g["sp"]) for (ctg,), g in spctg.group_by("ctg")} if spctg.height else {}
+    except FileNotFoundError:
+        ercot_cut = None
+    point_ids = points_frame["settlement_point_id"].to_list()
+    cut_lists = {"binding_contingencies_compared": 0, "binding_contingencies_ercot_lists_none": 0, "agree": 0, "only_ours": 0, "only_ercot": 0}
+    compared_ctgs: set[str] = set()
     point_congestion = np.zeros(points_frame.height)        # per-constraint weights and the heuristic (PRC-03)
     point_congestion_plain = np.zeros(points_frame.height)  # plain weights, cut-off buses at zero (what the check did before)
     cut_off_mu = np.zeros(net.n_nodes)  # per node: shadow price of binding rows whose contingency cuts the node off
@@ -234,6 +246,17 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
             connected = solver.connected[:net.n_nodes] if why == "used_contingency_islanding" else None
             sf = solver.shift_factors([j])[0]
             agg, plain = aggregated(sf, connected)
+            if ercot_cut is not None and ctg != BASE_CASE and ctg not in compared_ctgs and why.startswith("used_contingency"):
+                compared_ctgs.add(ctg)
+                mask = (connected if connected is not None else np.ones(net.n_nodes, bool)).astype(float)
+                ours = {point_ids[i] for i in np.flatnonzero(np.asarray((W @ sparse.diags(mask)).sum(axis=1)).ravel() <= 0)}
+                theirs = ercot_cut.get(ctg)
+                if theirs is None:
+                    cut_lists["binding_contingencies_ercot_lists_none"] += 1
+                    theirs = set()
+                else:
+                    cut_lists["binding_contingencies_compared"] += 1
+                cut_lists["agree"] += len(ours & theirs); cut_lists["only_ours"] += len(ours - theirs); cut_lists["only_ercot"] += len(theirs - ours)
             node_congestion += sign * mu * sf
             point_congestion += sign * mu * agg
             point_congestion_plain += sign * mu * plain
@@ -299,11 +322,16 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
                          "max_abs": round(float(resid[mask].max()), 2) if mask.any() else None, "beyond_5": int((resid[mask] > 5).sum()),
                          "p50_abs_plain_weights": round(float(np.median(plain_resid[mask])), 3) if mask.any() else None,
                          "max_abs_plain_weights": round(float(plain_resid[mask].max()), 2) if mask.any() else None}
-    # Settlement points ERCOT de-energized in the base case (NP4-200-CD): published, and how many we price at all.
+    # Settlement points ERCOT de-energized in the base case (NP4-200-CD) against the points our network leaves
+    # without a node (every bus dropped as isolated or islanded): the base-case half of the same test (NAM-07, TOP-05).
+    result["cut_off_under_binding_contingencies"] = cut_lists if ercot_cut is not None else None
     try:
         dead = set(hour_rows(session.raw("dam_deenergized_settlement_points"), start_utc, session)["settlement_point"])
         compared = set(points["settlement_point_id"])
+        ours_dead = set(net.settlement_points.filter(pl.col("n_nodes") == 0)["settlement_point_id"])
         result["deenergized_in_base_case"] = {"published": len(dead), "among_points_compared": len(dead & compared),
+                                              "ours_without_node": len(ours_dead), "agree": len(dead & ours_dead),
+                                              "only_ours": len(ours_dead - dead), "only_ercot": len(dead - ours_dead),
                                               "residual_p50_abs": round(float(np.median(resid[points["settlement_point_id"].is_in(list(dead)).to_numpy()])), 3) if dead & compared else None}
     except FileNotFoundError:
         result["deenergized_in_base_case"] = None

@@ -35,6 +35,9 @@ def snapshot_coverage(node: pl.DataFrame, branch: pl.DataFrame, rating: pl.DataF
         "branches_secured": _n(branch, pl.col("is_secured")) if "is_secured" in branch.columns else 0,
         "branches_with_raw_rate_a": int(raw.filter(pl.col("base_mw") > 0)["branch_id"].n_unique()) if raw.height else 0,
         "branches_with_crr_csv_rating": int(csv["branch_id"].n_unique()) if csv.height else 0,
+        # RAT-05's two fallback rules, counted so their reach is visible
+        "branches_rate_a_zero_rate_b_positive": _n(raw, ((pl.col("base_mw").fill_null(0) <= 0) & (pl.col("emergency_mw") > 0))) if raw.height else 0,
+        "branches_rate_b_missing_or_zero": _n(raw, (pl.col("base_mw") > 0) & (pl.col("emergency_mw").fill_null(0) <= 0)) if raw.height else 0,
         "branches_with_enforced_limit": _n(enforced, pl.col("is_limited")) if enforced is not None else 0,
         "loads": load.height,
         "loads_in_service": _n(load, pl.col("is_in_service")),
