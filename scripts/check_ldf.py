@@ -4,8 +4,9 @@ The DAM load file (``Ld``) gives each load's MW-scale distribution factor and zo
 public report gives a factor per load and substation for the same hour but under its
 own load identifiers, which do not match the model's load names. Substations do, so the
 comparison is per substation: each substation's share of its zone's load in the model
-against its share in the public report (zones come from the model's loads). Counts and
-quantiles only; writes ``data/reports/ldf/<day>_he<hour>.json``.
+against its share in the public report (zones come from the model's loads): a direct
+comparison, substation by substation, no fitted summary. Counts and the sizes of the
+differences only; writes ``data/reports/ldf/<day>_he<hour>.json``.
 
     uv run python scripts/check_ldf.py --day 2026-09-30 --hour 19
 """
@@ -37,16 +38,14 @@ def check(session, day: date, hour: int) -> dict:
     both = both.with_columns((pl.col("model_mw") / pl.col("model_mw").sum().over("zone")).alias("model_share"),
                              (pl.col("published") / pl.col("published").sum().over("zone")).alias("published_share"))
     diff = (both["model_share"] - both["published_share"]).abs()
-    corr = float(pl.DataFrame({"a": both["model_share"], "b": both["published_share"]}).select(pl.corr("a", "b")).item()) if both.height > 2 else None
     return {
         "day": str(day), "hour": hour, "compared": True,
         "model_substations": model.height, "published_substations": published.height, "matched_substations": both.height,
         "model_mw_total": round(float(model["model_mw"].sum()), 1), "model_mw_matched": round(float(both["model_mw"].sum()), 1),
         "published_total": round(float(published["published"].sum()), 1), "published_matched": round(float(both["published"].sum()), 1),
         "share_abs_diff": {"p50": round(float(diff.median()), 5), "p90": round(float(diff.quantile(0.9)), 5), "max": round(float(diff.max()), 5)},
-        "zone_mass_where_shares_differ_over_1pct": round(float(both.filter(diff > 0.01)["model_share"].sum()), 4),
-        "correlation_of_shares": round(corr, 4) if corr is not None else None,
-        "per_zone_correlation": {z: round(float(g.select(pl.corr("model_share", "published_share")).item()), 4) for (z,), g in both.group_by("zone") if g.height > 2},
+        "substations_where_shares_differ_over_1pct": int((diff > 0.01).sum()),
+        "largest_share_difference_by_zone": {z: round(float((g["model_share"] - g["published_share"]).abs().max()), 5) for (z,), g in both.group_by("zone")},
     }
 
 
