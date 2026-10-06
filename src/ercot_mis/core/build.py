@@ -17,7 +17,7 @@ from pathlib import Path
 import polars as pl
 
 from ..raw import build as raw_build
-from . import branch, contingency, gtc, load, node, settlement_point, snapshot
+from . import award, branch, contingency, gtc, load, node, settlement_point, snapshot
 
 LAYER = "core"
 DAM_PRODUCT = snapshot.DAM_PRODUCT
@@ -192,6 +192,52 @@ def build(session, *, limit: int | None = None) -> list[dict]:
             placed.append((keys[table], raw_build.Written(table, dest, frame.height, dest.stat().st_size, ()), rels[table]))
         session._add_artifacts(run_id, LAYER, emil_id, blob, identity, placed)
         results.append({**record, "status": "built", "tables": len(placed), "rows": sum(f.height for f in tables.values())})
+    award_results = build_awards(session, version, existing, tmp_dir, run_id)
+    results.extend(award_results)
+    run_id = run_id or session._last_run_id
     if run_id:
         session._finish_run(run_id, failed=sum(1 for r in results if r["status"] == "failed"))
+    return results
+
+
+DISCLOSURE_PRODUCT = "NP3-966-ER"
+AWARD_TABLES = {"gen": "dam_60d_gen_resource_data", "esr": "dam_60d_esr_data", "energy_only_offers": "dam_60d_energy_only_offer_awards",
+                "energy_bids": "dam_60d_energy_bid_awards", "ptp_bids": "dam_60d_ptp_obligation_bid_awards", "ptp_options": "dam_60d_ptp_obligation_option_awards"}
+
+
+def build_awards(session, version: str, existing: set[str], tmp_dir: Path, run_id: str | None) -> list[dict]:
+    """``core.hourly_award`` per 60-day disclosure package (one operating day each); keyed like the snapshot tables."""
+    results = []
+    for package in session.catalog.packages(DISCLOSURE_PRODUCT):
+        blob = package["sha256"]
+        identity = f"core={VERSION}|award={award.VERSION}|{raw_build.parser_id(DISCLOSURE_PRODUCT)}"
+        key = raw_build.artifact_key(identity, blob, "hourly_award")
+        rel = Path(LAYER) / "hourly_award" / f"emil_id={DISCLOSURE_PRODUCT}" / f"{blob[:16]}.parquet"
+        record = {"emil_id": DISCLOSURE_PRODUCT, "doc_id": package["doc_id"], "blob_sha256": blob, "status": "skipped", "tables": 1, "rows": None, "seconds": 0.0, "error": None}
+        if key in existing and (session.data_dir / rel).is_file():
+            results.append(record)
+            continue
+        raw = {name: _raw(session, table, DISCLOSURE_PRODUCT, blob) for name, table in AWARD_TABLES.items()}
+        if any(v is None for v in raw.values()):
+            results.append({**record, "status": "no_raw"})
+            continue
+        try:
+            frame = award.hourly_awards(**raw)
+        except Exception as error:
+            results.append({**record, "status": "failed", "error": f"{type(error).__name__}: {error}"})
+            continue
+        run_id = run_id or session._start_run("build_core")
+        dest = session.data_dir / rel
+        dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        handle, tmp = tempfile.mkstemp(dir=tmp_dir, suffix=".parquet")
+        os.close(handle)
+        try:
+            frame.write_parquet(tmp, compression="zstd")
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, dest)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+        session._add_artifacts(run_id, LAYER, DISCLOSURE_PRODUCT, blob, identity, [(key, raw_build.Written("hourly_award", dest, frame.height, dest.stat().st_size, ()), rel)])
+        results.append({**record, "status": "built", "rows": frame.height})
     return results
