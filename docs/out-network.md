@@ -69,7 +69,7 @@ and its contingency keys from `branch_indexes`.
 
 | option | default | meaning |
 |---|---|---|
-| `contract_ties` | `False` | ERCOT's topology: every node of the model is a vertex and CRR ties are branches at their RAW reactance, monitored ones with their breaker ratings. With `True`, each bus (nodes joined by in-service ties) is one vertex; the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`) and their limits with them. The cost of contraction is measured by `scripts/check_network.py`. Tie members keep their group key in their id (`<key>@<bus>`). No effect on DAM. |
+| `contract_ties` | `False` | ERCOT's topology: one row per model node, and CRR ties are branches at their RAW reactance, monitored ones with their breaker ratings. With `True`, one row per bus (nodes joined by in-service ties); the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`) and their limits with them. The cost of contraction is measured by `scripts/check_network.py`. Tie members keep their group key in their id (`<key>@<bus>`). No effect on DAM. |
 | `rating_source` | model default | `crr_monitored` (CRR CSV, per time-of-use block) or `psse_raw` (RAW rate A/B). CRR defaults to the CSV, DAM to the RAW. |
 | `time_of_use` | `PeakWD` | The CRR CSV block; the CRR RAW is the PeakWD model. |
 | `limits` | `enforced` | Which branches get finite limits: `enforced` (CRR monitored, DAM secured), `monitored` (DAM monitored or secured), `all`. |

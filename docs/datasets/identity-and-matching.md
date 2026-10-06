@@ -25,8 +25,9 @@ the user on 2026-10-01; it is the node-breaker convention):
   name as the file gives it and `core.node.substation` is filled only where that name is
   a substation (DAM); the viewer assigns CRR substations through the bus match.
 
-`out.network` calls its vertices nodes: by default they are the model's nodes, and
-with `contract_ties=True` each vertex is a bus (`n_members` says how many nodes).
+`out.network` has one row per node by default and one per bus with `contract_ties=True`;
+its frames are named for the default (`nodes`, `node_id`), and `n_members` says how many
+nodes a bus holds.
 
 ## What the keys in ERCOT's files are
 
