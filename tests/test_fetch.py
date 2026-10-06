@@ -80,7 +80,7 @@ def test_fetch_archives_indexes_and_resumes(tmp_path, payloads):
         result = mis.fetch("NP7-800-M")
         assert dict(zip(result["doc_id"], result["status"])) == {"a": "fetched", "b": "failed", "c": "fetched"}
         assert "file_name" not in result.columns
-        assert mis.catalog.con.execute("SELECT count(*) FROM archive_member").fetchone()[0] == 2
+        assert mis.query("SELECT count(*) FROM archive_member")[0][0] == 2
         for sha in result.filter(pl.col("status") == "fetched")["sha256"]:
             assert (tmp_path / "archive" / "NP7-800-M" / f"{sha}.zip").is_file()
 
@@ -99,7 +99,7 @@ def test_size_mismatch_keeps_nothing(tmp_path, payloads):
         assert result["status"].to_list() == ["failed"]
         assert "listing says 999" in result["error"][0]
         assert not list((tmp_path / "archive" / "NP7-800-M").iterdir())
-        assert mis.catalog.con.execute("SELECT count(*) FROM archive_blob").fetchone()[0] == 0
+        assert mis.query("SELECT count(*) FROM archive_blob")[0][0] == 0
 
 
 def test_budget_refuses_before_downloading(tmp_path, payloads):
@@ -136,7 +136,7 @@ def test_ingest_links_local_files_to_listings_and_deduplicates(tmp_path, payload
         again = mis.ingest(local)
         assert first.select("emil_id", "doc_id", "is_new_bytes").rows() == [("NP7-800-M", "a", True)]
         assert again["is_new_bytes"].to_list() == [False]
-        assert mis.catalog.con.execute("SELECT count(*) FROM archive_source").fetchone()[0] == 1
+        assert mis.query("SELECT count(*) FROM archive_source")[0][0] == 1
         assert mis.fetch("NP7-800-M").height == 0
     assert source.downloads == []
 
@@ -156,7 +156,7 @@ def test_listing_hides_file_names_and_urls(tmp_path, payloads):
         listed = mis.list("NP7-800-M")
         assert "file_name" not in listed.columns and "url" not in listed.columns
         # The catalog keeps them: fetch needs the URL and the suffix.
-        assert mis.catalog.con.execute("SELECT count(file_name) FROM remote_doc").fetchone()[0] == 1
+        assert mis.query("SELECT count(file_name) FROM remote_doc")[0][0] == 1
 
 
 def test_transient_download_errors_are_retried_within_a_run(tmp_path, payloads):
@@ -182,5 +182,17 @@ def test_catalog_is_read_only_between_writes(tmp_path, payloads):
         mis.list("NP7-800-M")
         assert mis.catalog.read_only
         with pytest.raises(duckdb.Error):
-            mis.catalog.con.execute("DELETE FROM remote_doc")
+            mis.query("DELETE FROM remote_doc")
         assert oct(mis.catalog.path.stat().st_mode & 0o777) == "0o600"
+
+
+def test_reads_hold_no_catalog_connection(tmp_path, payloads):
+    """A session that has read the catalog must not block a writer: each read opens and closes its own connection."""
+    from ercot_mis.archive.catalog import Catalog
+
+    with _mis(tmp_path, FakeSource([(_doc("a", payloads["a"]), payloads["a"])])) as mis:
+        mis.list("NP7-800-M")
+        mis.catalog.packages("NP7-800-M")
+        mis.query("SELECT count(*) FROM remote_doc")
+        writer = Catalog(mis.catalog.path)  # DuckDB refuses a second configuration on the same file while a read-only one is open
+        writer.close()

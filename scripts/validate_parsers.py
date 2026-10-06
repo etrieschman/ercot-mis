@@ -26,13 +26,10 @@ from ercot_mis.raw import ParseError, crr, dam, gtl, psse
 
 
 def packages(mis, emil_id, limit=None):
-    rows = mis.catalog.con.execute(
-        """SELECT b.path FROM archive_blob b
+    rows = mis.query("""SELECT b.path FROM archive_blob b
            JOIN archive_source s USING (sha256)
            LEFT JOIN remote_doc d ON d.emil_id = s.emil_id AND d.doc_id = s.doc_id
-           WHERE b.emil_id = ? GROUP BY b.path ORDER BY max(d.posted_at) DESC NULLS LAST""",
-        [emil_id],
-    ).fetchall()
+           WHERE b.emil_id = ? GROUP BY b.path ORDER BY max(d.posted_at) DESC NULLS LAST""", [emil_id])
     return [mis.data_dir / path for (path,) in rows[:limit]]
 
 

@@ -46,8 +46,8 @@ def key(expr: pl.Expr) -> pl.Expr:
     return expr.str.to_uppercase().str.replace_all(r"[^A-Z0-9]", "")
 
 
-def hour_rows(frame: pl.LazyFrame, start_utc: datetime) -> pl.DataFrame:
-    """The rows of a raw price table for the hour starting at ``start_utc``; if a day was posted twice, one posting only.
+def hour_rows(frame: pl.LazyFrame, start_utc: datetime, session=None) -> pl.DataFrame:
+    """The rows of a raw price table for the hour starting at ``start_utc``; if a day was posted twice, the latest posting only.
 
     ERCOT's (delivery date, hour ending, DST flag) become the instant through
     ``clock.hour_ending_start_expr``, so the repeated and the missing hour of the two
@@ -57,7 +57,15 @@ def hour_rows(frame: pl.LazyFrame, start_utc: datetime) -> pl.DataFrame:
             .filter(pl.col("_start") == start_utc).drop("_start").collect())
     if rows.is_empty():
         return rows
-    return rows.filter(pl.col("doc_id") == str(rows["doc_id"].cast(pl.Int64).max()))
+    ids = rows["doc_id"].unique().to_list()
+    if len(ids) == 1:
+        return rows
+    latest = max(ids, key=int)  # document ids do not follow posting time (NAM-04); the catalog's posting time decides when it can
+    if session is not None:
+        docs = session.catalog.documents(rows["emil_id"][0], ids).filter(pl.col("posted_at").is_not_null()).sort("posted_at")
+        if docs.height:
+            latest = docs["doc_id"][-1]
+    return rows.filter(pl.col("doc_id") == latest)
 
 
 def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[list[tuple[int, float]], int]]:
@@ -69,10 +77,10 @@ def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[li
     translated through ``core.match_bus``). Returns ``{gtc code: ([(branch index, factor)], members lost)}``.
     """
     day = snapshot_id.split(":")[1]
-    crr_ids = session.core("snapshot").filter(pl.col("snapshot_id").str.starts_with(f"crr:monthly:{day[:7]}:")).collect()["snapshot_id"].sort()
+    crr_ids = session.core("snapshot").filter(pl.col("snapshot_id").str.starts_with(f"crr:monthly:{day[:7]}:")).sort("revision").collect()["snapshot_id"]
     if crr_ids.is_empty():
         return {}
-    crr = session.network(crr_ids[-1])
+    crr = session.network(crr_ids[-1])  # the highest revision, by number (TOP-11)
     pairs = session.match_branches(crr_ids[-1], snapshot_id).drop_nulls(["crr_branch_id", "dam_branch_id"]).select("crr_branch_id", "dam_branch_id")
     # Orientation: the CRR branch's ends, translated through core.match_bus, against the DAM branch's ends.
     node_of = dict(session.match_buses(crr_ids[-1], snapshot_id).drop_nulls(["crr_bus_key", "dam_bus_key"]).select("crr_bus_key", "dam_bus_key").rows())
@@ -98,13 +106,13 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
     if snap.is_empty():
         raise KeyError(f"{snapshot_id!r} is not in core.snapshot")
     start_utc = snap["interval_start_utc"][0]
-    shadow = hour_rows(session.raw("dam_shadow_prices"), start_utc)
-    prices = hour_rows(session.raw("dam_settlement_point_prices"), start_utc)
+    shadow = hour_rows(session.raw("dam_shadow_prices"), start_utc, session)
+    prices = hour_rows(session.raw("dam_settlement_point_prices"), start_utc, session)
     if shadow.is_empty() or prices.is_empty():
         return None
     # The system price (NP4-523-CD) is published; before it was pulled it was fitted as the median difference.
     try:
-        lam = hour_rows(session.raw("dam_system_lambda"), start_utc)
+        lam = hour_rows(session.raw("dam_system_lambda"), start_utc, session)
         system_price = float(lam["system_lambda"][0]) if lam.height else None
     except Exception:  # no artifact of the table yet
         system_price = None
@@ -268,7 +276,7 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
                          "max_abs_plain_weights": round(float(plain_resid[mask].max()), 2) if mask.any() else None}
     # Settlement points ERCOT de-energized in the base case (NP4-200-CD): published, and how many we price at all.
     try:
-        dead = set(hour_rows(session.raw("dam_deenergized_settlement_points"), start_utc)["settlement_point"])
+        dead = set(hour_rows(session.raw("dam_deenergized_settlement_points"), start_utc, session)["settlement_point"])
         compared = set(points["settlement_point_id"])
         result["deenergized_in_base_case"] = {"published": len(dead), "among_points_compared": len(dead & compared),
                                               "residual_p50_abs": round(float(np.median(resid[points["settlement_point_id"].is_in(list(dead)).to_numpy()])), 3) if dead & compared else None}
@@ -276,7 +284,7 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         result["deenergized_in_base_case"] = None
     # Electrically similar settlement points (NP4-158-SG) should share a published price; count the groups that do not.
     try:
-        groups = hour_rows(session.raw("dam_electrically_similar_settlement_points"), start_utc).select("settlement_point", "group_index")
+        groups = hour_rows(session.raw("dam_electrically_similar_settlement_points"), start_utc, session).select("settlement_point", "group_index")
         spread = (prices.select(pl.col("settlement_point"), pl.col("settlement_point_price")).join(groups, on="settlement_point")
                   .group_by("group_index").agg((pl.col("settlement_point_price").max() - pl.col("settlement_point_price").min()).alias("spread"), pl.len()))
         result["electrically_similar_groups"] = {"groups_priced": spread.height, "groups_with_price_spread_over_1_cent": int((spread["spread"] > 0.01).sum()),

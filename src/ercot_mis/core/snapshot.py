@@ -56,7 +56,9 @@ def snapshots(session) -> pl.DataFrame:
         for p, l in described:
             by_key.setdefault((l.kind, l.key), []).append((p, l))
         for (kind, key), group in by_key.items():
-            ordered = sorted(group, key=lambda pl_: (pl_[0]["posted_at"] is None, pl_[0]["posted_at"] or 0, pl_[0]["sha256"]))
+            # Unknown posting time (an ingested file never seen in a listing) sorts as the oldest, so a listed posting
+            # is never outranked by one nobody can date (TOP-11).
+            ordered = sorted(group, key=lambda pl_: (pl_[0]["posted_at"] is not None, pl_[0]["posted_at"] or 0, pl_[0]["sha256"]))
             for revision, (p, l) in enumerate(ordered, start=1):
                 base = {"emil_id": emil_id, "doc_id": p["doc_id"], "blob_sha256": p["sha256"], "posted_at": p["posted_at"],
                         "model_kind": kind, "revision": revision}

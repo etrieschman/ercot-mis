@@ -33,6 +33,7 @@ from . import crr, dam, disclosure, gtl, mappings, prices, psse, table
 
 LAYER = "raw"
 COMPRESSION = "zstd"
+NONE = "<none>"  # the artifact row of a package that yields no table (a document shape the parser archives but does not read)
 _MODULES = {"NP7-801-M": (crr,), "NP7-800-M": (crr,), "NP4-500-SG": (dam,), "NP3-766-M": (gtl,),
             "NP4-191-CD": (prices,), "NP4-183-CD": (prices,), "NP4-190-CD": (prices,),
             "NP4-523-CD": (prices,), "NP4-200-CD": (prices,), "NP4-158-SG": (prices,), "NP4-231-CD": (prices,), "NP4-159-CD": (prices,),
@@ -168,7 +169,8 @@ def build(session, product: str | int, *, workers: int | None = None, limit: int
     todo, results = [], []
     for package in packages:
         keys = {artifact_key(parser, package["sha256"], t) for t in session.catalog.artifact_tables(LAYER, package["sha256"])}
-        if keys and keys <= existing and all((session.data_dir / p).is_file() for p in session.catalog.artifact_paths(keys)):
+        paths = [p for p in session.catalog.artifact_paths(keys) if p != NONE]
+        if keys and keys <= existing and all((session.data_dir / p).is_file() for p in paths):
             results.append({"emil_id": spec.emil_id, "doc_id": package["doc_id"], "blob_sha256": package["sha256"],
                             "status": "skipped", "tables": len(keys), "rows": None, "seconds": 0.0, "error": None})
             continue
@@ -189,6 +191,8 @@ def build(session, product: str | int, *, workers: int | None = None, limit: int
                   "rows": sum(a.rows for a in result.artifacts), "seconds": round(result.seconds, 1), "error": result.error}
         if not result.error:
             placed = []
+            if not result.artifacts:  # nothing to read in this document: remember that, or it is parsed again every run
+                placed.append((artifact_key(parser, result.blob_sha256, NONE), Written(NONE, Path(NONE), 0, 0, ()), Path(NONE)))
             for artifact in result.artifacts:
                 rel = artifact_path(artifact.table, spec.emil_id, result.blob_sha256)
                 dest = session.data_dir / rel

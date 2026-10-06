@@ -62,9 +62,8 @@ def gtl_for_day(session, day) -> tuple[pl.DataFrame, str | None]:
     if rows.is_empty():
         return empty, None
     # Document IDs do not follow posting time (measured), so the latest posting is looked up in the catalog.
-    posted = session.catalog.con.execute(
-        "SELECT doc_id, posted_at FROM remote_doc WHERE emil_id = 'NP3-766-M' AND doc_id IN (SELECT UNNEST(?))", [rows["doc_id"].unique().to_list()]
-    ).fetchall()
+    posted = session.query("SELECT doc_id, posted_at FROM remote_doc WHERE emil_id = 'NP3-766-M' AND doc_id IN (SELECT UNNEST(?))",
+                           [rows["doc_id"].unique().to_list()])
     order = sorted(posted, key=lambda r: (r[1] is None, r[1] or 0, r[0]))
     latest_id = order[-1][0] if order else rows.sort("doc_id")["doc_id"][-1]
     latest = rows.filter(pl.col("doc_id") == latest_id)
@@ -141,6 +140,8 @@ def build(session, *, limit: int | None = None) -> list[dict]:
 
     version = core_id()
     existing = session.catalog.artifact_keys(LAYER)
+    tmp_dir = core_dir / ".partial"
+    tmp_dir.mkdir(mode=0o700, exist_ok=True)
     results = []
     packages = snaps.select("emil_id", "blob_sha256", "doc_id").unique(maintain_order=True)
     if limit is not None:
@@ -156,9 +157,10 @@ def build(session, *, limit: int | None = None) -> list[dict]:
             continue
         identity = f"{version}|{inputs}"
         keys = {t: raw_build.artifact_key(identity, blob, t) for t in TABLES}
+        none_key = raw_build.artifact_key(identity, blob, raw_build.NONE)
         rels = {t: Path(LAYER) / t / f"emil_id={emil_id}" / f"{blob[:16]}.parquet" for t in TABLES}
         record = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob, "status": "skipped", "tables": len(TABLES), "rows": None, "seconds": 0.0, "error": None}
-        if set(keys.values()) <= existing and all((session.data_dir / rel).is_file() for rel in rels.values()):
+        if none_key in existing or (set(keys.values()) <= existing and all((session.data_dir / rel).is_file() for rel in rels.values())):
             results.append(record)
             continue
         try:
@@ -170,15 +172,23 @@ def build(session, *, limit: int | None = None) -> list[dict]:
             results.append({**record, "status": "failed", "error": f"{type(error).__name__}: {error}"})
             continue
         run_id = run_id or session._start_run("build_core")
+        if not tables:  # a package with nothing to build (every month filtered out): remember that, or it is rebuilt every run
+            session._add_artifacts(run_id, LAYER, emil_id, blob, identity, [(none_key, raw_build.Written(raw_build.NONE, Path(raw_build.NONE), 0, 0, ()), Path(raw_build.NONE))])
+            results.append({**record, "status": "built", "tables": 0, "rows": 0})
+            continue
         placed = []
         for table, frame in tables.items():
             dest = session.data_dir / rels[table]
             dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            handle, tmp = tempfile.mkstemp(dir=dest.parent, suffix=".parquet")
+            handle, tmp = tempfile.mkstemp(dir=tmp_dir, suffix=".parquet")  # outside core/<table>/, so a crash leaves no half file where readers scan
             os.close(handle)
-            frame.write_parquet(tmp, compression="zstd")
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, dest)
+            try:
+                frame.write_parquet(tmp, compression="zstd")
+                os.chmod(tmp, 0o600)
+                os.replace(tmp, dest)
+            except BaseException:
+                Path(tmp).unlink(missing_ok=True)
+                raise
             placed.append((keys[table], raw_build.Written(table, dest, frame.height, dest.stat().st_size, ()), rels[table]))
         session._add_artifacts(run_id, LAYER, emil_id, blob, identity, placed)
         results.append({**record, "status": "built", "tables": len(placed), "rows": sum(f.height for f in tables.values())})

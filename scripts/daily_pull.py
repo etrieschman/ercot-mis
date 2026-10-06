@@ -129,7 +129,7 @@ def check_prices_recent(mis: em.Session, days: int = PRICE_CHECK_DAYS) -> int:
 def main() -> int:
     started = datetime.now(timezone.utc)
     print(f"daily pull {started:%Y-%m-%d %H:%M} UTC", flush=True)
-    failed = 0
+    failed, risk, previous = 0, {}, {}
     with em.open() as mis:
         status_path = mis.data_dir / "logs" / "last_run.json"
         previous = json.loads(status_path.read_text()) if status_path.is_file() else {}
@@ -159,16 +159,22 @@ def main() -> int:
             print(f"  {spec.emil_id}: fetched {done.height} ({done['size_bytes'].sum() / 1e6:.1f} MB), failed {errors.height}, {time.monotonic() - began:.0f}s", flush=True)
             for doc_id, error in errors.select("doc_id", "error").iter_rows():
                 print(f"    doc {doc_id}: {error}")
-        risk = at_risk(mis, started)
-        print(f"  at risk: {risk['unarchived_ews_documents']} EWS documents not archived"
-              + (f", oldest rolls off in {risk['days_until_oldest_rolls_off']} days" if risk["days_until_oldest_rolls_off"] is not None else ""), flush=True)
-        failed += build_layers(mis)
-        failed += check_prices_recent(mis)
-    status_path.parent.mkdir(mode=0o700, exist_ok=True)
-    status_path.write_text(json.dumps({"started_utc": started.isoformat(), "finished_utc": datetime.now(timezone.utc).isoformat(), "failed": failed,
-                                       "previous_finished_utc": previous.get("finished_utc"), **risk}))
-    if failed:
-        notify("ercot-mis daily pull", f"{failed} failure(s); see data/logs/daily_pull.log")
+        try:
+            try:
+                risk = at_risk(mis, started)
+                print(f"  at risk: {risk['unarchived_ews_documents']} EWS documents not archived"
+                      + (f", oldest rolls off in {risk['days_until_oldest_rolls_off']} days" if risk["days_until_oldest_rolls_off"] is not None else ""), flush=True)
+            except Exception as error:
+                failed += 1
+                print(f"  at risk: FAILED {type(error).__name__}: {error}", flush=True)
+            failed += build_layers(mis)
+            failed += check_prices_recent(mis)
+        finally:  # the status file and the notification happen whatever broke above
+            status_path.parent.mkdir(mode=0o700, exist_ok=True)
+            status_path.write_text(json.dumps({"started_utc": started.isoformat(), "finished_utc": datetime.now(timezone.utc).isoformat(), "failed": failed,
+                                               "previous_finished_utc": previous.get("finished_utc"), **risk}))
+            if failed:
+                notify("ercot-mis daily pull", f"{failed} failure(s); see data/logs/daily_pull.log")
     return 1 if failed else 0
 
 

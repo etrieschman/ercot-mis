@@ -102,14 +102,50 @@ class Probe:
     documents: pl.DataFrame
 
 
+class _ReadOnlyCatalog:
+    """Read-only catalog access that opens a connection per call and closes it before returning.
+
+    DuckDB allows one process at a time on the file, writer or readers, so a Session that
+    kept a read-only connection open (a notebook left running) would block the daily
+    pull's writes. Every method of :class:`Catalog` is available; each call is its own
+    short connection, and results are plain frames and lists, never live cursors.
+    """
+
+    read_only = True
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def __getattr__(self, name: str):
+        if name.startswith("_") or not callable(getattr(Catalog, name, None)):
+            raise AttributeError(name)
+
+        def call(*args, **kwargs):
+            catalog = Catalog(self.path, read_only=True)
+            try:
+                return getattr(catalog, name)(*args, **kwargs)
+            finally:
+                catalog.close()
+
+        return call
+
+    def query(self, sql: str, params: list | None = None) -> list[tuple]:
+        """Ad hoc read-only SQL on the catalog; returns the rows."""
+        catalog = Catalog(self.path, read_only=True)
+        try:
+            return catalog.con.execute(sql, params or []).fetchall()
+        finally:
+            catalog.close()
+
+
 class Session:
     """A local ercot-mis data folder plus the clients that fill it.
 
-    The catalog is a DuckDB file that allows one writer at a time. ``Mis`` reads it
-    through a read-only connection and takes a writable one only for the moments it
-    records a listing or an archived document, never across a download, so a daily
-    pull and a notebook rarely collide. Use as a context manager, or call ``close()``,
-    to release the read-only connection.
+    The catalog is a DuckDB file that allows one process at a time. The session never
+    keeps a connection: reads open one for the call (``session.catalog``,
+    ``session.query``), and writes take a writable one only for the moment they record
+    a listing, a blob or an artifact, never across a download or a parse. A notebook
+    left open therefore never blocks the daily pull.
     """
 
     def __init__(self, data_dir: Path, identity: Identity | None = None):
@@ -117,7 +153,6 @@ class Session:
         self._identity = identity
         self._ews: EwsClient | None = None
         self._public_api: PublicApiClient | None = None
-        self._catalog: Catalog | None = None
 
     def __repr__(self) -> str:
         return f"Session({str(self.data_dir)!r})"
@@ -129,16 +164,16 @@ class Session:
         self.close()
 
     def close(self) -> None:
-        if self._catalog is not None:
-            self._catalog.close()
-            self._catalog = None
+        """Nothing is held open between calls; kept so ``with em.open() as s:`` reads naturally."""
 
     @property
-    def catalog(self) -> Catalog:
-        """A read-only view of the catalog. Close the session to let another process write."""
-        if self._catalog is None:
-            self._catalog = Catalog(self._catalog_path, read_only=True)
-        return self._catalog
+    def catalog(self) -> _ReadOnlyCatalog:
+        """Read-only catalog access; each method call is its own short connection."""
+        return _ReadOnlyCatalog(self._catalog_path)
+
+    def query(self, sql: str, params: list | None = None) -> list[tuple]:
+        """Ad hoc read-only SQL on the catalog (``remote_doc``, ``archive_blob``, ``artifact``, ...); returns the rows."""
+        return self.catalog.query(sql, params)
 
     @property
     def _catalog_path(self) -> Path:
@@ -147,7 +182,6 @@ class Session:
     @contextmanager
     def _writer(self) -> Iterator[Catalog]:
         """The writable catalog, held only for the duration of the block."""
-        self.close()
         writer = Catalog(self._catalog_path)
         try:
             yield writer

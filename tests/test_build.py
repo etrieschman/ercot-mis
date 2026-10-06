@@ -91,9 +91,9 @@ def test_build_raw_writes_identity_columns_and_provenance(tmp_path):
 
         artifacts = mis.catalog.artifacts("raw")
         assert artifacts.height == 17 and set(artifacts["table_name"]) >= {"psse_bus", "crr_contingencies"}
-        lineage = mis.catalog.con.execute("SELECT count(DISTINCT member_sha256) FROM lineage").fetchone()[0]
+        lineage = mis.query("SELECT count(DISTINCT member_sha256) FROM lineage")[0][0]
         assert lineage == 6  # RAW, four CSVs and the workbook; the XML fed nothing
-        runs = mis.catalog.con.execute("SELECT command, failed FROM run").fetchall()
+        runs = mis.query("SELECT command, failed FROM run")
         assert runs == [("build_raw NP7-800-M", 0)]
         for path in artifacts["path"]:
             assert oct((tmp_path / "data" / path).stat().st_mode & 0o777) == "0o600"
@@ -206,3 +206,14 @@ def test_snapshot_revisions_order_packages_by_posting_time(tmp_path):
         snaps = snapshots(mis)
         assert snaps["snapshot_id"].to_list() == ["crr:monthly:2026-09:r1", "crr:monthly:2026-09:r2"]
         assert snaps["revision"].to_list() == [1, 2] and snaps["posted_at"][0] < snaps["posted_at"][1]
+
+
+def test_a_document_that_yields_no_table_is_recorded_and_skipped_next_time(tmp_path):
+    """The GTL product also posts DC-tie workbooks the parser does not read; without a record they were parsed every run."""
+    ole = tmp_path / "dc_tie_limits.xls"
+    ole.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 16)
+    with Session(tmp_path / "data") as mis:
+        mis.ingest(ole, "NP3-766-M")
+        first, again = mis.build_raw("NP3-766-M"), mis.build_raw("NP3-766-M")
+        assert first["status"][0] == "built" and first["tables"][0] == 0 and again["status"][0] == "skipped"
+        assert mis.catalog.artifacts("raw")["table_name"].to_list() == ["<none>"]

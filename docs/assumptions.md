@@ -38,6 +38,7 @@ yet checked), `external` (needs data we do not pull yet).
 | TOP-07 | forced | Ambiguous bus keys (identical attachments at one substation) get an ordinal suffix | `core/node.py` | n/a | those buses are always isolated and never in the kept network | verified (harmless) |
 | TOP-08 | measured | DAM contingency files differ by hour, so each hour is its own snapshot | `core/snapshot.py` | ERCOT posts one per hour | name sets differ across the hours of a day | verified |
 | TOP-09 | forced | Ties out of service are not contracted even when contraction is on | `core/node.py` | An open breaker separates nodes | by construction | verified |
+| TOP-11 | forced | Packages that describe one logical model (a DAM day, a CRR month, an annual term and sequence; `_Upd` included) are revisions numbered by posting time, an unknown posting time counting as oldest; checks, the viewer and the price check take the highest revision number | `core/snapshot.py`; `scripts/check_prices.py` (`hour_ids`, `borrowed_gtcs`); `scripts/check_network.py` | ERCOT posts an `_Upd` as a new document and says nothing about precedence | `tests/test_build.py` orders revisions by posting time; diff r1 against r2 once an `_Upd` month overlaps | open (ordering tested; precedence unverified) |
 
 ## Impedances and ratings
 
