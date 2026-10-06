@@ -128,32 +128,24 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
     # Settlement point weights as a (points x nodes) matrix. Under a contingency that cuts buses off, a
     # hub's or zone's weights are renormalized over the buses still energized for that constraint
     # (Protocols 4.6.1.2 and 3.5.2: the distribution factors are per constraint); a point with no bus
-    # left takes the heuristic of 4.5.1(8)(b): the average over energized buses of the same substation
-    # and voltage, else of the same substation, else none (the system price alone). PRC-03.
+    # left has no sensitivity to that constraint (no path to it). The same-substation average of
+    # 4.5.1(8)(b) is for buses de-energized in the base case, which the network drops before pricing;
+    # tried here for islanded points on 2026-09-30, it made the worst of them several dollars worse. PRC-03.
     weights = net.settlement_point_nodes.select("settlement_point_id", "node_index", "weight")
     points_frame = weights.select("settlement_point_id").unique().sort("settlement_point_id").with_row_index("point_index")
     w = weights.join(points_frame, on="settlement_point_id")
     W = sparse.csr_matrix((w["weight"].to_numpy(), (w["point_index"].to_numpy(), w["node_index"].to_numpy())), shape=(points_frame.height, net.n_nodes))
-    substation_of = net.nodes["substation"].fill_null("").to_numpy()
-    kv_of = np.round(net.nodes["kv"].to_numpy().astype(float), 1)
 
     def aggregated(sf: np.ndarray, connected: np.ndarray | None) -> tuple[np.ndarray, np.ndarray]:
         """Per point: the constraint's shift factor with per-constraint weights, and with the plain weights."""
         plain = W @ sf
         if connected is None or connected.all():
             return plain, plain
-        filled = sf.copy()
-        cut = np.flatnonzero(~connected)
-        for i in cut:  # 4.5.1(8)(b): same substation and voltage, else same substation
-            same_sub = connected & (substation_of == substation_of[i])
-            same = same_sub & (kv_of == kv_of[i])
-            pool = same if same.any() else same_sub
-            filled[i] = sf[pool].mean() if pool.any() else 0.0
         Wc = W @ sparse.diags(connected.astype(float))
         kept = np.asarray(Wc.sum(axis=1)).ravel()
         has_bus = kept > 0
         Wc = sparse.diags(np.where(has_bus, 1.0 / np.where(has_bus, kept, 1.0), 0.0)) @ Wc
-        return np.where(has_bus, Wc @ sf, W @ filled), plain
+        return Wc @ sf, plain
 
     point_congestion = np.zeros(points_frame.height)        # per-constraint weights and the heuristic (PRC-03)
     point_congestion_plain = np.zeros(points_frame.height)  # plain weights, cut-off buses at zero (what the check did before)
