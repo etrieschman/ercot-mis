@@ -93,7 +93,10 @@ the price check at the settlement points.
 - The de-energized list (NP4-200-CD) names points the check never prices, because their
   buses are dropped from the network; pricing them needs the heuristic mapping
   (NP4-231-CD) resolved from electrical bus names to nodes through NP4-160-SG.
-- The published load distribution factors (NP4-159-CD) against the `Ld` file's shares.
+- Settled 2026-10-06 (`scripts/check_ldf.py`): the published load distribution factors
+  agree with the `Ld` file's substation shares to a fraction of a percent; the public
+  report lists more substations and about nine percent more MW than the model's loads,
+  under load identifiers that are not the model's load names.
 - Electrical bus names in the LMP file (ERCOT's term for its finest pricing points) are not
   the RAW's node names; the mapping
   (NP4-160-SG) is archived and not parsed, so the check prices settlement points only.

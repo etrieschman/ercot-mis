@@ -83,6 +83,8 @@ Do not write "node" for the merged thing or "bus" for a CRR bus section again.
   - `settlement_point`, `settlement_point_bus`: kind and bus weights summing to one
     (CRR participation factors; DAM `Sp`, `Hb` with the protocol's two-level hub average, `Ld`).
   - `load`: one row per load: node, service status, MW; DAM zone, distribution factor and rollover flags.
+  - `hourly_award` (from the 60-day disclosure, one package per operating day): every energy
+    award as a signed MW at a settlement point; `session.injections(day)` sums it to `q`.
   - `match_branch`, `match_bus`, `match_contingency` per (CRR snapshot, DAM snapshot)
     via `session.match_*`, every row with its `match_method`, unmatched rows kept.
   - `diff_branch`, `diff_settlement_point`, `diff_load` via `session.diff_*`: both models
@@ -91,7 +93,7 @@ Do not write "node" for the merged thing or "bus" for a CRR bus section again.
   Planned: `core.constraint`, `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_award`,
   `core.hourly_shadow_price`, `core.tou_hours`.
 - `out` — what consumers read: `out.network` (`session.network(snapshot_id, Options)`,
-  assembled on first request and cached under `out/network/<snapshot>/<key>/` as Parquet, conventions in `docs/out-network.md`), `out.hourly_injection` (q).
+  assembled from core on every call, conventions in `docs/out-network.md`), `out.hourly_injection` (q).
 - Layer = folder = DuckDB schema. No PUDL-style `layer_source__type` names.
   Columns: unit suffixes (`_mw`, `_mva`), `is_` booleans, `_code` categoricals.
 - Hourly facts carry `interval_start_utc`, `interval_end_utc` **and** ERCOT's
@@ -232,10 +234,12 @@ src/ercot_mis/
                     point -> matched branch endpoints by vote), core.match_contingency (name -> members)
     settlement_point.py  core.settlement_point and core.settlement_point_bus (kind, bus weights; both models)
     load.py         core.load: every load with its node, service status, MW; DAM zone, LDF and rollover flags
+    award.py        core.hourly_award: the DAM's awards as signed injections; net_injections (q) and hourly_balance
     diff.py         core.diff_branch, core.diff_settlement_point and core.diff_load: both models side by side
     coverage.py     counts of what a snapshot's tables carry and lack (viewer side panel, measure_identity.py)
     build.py        writes every core table per package
   out/              layer 3: what consumers read
+    injection.py    out.injection: q per settlement point and hour for a day (session.injections)
     network.py      Network for one snapshot: nodes (or buses when ties are contracted), branches with limits, contingency
                     index sets, signed GTC members, settlement point weights, dropped elements with
                     reasons; Options = judgment calls
@@ -251,6 +255,8 @@ scripts/validate_parsers.py  parse archived packages; check counts (RAW sections
 scripts/measure_identity.py  key-matching and node-identity measurements -> data/reports/identity/*.json
 scripts/check_prices.py      price identity per DAM hour: shadow prices x shift factors vs published prices -> data/reports/prices/*.json
 scripts/check_network.py     DC solve on assembled networks; contracted vs ERCOT topology -> data/reports/network/*.json
+scripts/check_injections.py  the DAM's awards balance per hour (INJ-02) -> data/reports/injections/*.json
+scripts/check_ldf.py         ERCOT's published load distribution factors vs the Ld file's shares (SP-02) -> data/reports/ldf/*.json
 tools/check_confidential.py  pre-commit guard (stdlib only; also blocks Keychain-stored secrets and notebooks with outputs)
 .github/workflows/ci.yml     tests + guard on every push
 tests/                       synthetic-only tests; test_guard also scans every tracked file
@@ -274,8 +280,8 @@ measurements live in the scripts that make them and the dated reports under
 | M1 | archive store, catalog, fetch (+ tracked products), ingest `ftr_align/ercot_data`, Public API archive client; **daily scheduled pull** (required by the M0 finding); DAM capture starts | EWS side done and running daily via launchd since 2026-09-15 (retries, status file, notification on failure); 2026-10-01: Public API archive client; DAM prices pulled daily |
 | M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | parsers done (PSS/E both dialects, CRR, DAM, GTL workbook); `scripts/validate_parsers.py` clean on every archived package. Not yet: DynamicRatings, PowerFlowData.jl cross-check (needs Julia) |
 | M3 | core layer + SQL runner, cache skip, lineage, validation checks | 2026-09-17: raw writer with provenance (`build_raw`, process pool, cache skip, `run`/`artifact`/`lineage`); `build_core` writes snapshot, node, branch, branch_rating, contingency, contingency_outage, gtc, gtc_member for every archived package. 2026-09-24: both builds run at the end of the daily pull. 2026-10-01: SQL runner dropped; register lint (`tests/test_register.py`); `scripts/check_prices.py`. Not yet: flow check, status page |
-| M4 | `out.network` + `ftr_align/cases/ercot.py` (on hold) | 2026-10-01: cached on disk (`out/network/`). 2026-09-24: `session.network()` (per-snapshot, own vocabulary, ERCOT's topology by default, settlement point weights, audit frames, `docs/out-network.md`); `scripts/check_network.py` solves it. Not yet: on-disk `out/`, `ercot.py` (needs the sparse PTDF, see next steps) |
-| M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | 2026-10-01: prices pulled daily and parsed; price check. 2026-10-06: the price check runs daily; system lambda, de-energized points, electrically similar points, heuristic mapping and LDFs pulled and parsed; hub weights per Protocols 3.5.2; the 60-day disclosure pulled and parsed. Not yet: injections (first overlapping day mid-October) |
+| M4 | `out.network` + `ftr_align/cases/ercot.py` (on hold) | 2026-09-24: `session.network()` (per-snapshot, own vocabulary, ERCOT's topology by default, settlement point weights, audit frames, `docs/out-network.md`); `scripts/check_network.py` solves it. Not yet: on-disk `out/`, `ercot.py` (needs the sparse PTDF, see next steps) |
+| M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | 2026-10-01: prices pulled daily and parsed; price check. 2026-10-06: the price check runs daily; system lambda, de-energized points, electrically similar points, heuristic mapping and LDFs pulled and parsed; hub weights per Protocols 3.5.2; the 60-day disclosure pulled and parsed. Evening of 2026-10-06: `core.hourly_award` and `session.injections` (awards balance to a few MW a day); the flow check itself waits for the first overlapping day (mid-October) |
 | M6 | CRR ↔ DAM matching + scorecard | matchers for branches, buses and contingencies with `match_method` and unmatched rows (`session.match_*`); `scripts/measure_identity.py` reports their rates. 2026-09-24: `prefix+x` tie-break by reactance, `core.diff_branch`, `core.settlement_point[_node]`, `core.diff_settlement_point`. Not yet: `diff_bus`/`diff_contingency`, `subset` contingency method, scorecard |
 | M7 | `shift_factors` (restricted float32 PTDF/LODF, cache budget, cross-test vs `ftr_align.network.compute_ptdf`) | 2026-10-01: `ercot_mis.shift_factors` (sparse factorization, re-solve per contingency), used by the check scripts. The dense PTDF/LODF cache is on hold with the research |
 | M8 | scheduled pulls (Python files), docs, first release | 2026-10-06: `demo/tour.ipynb` is the walkthrough; the pull logs what is at risk |
@@ -333,7 +339,7 @@ as a discrepancy (RAT-10), flags partial contingencies, counts binding rows by l
 (NAM-07); load zone weights apply the `Ld` file's rollover (SP-02; under one percent of
 zone MW); the register's overstated rows say what was actually checked and eight missing
 decisions have rows; node and bus are used consistently in code and docs; the
-README and the network note are current. What remains from the audit is folded into the numbered list below.
+README and the network note are current. Done the same evening: injections and the hourly balance (INJ-01, INJ-02), the published load distribution factors against the model's (SP-02 verified), the transformer guard and tap test (RAT-01 guarded, RAT-11 measured), the network cache removed, the identity script's loop, duplicate rating rows counted, `model_kind` renamed. What remains is in the numbered list below.
 
 First, check health (2 min):
 - `tail -40 data/logs/daily_pull.log` and `cat data/logs/last_run.json`: `failed 0`;
@@ -347,42 +353,34 @@ First, check health (2 min):
 
 Then, in order:
 
-1. **Flow check, first half now**: build the hourly net injection at settlement points
-   from the disclosure awards (`dam_60d_gen_resource_data` and `dam_60d_esr_data`
-   `awarded_quantity` at resource nodes; energy-only offer awards +, energy bid awards −,
-   point-to-point obligation awards + at the source and − at the sink); check Σq ≈ 0 per
-   hour on the archived days; register the sign conventions. Second half when the first
-   disclosure day with a model arrives (around 2026-10-15): awards through `out.network`,
-   binding rows at their limit, nothing enforced above it.
+1. **Flow check, second half** when the first disclosure day with a model arrives (around
+   2026-10-15; the daily pull archives both): `session.injections(day)` through
+   `out.network` for that hour, flows against limits and against the binding rows of
+   NP4-191-CD. Settlement points to nodes through `settlement_point_nodes`; the 68 points
+   without a node (next item) will carry injections that have nowhere to go, so count them.
 2. **The 68 settlement points ERCOT prices and our network cannot place** (constant all
-   day; the `Sp` file gives them no bus). Read what the file says about them (combined-cycle
-   logical points? points outside the model?) and either place them through NP4-160-SG or
-   record why they cannot be; the price report's `deenergized_in_base_case.only_ours` is the count.
-3. **Load zone weights**: ERCOT's published load distribution factors (NP4-159-CD) against
-   the `Ld` file's shares (SP-02's open item); the zone residual in GTC-free hours is the gauge.
-4. **Transformer conventions**: a guard in `core.branch` that fails the build on
-   `ang1 != 0` or `CW != 1`/`CZ != 1`, a non-unit-tap test, and one run with tap forced to
-   one to settle RAT-11 the way PRC-06 was settled.
-5. **GTC definitions from NP3-770-M** (one text PDF per constraint): the user's call on
+   day; the `Sp` file gives them no bus): read what the file says about them and either
+   place them through NP4-160-SG or record why not; `deenergized_in_base_case.only_ours`
+   in the price report is the count.
+3. **GTC definitions from NP3-770-M** (one text PDF per constraint): the user's call on
    when; until then the evening residual stands (PRC-04).
-6. **Viewer**: check the coverage table on a real pair with `?nohash`; show `diff_load` in
+4. **Viewer**: check the coverage table on a real pair with `?nohash`; show `diff_load` in
    the side panel; label the DAM load column "LDF" (the DAM RAW gives every load 0 MW).
-7. **Smaller audit leftovers**: drop the on-disk network cache (reads slower than
-   assembling from core: 0.7 s vs 0.3 s measured); count duplicates resolved by
-   `keep="first"` (RAT-12); `measure_identity.py`'s quadratic loop and double parsing; a
-   glossary page if the notebook's glossary cell is not enough; `model_kind` values
-   (`dam`/`monthly`/`annual`) are asymmetric.
-8. **Planning-stage inputs** as the user asks; EWS report type IDs for transmission
+5. **Smaller leftovers**: count the match and GTC duplicates `keep="first"` resolves
+   (RAT-12); a glossary page if the notebook's cell is not enough; the night-time offset
+   of a few cents between the fitted and the published system price in hours with few
+   binding rows (unexplained; `system_price.fitted_median_minus_published`).
+6. **Planning-stage inputs** as the user asks; EWS report type IDs for transmission
    outage reports and CRR auction results.
-9. **Cross-model network** (one bus set for a CRR and a DAM network): the rule for a CRR
+7. **Cross-model network** (one bus set for a CRR and a DAM network): the rule for a CRR
    bus that maps to two DAM buses is the user's call.
-10. **New machine / redundancy** (user, in the next couple of months): the data folder
-    moves with one `rsync` plus `~/.ercot/` and the Keychain secrets; the same `rsync` on a
-    schedule gives a second copy on another machine.
+8. **New machine / redundancy** (user, in the next couple of months): the data folder
+   moves with one `rsync` plus `~/.ercot/` and the Keychain secrets; the same `rsync` on a
+   schedule gives a second copy on another machine.
 
 Other open rows of `docs/assumptions.md`: RAT-04 (which RAW rate is the DAM's
-post-contingency limit), SP-04, NAM-06, NAM-07 (the `SpCtg` file), NAM-08 (the long day,
-2026-11-01), PRC-04 (GTC members from NP3-770-M).
+post-contingency limit), RAT-05 (the two rating fallbacks), RAT-11 (tap convention), NAM-06,
+NAM-07, PRC-04 (GTC members from NP3-770-M), TOP-04, TOP-07, TOP-11, SP-06, SP-07, MAT-06, MAT-07.
 
 Open decisions for the user: schedule the daily wake? Install Julia for the
 PowerFlowData.jl cross-check? Keep capturing every DAM day?
