@@ -35,14 +35,15 @@ and its contingency keys from `branch_indexes`.
   `fallback`), `slack_node_id` and `is_slack` say which node. The choice does not
   change DC flows.
 - **Negative reactances** (series capacitors) are kept as written in both models.
-- **DAM contingencies** have rows a topology model cannot apply: load, generator and
-  settlement-point outages (injection changes, not topology) and split-bus operations
-  (topology changes that are not element removals). They are counted per contingency
-  (`n_other_rows`, `has_split_bus`) and the branch outages are applied.
+- **DAM contingencies** have rows beyond branch outages: load, generator and
+  settlement-point outages (injection changes, not topology; counted in `n_other_rows`)
+  and split-bus operations, which move one end of a branch to a new bus section. The
+  branch outages are applied, and the split-bus moves travel with the contingency
+  (`split_branch_indexes`, `split_ends`) for the solver to apply (NAM-09).
 - **Empty contingencies are dropped and listed.** A contingency is empty when none
-  of the elements it removes is a branch of the network: the equipment is already out
+  of the elements it removes is a branch of the network and it moves no bus section: the equipment is already out
   of service in that month's RAW (the most common case), it is a breaker or switch
-  that contraction folded into a node, or the RAW does not know the name. Removing an
+  that contraction folded into a bus, or the RAW does not know the name. Removing an
   absent element constrains nothing beyond the base case, so the contingency is
   dropped (`drop_empty_contingencies`) and listed in `dropped_contingencies` with its
   counts, the same way dropped branches and nodes are.
@@ -60,29 +61,30 @@ and its contingency keys from `branch_indexes`.
   records the weight that fell on dropped nodes (`weight_dropped`). This is the matrix
   that maps injections at settlement points (awards, bids) onto nodes. Without
   contraction a CRR point's weight is spread equally over its bus's nodes.
-- **Islanding contingencies are not screened here.** Whether removing an outage set
-  disconnects the network depends on the consumer's connectivity check, as in
-  `ftr_align.network.is_connected`.
+- **Islanding contingencies are not screened here.** `ercot_mis.shift_factors.DcSystem.outaged`
+  finds the part cut off from the slack when it solves a contingency and reports it
+  (`n_islanded`, `connected`); the network itself keeps every contingency.
 
 ## Options (judgment calls)
 
 | option | default | meaning |
 |---|---|---|
-| `contract_ties` | `False` | ERCOT's topology: every node of the model is a vertex and CRR ties are branches at their RAW reactance, monitored ones with their breaker ratings. With `True`, nodes joined by in-service ties are one node; the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`) and their limits with them. The cost of contraction is measured by `scripts/check_network.py`. Tie members keep their group key in their id (`<key>@<bus>`). No effect on DAM. |
+| `contract_ties` | `False` | ERCOT's topology: every node of the model is a vertex and CRR ties are branches at their RAW reactance, monitored ones with their breaker ratings. With `True`, each bus (nodes joined by in-service ties) is one vertex; the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`) and their limits with them. The cost of contraction is measured by `scripts/check_network.py`. Tie members keep their group key in their id (`<key>@<bus>`). No effect on DAM. |
 | `rating_source` | model default | `crr_monitored` (CRR CSV, per time-of-use block) or `psse_raw` (RAW rate A/B). CRR defaults to the CSV, DAM to the RAW. |
 | `time_of_use` | `PeakWD` | The CRR CSV block; the CRR RAW is the PeakWD model. |
 | `limits` | `enforced` | Which branches get finite limits: `enforced` (CRR monitored, DAM secured), `monitored` (DAM monitored or secured), `all`. |
 | `contingency_rating` | `emergency` | Post-contingency limit: `emergency` (rate B / EmergencyRating) or `base`. |
 | `keep_out_of_service` | `False` | Keep branches the RAW marks out of service. |
+| `drop_empty_contingencies` | `True` | Drop a contingency that removes no branch and moves no bus section (RAT-10); with `False` it stays, flagged `is_empty`. |
 
 Every assumption behind these conventions, with its status, is in
 [docs/assumptions.md](assumptions.md).
 
-## What is not in the first cut
+## Not built
 
 - Nothing cross-model: a CRR and a DAM `Network` are each in their own vocabulary.
-  Putting both on one node set (the `intersection` in `ftr_align` needs it) goes
-  through `core.match_bus` and `core.match_branch` and is the next step.
-- DAM GTC members (borrowed from the CRR model through `crr_gtc_id`, or parsed).
-- Writing to `out/` on disk and the classification-aware `export()`.
+  Putting both on one bus set goes through `core.match_bus` and `core.match_branch`.
+- DAM GTC members: the DAM package carries none; the price check borrows the CRR
+  model's for the month, and ERCOT's own definitions (NP3-770-M, PDFs) are not parsed.
+- The classification-aware `export()`.
 - Time-of-use blocks other than the one asked for; DynamicRatings.

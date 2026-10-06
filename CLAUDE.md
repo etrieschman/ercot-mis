@@ -56,6 +56,10 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 - `out.network` vertices are "nodes" (model nodes by default; buses with `contract_ties`).
 
 Do not write "node" for the merged thing or "bus" for a CRR bus section again.
+- **electrical bus** is ERCOT's own name for a pricing point in its price and mapping
+  files; it appears only in raw tables and the mapping tables, never in core or out.
+- `out.network` frames keep the column name `node` for a **vertex**: a model node, or a
+  bus when `contract_ties` is set (`n_members` counts the nodes in it).
 
 ### Layers and naming
 
@@ -63,29 +67,29 @@ Do not write "node" for the merged thing or "bus" for a CRR bus section again.
   unzipped to disk; `_Upd` is a new document (revision), not an overwrite.
 - `raw` — typed Parquet, one table per source file, named for the file
   (`raw.crr_monitored_lines_and_transformers`). snake_case + types only.
-- `core` — tidy keyed tables. Network tables are **shared by CRR and DAM** and keyed
-  by `snapshot_id` (`crr:annual:2029.1st6:seq6:2029-01:r2`, `crr:monthly:2026-10:r1`,
-  `dam:2026-10-14:he07:r1`). Built so far: `core.snapshot` (one row per model, revision
-  = order of `posted_at` within a logical package), `core.node` (one row per node, that is per RAW record,
-  per snapshot: `bus_key`, `substation`, `kv`, `bus_group`, `is_tie_member`, attachments),
-  `core.branch` (stable `branch_id`, endpoints as bus keys, tie/in-service/monitored/
-  secured flags), `core.branch_rating` (RAW rate A/B/C and CRR CSV ratings per TOU,
-  side by side), `core.contingency` + `core.contingency_outage` (each model's own
-  vocabulary resolved to branch/bus keys, `is_resolved`, split-bus rows kept),
-  `core.gtc` + `core.gtc_member` (CRR from its CSV with members; DAM hourly limits from
-  the GTL workbook with `crr_gtc_id` from the manual crosswalk in
-  `data/overrides/gtc_names.csv`, members empty), and `core.match_branch` /
-  `core.settlement_point` + `core.settlement_point_bus` (kind, bus weights summing to
-  one from CRR participation factors or DAM `Sp`/`Hb`/`Ld`), `core.load` (one row per load:
-  node, service status, MW; DAM zone, distribution factor and rollover flags), and `core.match_branch` /
-  `core.match_bus` per (CRR snapshot, DAM snapshot) via `session.match_branches` and
-  `session.match_buses`, and `core.match_contingency` via `session.match_contingencies`
-  (name, then translated branch set; member-set differences recorded).
+- `core` — tidy keyed tables, **shared by CRR and DAM** and keyed by `snapshot_id`
+  (`crr:annual:2029.1st6:seq6:2029-01:r2`, `crr:monthly:2026-10:r1`,
+  `dam:2026-10-14:he07:r1`). One table per line:
+  - `snapshot`: one row per model; revision = posting order within a logical package;
+    DAM rows carry `interval_start_utc`.
+  - `node`: one row per node (one RAW record) per snapshot: `bus_key`, `substation`,
+    `kv`, `bus_group`, `is_tie_member`, attachments.
+  - `branch`, `branch_rating`: stable `branch_id`, endpoints as bus keys, tie, service,
+    monitored and secured flags; RAW rate A/B/C and CRR CSV ratings per TOU block side by side.
+  - `contingency`, `contingency_outage`: each model's own vocabulary resolved to branch
+    and bus keys, `is_resolved`, split-bus rows with the end that moves (`split_end`).
+  - `gtc`, `gtc_member`: CRR from its CSV with members; DAM hourly limits from the GTL
+    workbook with `crr_gtc_id` from the manual crosswalk (`data/overrides/gtc_names.csv`), members empty.
+  - `settlement_point`, `settlement_point_bus`: kind and bus weights summing to one
+    (CRR participation factors; DAM `Sp`, `Hb` with the protocol's two-level hub average, `Ld`).
+  - `load`: one row per load: node, service status, MW; DAM zone, distribution factor and rollover flags.
+  - `match_branch`, `match_bus`, `match_contingency` per (CRR snapshot, DAM snapshot)
+    via `session.match_*`, every row with its `match_method`, unmatched rows kept.
+  - `diff_branch`, `diff_settlement_point`, `diff_load` via `session.diff_*`: both models
+    side by side with `same_*` verdicts; differences are recorded, never smoothed.
+  - `coverage` (a module, not a table): counts of what a snapshot carries and lacks.
   Planned: `core.constraint`, `core.hourly_lmp`, `core.hourly_spp`, `core.hourly_award`,
-  `core.hourly_shadow_price`, `core.tou_hours`. `core.diff_branch`
-  (`session.diff_branches`) puts matched branches' kind, reactance, voltage levels,
-  service and ratings side by side with `same_*` verdicts; `core.diff_settlement_point`
-  (`session.diff_settlement_points`) does the same for settlement point node sets.
+  `core.hourly_shadow_price`, `core.tou_hours`.
 - `out` — what consumers read: `out.network` (`session.network(snapshot_id, Options)`,
   assembled on first request and cached under `out/network/<snapshot>/<key>/` as Parquet, conventions in `docs/out-network.md`), `out.hourly_injection` (q).
 - Layer = folder = DuckDB schema. No PUDL-style `layer_source__type` names.
@@ -339,7 +343,7 @@ Then, in order:
    the zone residual in GTC-free hours; (c) the de-energized points: resolve NP4-231-CD's
    electrical bus names to nodes through `sp_electrical_bus_mapping` (by name and
    voltage within a substation) and price the points the network drops by 4.5.1(8)(a)
-   then (b); (d) price nodes as well as settlement points (the LMP file through the same
+   then (b); (d) pricing points as well as settlement points (the LMP file through the same
    mapping); (e) a few more days than 2026-09-30, now that the check runs daily: read
    the `price check` lines in the log and compare hours with and without a GTC.
 3. **Viewer**: the coverage table is in the side panel (collapsed, under the substation

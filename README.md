@@ -3,11 +3,12 @@
 Fetch, cache and standardize ERCOT Market Information System (MIS) data locally,
 with every table traceable to the bytes ERCOT published.
 
-**Status: pre-alpha.** EWS listing, fetching and the content-addressed archive work;
-CRR and DAM network models, the GTL workbook and their core tables build daily; the
-first cut of `out.network` and the CRR-to-DAM matchers exist. The Public API client
-and DAM prices are not started (see [CLAUDE.md](CLAUDE.md) for the design and
-milestones).
+**Status: pre-alpha.** The daily pull archives the CRR and DAM network models, the
+GTC limits, ERCOT's settlement point mappings, the day-ahead prices and pricing inputs
+and the 60-day disclosure, builds the raw and core tables, and runs the price check.
+`out.network` assembles a snapshot for a solver; the CRR-to-DAM matchers and diff
+tables exist. See [CLAUDE.md](CLAUDE.md) for the design, the milestones and what comes
+next, and `demo/tour.ipynb` for a walkthrough of every call.
 
 ## What it is for
 

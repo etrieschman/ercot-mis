@@ -270,8 +270,10 @@ class Session:
         fetch. A transient failure (stalled connection, short read, 5xx) is retried
         within the run; a document that still fails is reported (``status == "failed"``)
         without stopping the others, and is retried on the next run. ``operating_dates``
-        restricts the fetch to those days; ``max_gb`` refuses, before downloading
-        anything, a fetch larger than the budget.
+        restricts the fetch to those listing days: for the DAM models (NP4-500-SG) the
+        listing's ``operating_date`` is the posting day, and the 24 models inside are for
+        the following day (``core.snapshot.operating_date``). ``max_gb`` refuses, before
+        downloading anything, a fetch larger than the budget.
         """
         spec = get_product(product)
         if spec.take != "pull":
