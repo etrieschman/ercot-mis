@@ -59,7 +59,7 @@ from dataclasses import asdict, dataclass, field
 
 import polars as pl
 
-VERSION = 3
+VERSION = 4
 
 INF = math.inf
 
@@ -125,7 +125,10 @@ class Network:
     tap_ratio, base_limit_mw, contingency_limit_mw, is_limited, is_monitored, is_secured``."""
     contingencies: pl.DataFrame
     """``contingency_id, branch_ids, branch_indexes, n_outages, n_dropped, n_unresolved,
-    n_other_rows, has_split_bus, is_empty``."""
+    n_other_rows, has_split_bus, split_branch_indexes, split_ends, n_split_unapplied, is_empty``.
+    ``split_branch_indexes`` and ``split_ends`` (``from``/``to``) are the branch ends a
+    split-bus row moves to a new bus section (NAM-09); ``n_split_unapplied`` counts split
+    rows on loads, generators and settlement points, which a DC topology does not carry."""
     gtcs: pl.DataFrame
     """``gtc_id, source, limit_mw, n_members, n_unresolved, crr_gtc_id``."""
     gtc_members: pl.DataFrame
@@ -308,24 +311,33 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
                         "base_limit_mw", "contingency_limit_mw", "is_limited", "is_monitored", "is_secured"))
     branch_index = branches.select("branch_id", pl.col("index").alias("branch_index"))
 
-    # Contingencies as index sets.
+    # Contingencies as index sets, plus the branch ends their split-bus rows move (NAM-09).
     outages = core.contingency_outage.join(branch_index, on="branch_id", how="left")
+    if "split_end" not in outages.columns:
+        outages = outages.with_columns(pl.lit(None, pl.String).alias("split_end"))
     is_branch = pl.col("element_kind").is_in(["line", "transformer", "branch"]) & (pl.col("operation") == "outage")
+    is_split = (pl.col("operation") == "split_bus") & pl.col("branch_index").is_not_null() & pl.col("split_end").is_not_null()
     per = (outages.group_by("contingency_id").agg(
         pl.col("branch_id").filter(is_branch & pl.col("branch_index").is_not_null()).unique().sort().alias("branch_ids"),
         pl.col("branch_index").filter(is_branch & pl.col("branch_index").is_not_null()).unique().sort().alias("branch_indexes"),
         (is_branch & pl.col("is_resolved") & pl.col("branch_index").is_null()).sum().cast(pl.UInt32).alias("n_dropped"),
         (~pl.col("is_resolved")).sum().cast(pl.UInt32).alias("n_unresolved"),
         (~is_branch).sum().cast(pl.UInt32).alias("n_other_rows"),
-        (pl.col("operation") == "split_bus").any().alias("has_split_bus")))
+        (pl.col("operation") == "split_bus").any().alias("has_split_bus"),
+        pl.col("branch_index").filter(is_split).alias("split_branch_indexes"),
+        pl.col("split_end").filter(is_split).alias("split_ends"),
+        ((pl.col("operation") == "split_bus") & ~is_split).sum().cast(pl.UInt32).alias("n_split_unapplied")))
     contingencies = (core.contingency.select("contingency_id").join(per, on="contingency_id", how="left")
                      .with_columns(pl.col("branch_ids").fill_null(pl.lit([], dtype=pl.List(pl.String))),
                                    pl.col("branch_indexes").fill_null(pl.lit([], dtype=pl.List(pl.UInt32))),
                                    pl.col("n_dropped").fill_null(0), pl.col("n_unresolved").fill_null(0), pl.col("n_other_rows").fill_null(0),
-                                   pl.col("has_split_bus").fill_null(False))
+                                   pl.col("has_split_bus").fill_null(False),
+                                   pl.col("split_branch_indexes").fill_null(pl.lit([], dtype=pl.List(pl.UInt32))),
+                                   pl.col("split_ends").fill_null(pl.lit([], dtype=pl.List(pl.String))), pl.col("n_split_unapplied").fill_null(0))
                      .with_columns(pl.col("branch_indexes").list.len().cast(pl.UInt32).alias("n_outages"))
-                     .with_columns((pl.col("n_outages") == 0).alias("is_empty"))
-                     .select("contingency_id", "branch_ids", "branch_indexes", "n_outages", "n_dropped", "n_unresolved", "n_other_rows", "has_split_bus", "is_empty")
+                     .with_columns(((pl.col("n_outages") == 0) & (pl.col("split_branch_indexes").list.len() == 0)).alias("is_empty"))
+                     .select("contingency_id", "branch_ids", "branch_indexes", "n_outages", "n_dropped", "n_unresolved", "n_other_rows",
+                             "has_split_bus", "split_branch_indexes", "split_ends", "n_split_unapplied", "is_empty")
                      .sort("contingency_id"))
     empty = contingencies.filter(pl.col("is_empty")) if options.drop_empty_contingencies else contingencies.clear()
     dropped_contingencies = empty.select("contingency_id", pl.lit("empty").alias("reason"), "n_dropped", "n_unresolved", "n_other_rows")

@@ -40,13 +40,14 @@ def _core():
         "base_mw": [9999.0, 100.0, 200.0, 0.0, 150.0, 90.0, 120.0, 80.0],
         "emergency_mw": [9999.0, 110.0, 220.0, 0.0, 160.0, 99.0, 121.0, 88.0],
     })
-    contingency = pl.DataFrame({"contingency_id": ["C1", "C2", "C3", "C4"], "has_split_bus": [False] * 4})
+    contingency = pl.DataFrame({"contingency_id": ["C1", "C2", "C3", "C4", "C5"], "has_split_bus": [False] * 4 + [True]})
     outage = pl.DataFrame({
-        "contingency_id": ["C1", "C1", "C2", "C3", "C4", "C4"],
-        "element_kind": ["line", "line", "line", "line", "line", "load"],
-        "operation": ["outage"] * 6,
-        "branch_id": ["L1", "T", "ZZZ", "X", "L3", None],
-        "is_resolved": [True, True, False, True, True, True],
+        "contingency_id": ["C1", "C1", "C2", "C3", "C4", "C4", "C5", "C5"],
+        "element_kind": ["line", "line", "line", "line", "line", "load", "branch", "load"],
+        "operation": ["outage"] * 6 + ["split_bus", "split_bus"],
+        "branch_id": ["L1", "T", "ZZZ", "X", "L3", None, "L2", None],
+        "is_resolved": [True, True, False, True, True, True, True, True],
+        "split_end": [None] * 6 + ["from", None],
     })
     gtc = pl.DataFrame({"gtc_id": ["G1"], "source": ["crr_csv"], "limit_mw": [500.0], "crr_gtc_id": ["G1"]})
     member = pl.DataFrame({"gtc_id": ["G1", "G1", "G1"], "branch_id": ["L1", "L3", "X"], "factor": [1.0, 0.5, 1.0],
@@ -98,7 +99,12 @@ def test_raw_ratings_treat_zero_as_unlimited_and_limits_option_widens():
 def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons():
     net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
     by = {r["contingency_id"]: r for r in net.contingencies.to_dicts()}
-    assert sorted(by) == ["C1", "C4"]
+    assert sorted(by) == ["C1", "C4", "C5"]
+    # C5 removes nothing but moves one end of L2 to a new bus section: kept, not empty (NAM-09)
+    l2 = net.branches.filter(pl.col("branch_id") == "L2")["index"][0]
+    assert by["C5"]["n_outages"] == 0 and by["C5"]["split_branch_indexes"] == [l2] and by["C5"]["split_ends"] == ["from"]
+    assert by["C5"]["n_split_unapplied"] == 1 and by["C5"]["has_split_bus"]
+    assert by["C1"]["split_branch_indexes"] == [] and by["C1"]["n_split_unapplied"] == 0
     assert by["C1"]["branch_ids"] == ["L1"] and by["C1"]["n_dropped"] == 1  # the tie outage is a no-op after contraction
     assert by["C1"]["branch_indexes"] == [0]
     assert by["C4"]["branch_ids"] == ["L3"] and by["C4"]["n_other_rows"] == 1
@@ -107,7 +113,7 @@ def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons
     assert dropped["C3"]["reason"] == "empty" and dropped["C3"]["n_dropped"] == 1  # X is out of service
     assert net.summary()["dropped_contingencies"] == {"empty": 2}
     kept = build_network("crr:monthly:2026-10:r1", _core(), Options(contract_ties=True, drop_empty_contingencies=False))
-    assert kept.contingencies.height == 4 and kept.contingencies.filter(pl.col("is_empty"))["contingency_id"].to_list() == ["C2", "C3"]
+    assert kept.contingencies.height == 5 and kept.contingencies.filter(pl.col("is_empty"))["contingency_id"].to_list() == ["C2", "C3"]
     assert kept.dropped_contingencies.is_empty()
 
 

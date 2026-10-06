@@ -9,9 +9,9 @@ the settlement point prices (NP4-190-CD). For one DAM hour this script builds
 ``session.network``, computes each binding constraint's shift factors on it (base
 case, or with the contingency's branches removed), prices every settlement point
 through its node weights, and compares with what ERCOT published. The system price
-is not published, so it is the one free number: the median difference. What is left
-is the residual; if the network, the names and the contingency definitions are
-right, it is zero at every point.
+is the published DAM System Lambda (NP4-523-CD); for hours before it was pulled it is
+fitted as the median difference. What is left is the residual; if the network, the
+names and the contingency definitions are right, it is zero at every point.
 
 It needs no awards and no re-clearing: the shadow prices already carry everything
 the DAM's commitment and ancillary services did. It tests shift factors only on the
@@ -44,28 +44,10 @@ def key(expr: pl.Expr) -> pl.Expr:
     return expr.str.to_uppercase().str.replace_all(r"[^A-Z0-9]", "")
 
 
-def split_rows(session, day: date, hour: int, net: Network) -> dict[str, list[tuple[int, str]]]:
-    """Per contingency, the branch ends its split-bus rows move: the end whose split column is not a bus number."""
-    raw = (session.raw("dam_contingencies").filter((pl.col("operating_date") == day) & (pl.col("hour") == hour)
-                                                   & (pl.col("contingency_operation") == "SplitBus") & (pl.col("equipment_type") == "Branch")).collect())
-    if raw.is_empty():
-        return {}
-    number = lambda c: pl.col(c).cast(pl.String).str.strip_chars().cast(pl.Int64, strict=False)
-    ends = session.core("branch").filter(pl.col("snapshot_id") == net.snapshot_id).select("branch_id", "from_node", "to_node", pl.col("ckt").cast(pl.String).str.strip_chars()).collect()
-    rows = (raw.select(key(pl.col("contingency_name")).alias("ctg"), number("psse_from_bus_number").alias("from_node"), number("psse_to_bus_number").alias("to_node"),
-                       pl.col("psse_ckt_id").cast(pl.String).str.strip_chars().alias("ckt"),
-                       number("split_bus_psse_bus_number").is_null().alias("moves_from"), number("split_bus_psse_to_bus_number").is_null().alias("moves_to"))
-            .join(ends, on=["from_node", "to_node", "ckt"], how="left").join(net.branches.select("branch_id", "index"), on="branch_id", how="left"))
-    out: dict[str, list[tuple[int, str]]] = {}
-    for ctg, j, moves_from, moves_to in rows.select("ctg", "index", "moves_from", "moves_to").rows():
-        if j is not None and moves_from != moves_to:
-            out.setdefault(ctg, []).append((j, "from" if moves_from else "to"))
-    return out
-
-
 def hour_rows(frame: pl.LazyFrame, day: date, hour: int) -> pl.DataFrame:
     """One delivery hour of a raw price table; if a day was posted twice, one posting only."""
-    rows = frame.filter((pl.col("delivery_date") == f"{day:%m/%d/%Y}") & (pl.col("hour_ending") == f"{hour:02d}:00")).collect()
+    rows = frame.filter((pl.col("delivery_date") == f"{day:%m/%d/%Y}")
+                        & (pl.col("hour_ending").str.split(":").list.first().cast(pl.Int64, strict=False) == hour)).collect()
     if rows.is_empty():
         return rows
     return rows.filter(pl.col("doc_id") == str(rows["doc_id"].cast(pl.Int64).max()))
@@ -111,6 +93,12 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
     prices = hour_rows(session.raw("dam_settlement_point_prices"), day, hour)
     if shadow.is_empty() or prices.is_empty():
         return None
+    # The system price (NP4-523-CD) is published; before it was pulled it was fitted as the median difference.
+    try:
+        lam = hour_rows(session.raw("dam_system_lambda"), day, hour)
+        system_price = float(lam["system_lambda"][0]) if lam.height else None
+    except Exception:  # no artifact of the table yet
+        system_price = None
     net: Network = session.network(snapshot_id)
     system = DcSystem(net)
 
@@ -134,7 +122,7 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         return 1.0 if ends == published else -1.0
 
     gtc_rows = borrowed_gtcs(session, snapshot_id, net)
-    splits = split_rows(session, day, hour, net)
+    splits = {ctg: list(zip(idx, ends)) for ctg, idx, ends in net.contingencies.select(key(pl.col("contingency_id")), "split_branch_indexes", "split_ends").rows() if idx}
 
     congestion = np.zeros(net.n_nodes)
     cut_off_mu = np.zeros(net.n_nodes)  # per node: shadow price of binding rows whose contingency cuts the node off
@@ -198,20 +186,32 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
               "priced_points_published": prices.height, "points_compared": points.height,
               "price_spread_published": round(float(observed.max() - observed.min()), 2)}
     # The sign convention of the published shadow prices is settled by the data, not assumed.
+    def residual_for(sign: float) -> np.ndarray:
+        base = observed - sign * c
+        return base - (system_price if system_price is not None else np.median(base))
+
+    def quantiles(values: np.ndarray) -> dict:
+        a = np.abs(values)
+        return {"p50_abs": round(float(np.quantile(a, 0.5)), 3), "p90_abs": round(float(np.quantile(a, 0.9)), 3),
+                "p99_abs": round(float(np.quantile(a, 0.99)), 3), "max_abs": round(float(a.max()), 2),
+                "within_0.01": int((a <= 0.01).sum()), "within_1.00": int((a <= 1.0).sum())}
+
     for sign, label in ((-1.0, "minus"), (1.0, "plus")):
-        resid = observed - sign * c
-        resid = resid - np.median(resid)
-        result[f"residual_{label}"] = {"p50_abs": round(float(np.quantile(np.abs(resid), 0.5)), 3), "p90_abs": round(float(np.quantile(np.abs(resid), 0.9)), 3),
-                                       "p99_abs": round(float(np.quantile(np.abs(resid), 0.99)), 3), "max_abs": round(float(np.abs(resid).max()), 2),
-                                       "within_0.01": int((np.abs(resid) <= 0.01).sum()), "within_1.00": int((np.abs(resid) <= 1.0).sum())}
-    best = min((-1.0, 1.0), key=lambda s: np.abs(observed - s * c - np.median(observed - s * c)).sum())
-    resid = observed - best * c
-    resid = np.abs(resid - np.median(resid))
+        result[f"residual_{label}"] = quantiles(residual_for(sign))
+    best = min((-1.0, 1.0), key=lambda s: np.abs(residual_for(s)).sum())
+    centred = residual_for(best)
+    resid = np.abs(centred)
     result["sign"] = "minus" if best < 0 else "plus"
-    centred = observed - best * c
-    centred = centred - np.median(centred)
+    result["system_price"] = {"source": "published" if system_price is not None else "fitted_median",
+                              "fitted_median_minus_published": (round(float(np.median(observed - best * c) - system_price), 3)
+                                                                if system_price is not None else None)}
     hist, edges = np.histogram(centred, bins=[-1e9, -20, -10, -5, -2, -1, -0.1, 0.1, 1, 2, 5, 10, 20, 1e9])
     result["residual_histogram"] = {f"<{e:g}": int(h) for h, e in zip(hist, edges[1:])}
+    by_kind = points.with_columns(pl.Series("abs_residual", resid)).group_by("kind").agg(
+        pl.len().alias("n"), pl.col("abs_residual").median().round(3).alias("p50_abs"),
+        pl.col("abs_residual").quantile(0.9).round(3).alias("p90_abs"), pl.col("abs_residual").max().round(2).alias("max_abs"),
+        (pl.col("abs_residual") <= 1.0).sum().alias("within_1.00")).sort("kind")
+    result["residual_by_kind"] = {row["kind"]: {k: v for k, v in row.items() if k != "kind"} for row in by_kind.to_dicts()}
     if detail is not None:  # for digging into a residual: the points, the network and the solver
         detail.update(points=points.with_columns(pl.Series("residual", centred)), net=net, system=system, gtc_rows=gtc_rows, weights=weights,
                       gtc_binding={n: mu for n, _, mu, *_ in rows if n in gtc_rows})
@@ -221,7 +221,6 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
     for label, mask in (("points_cut_off_by_a_binding_contingency", is_cut), ("other_points", ~is_cut)):
         result[label] = {"n": int(mask.sum()), "p50_abs": round(float(np.median(resid[mask])), 3) if mask.any() else None,
                          "max_abs": round(float(resid[mask].max()), 2) if mask.any() else None, "beyond_5": int((resid[mask] > 5).sum())}
-    result["within_0.01_by_kind"] = {k: f"{ok} of {n}" for k, ok, n in points.with_columns(pl.Series("ok", resid <= 0.01)).group_by("kind").agg(pl.col("ok").sum(), pl.len()).sort("kind").rows()}
     return result
 
 

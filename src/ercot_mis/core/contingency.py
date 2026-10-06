@@ -8,7 +8,10 @@ row per element it acts on, in the model's own vocabulary resolved to core keys:
 - DAM rows are Branch (resolved to ``branch_id`` by (from, to, ckt) in the same
   hour), Load, Generator and SettlementPoint (resolved to a ``bus_key`` by bus
   number), and split-bus operations, which change topology rather than remove an
-  element and are kept as their own ``operation``.
+  element and are kept as their own ``operation``. A split-bus row on a branch moves
+  one of its ends to a new bus section: the file holds the number of the end that
+  stays and a note for the one that moves, and ``split_end`` (``from`` or ``to``) says
+  which end moves (null for other rows, and when the file names both or neither).
 
 Unresolved references (a name or key with no branch or node in the snapshot) keep
 null keys and set ``is_resolved`` false; nothing is dropped.
@@ -18,11 +21,11 @@ from __future__ import annotations
 
 import polars as pl
 
-VERSION = 1
+VERSION = 2
 
 CONTINGENCY_COLUMNS = ("contingency_id", "n_outages", "n_unresolved", "has_split_bus")
 OUTAGE_COLUMNS = ("contingency_id", "element_kind", "operation", "action", "branch_id", "bus_key",
-                  "node_number", "psse_id", "element_name", "is_resolved")
+                  "node_number", "psse_id", "element_name", "is_resolved", "split_end")
 
 _CRR_KINDS = {"LINE": "line", "XFMR": "transformer", "TRANSFORMER": "transformer"}
 _DAM_KINDS = {"BRANCH": "branch", "LOAD": "load", "GENERATOR": "generator", "SETTLEMENTPOINT": "settlement_point"}
@@ -43,7 +46,7 @@ def crr_contingencies(branches: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.Dat
                           pl.lit("outage").alias("operation"), pl.col("action"),
                           pl.col("device_name").alias("branch_id"), pl.lit(None, pl.String).alias("bus_key"),
                           pl.lit(None, pl.Int64).alias("node_number"), pl.lit(None, pl.String).alias("psse_id"),
-                          pl.col("device_name").alias("element_name"))
+                          pl.col("device_name").alias("element_name"), pl.lit(None, pl.String).alias("split_end"))
                .join(known, on="branch_id", how="left")
                .with_columns(pl.col("is_resolved").fill_null(False))
                .with_columns(pl.when(pl.col("is_resolved")).then(pl.col("branch_id")).otherwise(None).alias("branch_id"))
@@ -58,6 +61,8 @@ def dam_contingencies(branches: pl.DataFrame, nodes: pl.DataFrame, raw: pl.DataF
     keyed = pl.concat([keyed, keyed.select(pl.col("psse_to_bus_number").alias("psse_from_bus_number"),
                                           pl.col("psse_from_bus_number").alias("psse_to_bus_number"), "_ckt", "branch_id")]).unique()
     bus_keys = nodes.select("node_number", "bus_key")
+    number = lambda c: pl.col(c).cast(pl.String).str.strip_chars().cast(pl.Int64, strict=False)  # noqa: E731
+    moves_from, moves_to = number("split_bus_psse_bus_number").is_null(), number("split_bus_psse_to_bus_number").is_null()
     frame = (raw.with_columns(pl.col("equipment_type").str.to_uppercase().str.replace_all(r"[^A-Z]", "").replace_strict(_DAM_KINDS, default="unknown").alias("element_kind"),
                               pl.when(pl.col("contingency_operation").str.to_uppercase().str.contains("SPLIT")).then(pl.lit("split_bus")).otherwise(pl.lit("outage")).alias("operation"),
                               pl.col("psse_ckt_id").str.strip_chars().alias("_ckt"),
@@ -74,5 +79,8 @@ def dam_contingencies(branches: pl.DataFrame, nodes: pl.DataFrame, raw: pl.DataF
           .otherwise(pl.coalesce(pl.col("station_name_psse_bus_name"), pl.col("psse_id"))).alias("element_name"),
         pl.when(pl.col("element_kind") == "branch").then(pl.col("branch_id").is_not_null())
           .otherwise(pl.col("bus_key").is_not_null()).alias("is_resolved"),
+        pl.when((pl.col("operation") == "split_bus") & (pl.col("element_kind") == "branch") & moves_from & ~moves_to).then(pl.lit("from"))
+          .when((pl.col("operation") == "split_bus") & (pl.col("element_kind") == "branch") & moves_to & ~moves_from).then(pl.lit("to"))
+          .otherwise(None).alias("split_end"),
     ).select(OUTAGE_COLUMNS)
     return _summarize(outages), outages

@@ -52,8 +52,9 @@ day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.
 - The load CSV header ends with a trailing comma its rows lack.
 - A split-bus contingency row gives two split-bus columns: the end of the branch that
   stays holds its bus number, the end that moves to the new bus section holds a note
-  instead of a number (kept as text). `scripts/check_prices.py` applies the move;
-  core only flags it (`has_split_bus`).
+  instead of a number (kept as text). `core.contingency_outage.split_end` says which
+  end moves, `out.network` lists the moves per contingency and the DC solver applies
+  them under that contingency (NAM-09).
 - Headers have spaces after commas; values are trimmed.
 - **Node numbers change every hour** and are unrelated to CRR numbering; RAW names are
   substation names (see identity-and-matching.md).

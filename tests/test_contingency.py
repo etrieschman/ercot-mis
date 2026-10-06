@@ -24,13 +24,16 @@ def test_dam_contingencies_resolve_branches_by_key_and_equipment_by_bus():
     branches = _branches(["L1", "L2", "X1"], [("a", "b"), ("c", "b"), ("a", "c")])
     nodes = pl.DataFrame({"node_number": [1, 2, 3], "bus_key": ["a", "c", "b"]})
     raw = pl.DataFrame({
-        "contingency_name": ["D1", "D1", "D2", "D3", "D4"],
-        "equipment_type": ["Branch", "Generator", "Load", "SettlementPoint", "Branch"],
-        "contingency_operation": ["Outage", "Outage", "Outage", "Split Bus", "Outage"],
-        "psse_from_bus_number": [3, None, None, None, 9], "psse_to_bus_number": [1, None, None, None, 9],
-        "psse_ckt_id": ["1 ", None, None, None, "1"],
-        "psse_gen_or_load_or_sp_bus_number": [None, 2, 3, 99, None], "psse_gen_or_load_id": [None, "G1", "L1", None, None],
-        "station_name_psse_bus_name": [None, "ALPHA", "BRAVO", "ZULU", None],
+        "contingency_name": ["D1", "D1", "D2", "D3", "D4", "D5", "D5"],
+        "equipment_type": ["Branch", "Generator", "Load", "SettlementPoint", "Branch", "Branch", "Branch"],
+        "contingency_operation": ["Outage", "Outage", "Outage", "Split Bus", "Outage", "Split Bus", "Split Bus"],
+        "psse_from_bus_number": [3, None, None, None, 9, 3, 2], "psse_to_bus_number": [1, None, None, None, 9, 2, 3],
+        "psse_ckt_id": ["1 ", None, None, None, "1", "1", "1"],
+        "psse_gen_or_load_or_sp_bus_number": [None, 2, 3, 99, None, None, None], "psse_gen_or_load_id": [None, "G1", "L1", None, None, None, None],
+        "station_name_psse_bus_name": [None, "ALPHA", "BRAVO", "ZULU", None, None, None],
+        # the end that stays keeps its number; the end that moves holds a note
+        "split_bus_psse_bus_number": [None, None, None, "99", None, "3", "new section"],
+        "split_bus_psse_to_bus_number": [None, None, None, None, None, "new section", "3"],
     })
     ctg, out = contingency.dam_contingencies(branches, nodes, raw)
     by = {r["contingency_id"]: r for r in ctg.to_dicts()}
@@ -40,7 +43,10 @@ def test_dam_contingencies_resolve_branches_by_key_and_equipment_by_bus():
     rows = {(r["contingency_id"], r["element_kind"]): r for r in out.to_dicts()}
     assert rows[("D1", "branch")]["branch_id"] == "L1"  # reversed orientation still resolves
     assert rows[("D1", "generator")]["bus_key"] == "c" and rows[("D1", "generator")]["psse_id"] == "G1"
-    assert rows[("D3", "settlement_point")]["operation"] == "split_bus"
+    assert rows[("D3", "settlement_point")]["operation"] == "split_bus" and rows[("D3", "settlement_point")]["split_end"] is None
+    splits = out.filter(pl.col("contingency_id") == "D5").sort("branch_id")
+    assert splits["branch_id"].to_list() == ["L2", "L2"] and splits["split_end"].to_list() == ["to", "from"]
+    assert by["D5"]["has_split_bus"] and by["D5"]["n_unresolved"] == 0
 
 
 def test_crr_gtcs_and_empty_dam_gtcs():
