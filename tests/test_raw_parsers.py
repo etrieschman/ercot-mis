@@ -193,3 +193,9 @@ def test_disclosure_members_are_dated_by_name_and_told_apart_by_header():
     assert disclosure.TABLES["dam_60d_gen_resource_data"][gen_columns.index("awarded_quantity")].type == pa.float64()
     assert disclosure.TABLES["dam_60d_gen_resource_data"][gen_columns.index("resource_status")].type == pa.string()
     assert len(disclosure.TABLES) == 17 and all(t.startswith("dam_60d_") for t in disclosure.TABLES)
+    # the storage table shares the generation table's header; the file name keeps them apart
+    header = ",".join(c.header for c in disclosure.TABLES["dam_60d_gen_resource_data"]).encode() + b"\n"
+    esr = disclosure.classify_member("60d_DAM_ESR_Data-06-OCT-26.csv")
+    assert list(disclosure.parse_member(esr, header)) == ["dam_60d_esr_data"]
+    gen = disclosure.classify_member("60d_DAM_Gen_Resource_Data-06-OCT-26.csv")
+    assert list(disclosure.parse_member(gen, header)) == ["dam_60d_gen_resource_data"]

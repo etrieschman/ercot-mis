@@ -22,7 +22,7 @@ import pyarrow as pa
 
 from .table import Column, F, read_delimited, table_for_header
 
-VERSION = 1
+VERSION = 2
 
 TABLES: dict[str, tuple[Column, ...]] = {
     "dam_60d_qse_self_arranged_as": (Column("Delivery Date"), Column("Hour Ending"), Column("QSE"), Column("Total Self-Arranged AS RegUp", F), Column("Total Self-Arranged AS RegDown", F), Column("Total Self-Arranged AS NonSpin", F), Column("Total Self-Arranged AS NSPNM", F), Column("Total Self-Arranged AS RRSPFR", F), Column("Total Self-Arranged AS RRSFFR", F), Column("Total Self-Arranged AS RRSUFR", F), Column("Total Self-Arranged AS ECRSSD", F), Column("Total Self-Arranged AS ECRSMD", F)),
@@ -68,6 +68,16 @@ def classify_member(path: str) -> DisclosureMember | None:
     return DisclosureMember(path, fmt, day)
 
 
+# Two files share one header (the storage resource table is the generation table's layout for energy
+# storage resources); the member's stem decides between them, and the header is still checked.
+_SAME_HEADER = {"ESR_Data": "dam_60d_esr_data", "Gen_Resource_Data": "dam_60d_gen_resource_data"}
+
+
 def parse_member(member: DisclosureMember, data: bytes) -> dict[str, pa.Table]:
-    table = table_for_header(data, TABLES, f"60-day DAM disclosure {member.operating_date}")
+    label = f"60-day DAM disclosure {member.operating_date}"
+    table = table_for_header(data, TABLES, label)
+    match = _MEMBER.search(member.path)
+    stem = match.group("stem") if match else ""
+    if stem in _SAME_HEADER and tuple(c.header for c in TABLES[_SAME_HEADER[stem]]) == tuple(c.header for c in TABLES[table]):
+        table = _SAME_HEADER[stem]
     return {table: read_delimited(data, TABLES[table], table)}

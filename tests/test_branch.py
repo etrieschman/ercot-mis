@@ -73,3 +73,16 @@ def test_dam_branches_take_names_and_flags_from_the_csvs():
     assert by["X1"]["kind"] == "transformer" and by["X1"]["from_bus_key"] != by["X1"]["to_bus_key"]
     assert not branches["is_tie"].any()
     assert ratings["rating_source"].unique().to_list() == ["psse_raw"] and ratings.height == 3
+
+
+def test_a_phase_shifter_or_unexpected_winding_code_fails_the_build():
+    import pytest
+
+    from ercot_mis.core.branch import _check_transformer_conventions
+
+    plain = pl.DataFrame({"i": [1], "j": [2], "ckt": ["1"], "cw": [1], "cz": [1], "ang1": [0.0]})
+    _check_transformer_conventions(plain)  # nothing raised
+    with pytest.raises(ValueError, match="RAT-01"):
+        _check_transformer_conventions(plain.with_columns(pl.lit(5.0).alias("ang1")))
+    with pytest.raises(ValueError, match="cw"):
+        _check_transformer_conventions(plain.with_columns(pl.lit(2).alias("cw")))

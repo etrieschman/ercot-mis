@@ -61,6 +61,7 @@ def _raw_parts(psse_branch: pl.DataFrame, psse_transformer: pl.DataFrame) -> pl.
         pl.lit(None, pl.Float64).alias("tap_ratio"), pl.lit(None, pl.Float64).alias("angle_deg"),
         pl.col("ratea").alias("base_mw"), pl.col("rateb").alias("emergency_mw"), pl.col("ratec").alias("rate_c_mw"),
         pl.col("comment"))
+    _check_transformer_conventions(psse_transformer)
     xf = psse_transformer.select(
         pl.lit("transformer").alias("kind"), pl.col("i").alias("from_node"), pl.col("j").alias("to_node"),
         pl.col("ckt").str.strip_chars().alias("ckt"), (pl.col("stat") == 1).alias("is_in_service"),
@@ -69,6 +70,17 @@ def _raw_parts(psse_branch: pl.DataFrame, psse_transformer: pl.DataFrame) -> pl.
         pl.col("rata1").alias("base_mw"), pl.col("ratb1").alias("emergency_mw"), pl.col("ratc1").alias("rate_c_mw"),
         pl.col("comment"))
     return pl.concat([lines, xf])
+
+
+def _check_transformer_conventions(psse_transformer: pl.DataFrame) -> None:
+    """RAT-01: the DC model reads a transformer as a reactance and a tap ratio, which holds only under PSS/E's
+    plain conventions: winding voltages as turns ratios (``CW = 1``), impedance on the system base (``CZ = 1``) and
+    no phase shift (``ang1 = 0``). A RAW that breaks one of them fails the build here, loudly, instead of being
+    modelled as if it did not; the message carries counts, never names."""
+    checks = {"cw": pl.col("cw") != 1, "cz": pl.col("cz") != 1, "ang1": pl.col("ang1").fill_null(0.0) != 0.0}
+    bad = {name: int(psse_transformer.filter(expr).height) for name, expr in checks.items() if name in psse_transformer.columns}
+    if any(bad.values()):
+        raise ValueError(f"transformer conventions the DC model assumes do not hold (rows breaking each): {bad}; see RAT-01 in docs/assumptions.md")
 
 
 def _finish(frame: pl.DataFrame, tie_reactance: float) -> tuple[pl.DataFrame, pl.DataFrame]:

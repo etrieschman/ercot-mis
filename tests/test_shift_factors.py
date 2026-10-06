@@ -50,3 +50,19 @@ def test_a_split_bus_moves_a_branch_end_to_a_new_section():
     # Moving B's and D's ends off node 3 together keeps them joined: node 4 hangs off node 2 through the new section.
     both = system.outaged([], [(j["B"], "to"), (j["D"], "from")])
     assert np.allclose(both.shift_factors([j["B"]])[0], [0, 0, 0, -1])
+
+
+def test_a_transformer_tap_scales_its_susceptance():
+    """RAT-11: susceptance is 1/(x * tap). Two parallel branches between the same nodes, one with tap 2, split 2:1."""
+    node = pl.DataFrame({"node_number": [1, 2], "raw_name": ["S1", "S2"], "substation": ["S1", "S2"], "kv": [138.0, 138.0], "node_type": [3, 1],
+                         "bus_group": [1, 2], "is_tie_member": [False, False], "bus_key": ["N1", "N2"]})
+    branch = pl.DataFrame({"branch_id": ["L", "T"], "kind": ["line", "transformer"], "from_node": [1, 1], "to_node": [2, 2], "is_in_service": [True, True],
+                           "is_tie": [False, False], "x_pu": [0.1, 0.1], "tap_ratio": [None, 2.0], "is_monitored": [True, True], "is_secured": [True, True]},
+                          schema_overrides={"tap_ratio": pl.Float64})
+    rating = pl.DataFrame({"branch_id": ["L"], "rating_source": ["psse_raw"], "time_of_use": [None], "base_mw": [100.0], "emergency_mw": [110.0]},
+                          schema_overrides={"time_of_use": pl.String})
+    net = build_network("dam:2030-01-01:he01:r1", CoreTables(node, branch, rating))
+    system = DcSystem(net)
+    j = dict(net.branches.select("branch_id", "index").rows())
+    rows = system.shift_factors([j["L"], j["T"]])
+    assert np.allclose(rows[0], [0, -2 / 3]) and np.allclose(rows[1], [0, -1 / 3])

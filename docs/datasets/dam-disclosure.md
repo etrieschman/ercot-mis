@@ -42,18 +42,26 @@ prices, awards, limits, costs) are cast; identifiers, flags and indicators stay 
 
 ## ERCOT quirks
 
-- `Hour Ending` is written without a leading zero (`1:00`).
-- The generation and storage resource tables share one layout; the storage table is
-  the same columns for energy storage resources.
+- `Hour Ending` is written without a leading zero (`1:00`) and there is no DST flag.
+- Energy bid awards are written as negative MW; storage awards are negative when the
+  resource charges. Both are kept as written.
+- The generation and storage resource tables share one header exactly, so the header
+  alone cannot tell them apart; the member name does (`_SAME_HEADER`). Before 2026-10-06
+  the storage rows landed in the generation table.
 
 ## Validation
 
 Row counts per table per day in `build_raw`'s result; the flow check (not built yet)
 is the test of the awards' meaning.
 
+## What core builds from it
+
+`core.hourly_award` (`core/award.py`): one row per award with its hour in UTC, the
+settlement point, a kind and a signed MW (INJ-01); `session.injections(day)` sums it to
+the net injection per settlement point and hour, and `scripts/check_injections.py`
+checks that the system nets to zero per hour (INJ-02).
+
 ## Open questions
 
-- Which award columns sum to the node-space injection, and the sign of each (the
-  CLAUDE.md note lists the reading to try: generation and storage awards at resource
-  nodes; energy-only offer awards positive, energy bid awards negative, point-to-point
-  obligations positive at the source and negative at the sink).
+- The first disclosure day that overlaps an archived DAM model (around 2026-10-15): push
+  the injections through `out.network` and compare flows with limits and binding rows.
