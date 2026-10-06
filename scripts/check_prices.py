@@ -32,6 +32,7 @@ from datetime import date, datetime, timezone
 
 import numpy as np
 import polars as pl
+from scipy import sparse
 
 import ercot_mis as em
 from ercot_mis.out.network import Network
@@ -124,7 +125,38 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
     gtc_rows = borrowed_gtcs(session, snapshot_id, net)
     splits = {ctg: list(zip(idx, ends)) for ctg, idx, ends in net.contingencies.select(key(pl.col("contingency_id")), "split_branch_indexes", "split_ends").rows() if idx}
 
-    congestion = np.zeros(net.n_nodes)
+    # Settlement point weights as a (points x nodes) matrix. Under a contingency that cuts buses off, a
+    # hub's or zone's weights are renormalized over the buses still energized for that constraint
+    # (Protocols 4.6.1.2 and 3.5.2: the distribution factors are per constraint); a point with no bus
+    # left takes the heuristic of 4.5.1(8)(b): the average over energized buses of the same substation
+    # and voltage, else of the same substation, else none (the system price alone). PRC-03.
+    weights = net.settlement_point_nodes.select("settlement_point_id", "node_index", "weight")
+    points_frame = weights.select("settlement_point_id").unique().sort("settlement_point_id").with_row_index("point_index")
+    w = weights.join(points_frame, on="settlement_point_id")
+    W = sparse.csr_matrix((w["weight"].to_numpy(), (w["point_index"].to_numpy(), w["node_index"].to_numpy())), shape=(points_frame.height, net.n_nodes))
+    substation_of = net.nodes["substation"].fill_null("").to_numpy()
+    kv_of = np.round(net.nodes["kv"].to_numpy().astype(float), 1)
+
+    def aggregated(sf: np.ndarray, connected: np.ndarray | None) -> tuple[np.ndarray, np.ndarray]:
+        """Per point: the constraint's shift factor with per-constraint weights, and with the plain weights."""
+        plain = W @ sf
+        if connected is None or connected.all():
+            return plain, plain
+        filled = sf.copy()
+        cut = np.flatnonzero(~connected)
+        for i in cut:  # 4.5.1(8)(b): same substation and voltage, else same substation
+            same_sub = connected & (substation_of == substation_of[i])
+            same = same_sub & (kv_of == kv_of[i])
+            pool = same if same.any() else same_sub
+            filled[i] = sf[pool].mean() if pool.any() else 0.0
+        Wc = W @ sparse.diags(connected.astype(float))
+        kept = np.asarray(Wc.sum(axis=1)).ravel()
+        has_bus = kept > 0
+        Wc = sparse.diags(np.where(has_bus, 1.0 / np.where(has_bus, kept, 1.0), 0.0)) @ Wc
+        return np.where(has_bus, Wc @ sf, W @ filled), plain
+
+    point_congestion = np.zeros(points_frame.height)        # per-constraint weights and the heuristic (PRC-03)
+    point_congestion_plain = np.zeros(points_frame.height)  # plain weights, cut-off buses at zero (what the check did before)
     cut_off_mu = np.zeros(net.n_nodes)  # per node: shadow price of binding rows whose contingency cuts the node off
     outcome: dict[str, int] = {}
     mu_by_outcome: dict[str, float] = {}
@@ -139,7 +171,9 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         if name in gtc_rows:
             members, n_missing = gtc_rows[name]
             why = "used_gtc_crr_members" if not n_missing else "used_gtc_crr_members_incomplete"
-            congestion += mu * sum((factor * system.shift_factors([j])[0] for j, factor in members), np.zeros(net.n_nodes))
+            agg, plain = aggregated(sum((factor * system.shift_factors([j])[0] for j, factor in members), np.zeros(net.n_nodes)), None)
+            point_congestion += mu * agg
+            point_congestion_plain += mu * plain
             used_mu += abs(mu)
         elif name not in branch_of:
             why = "constraint_not_a_branch"
@@ -168,14 +202,15 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         outcome[why] = outcome.get(why, 0) + 1
         mu_by_outcome[why] = round(mu_by_outcome.get(why, 0.0) + mu, 2)
         if solver is not None:
-            congestion += sign * mu * solver.shift_factors([j])[0]
-            if why == "used_contingency_islanding":
-                cut_off_mu += mu * ~solver.connected[:net.n_nodes]
+            connected = solver.connected[:net.n_nodes] if why == "used_contingency_islanding" else None
+            agg, plain = aggregated(solver.shift_factors([j])[0], connected)
+            point_congestion += sign * mu * agg
+            point_congestion_plain += sign * mu * plain
+            if connected is not None:
+                cut_off_mu += mu * ~connected
             used_mu += abs(mu)
 
-    weights = net.settlement_point_nodes.select("settlement_point_id", "node_index", "weight")
-    predicted = (weights.with_columns((pl.col("weight") * pl.Series(congestion[weights["node_index"].to_numpy()])).alias("c"))
-                 .group_by("settlement_point_id").agg(pl.col("c").sum()))
+    predicted = points_frame.with_columns(pl.Series("c", point_congestion), pl.Series("c_plain", point_congestion_plain))
     points = (prices.select(pl.col("settlement_point").alias("settlement_point_id"), pl.col("settlement_point_price").alias("price"))
               .join(predicted, on="settlement_point_id").join(net.settlement_points.select("settlement_point_id", "kind", "weight_dropped"), on="settlement_point_id"))
     observed, c = points["price"].to_numpy(), points["c"].to_numpy()
@@ -213,14 +248,35 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         (pl.col("abs_residual") <= 1.0).sum().alias("within_1.00")).sort("kind")
     result["residual_by_kind"] = {row["kind"]: {k: v for k, v in row.items() if k != "kind"} for row in by_kind.to_dicts()}
     if detail is not None:  # for digging into a residual: the points, the network and the solver
-        detail.update(points=points.with_columns(pl.Series("residual", centred)), net=net, system=system, gtc_rows=gtc_rows, weights=weights,
+        detail.update(points=points.with_columns(pl.Series("residual", centred)), net=net, system=system, gtc_rows=gtc_rows, weights=weights, W=W,
                       gtc_binding={n: mu for n, _, mu, *_ in rows if n in gtc_rows})
-    # Points on a node that some binding row's contingency cuts off, against the rest.
+    # Points with a bus that some binding row's contingency cuts off, against the rest; for them, the
+    # residual under the protocol's rule (PRC-03) and under the plain reading (cut-off buses at zero).
     cut = (weights.with_columns(pl.Series("cut", cut_off_mu[weights["node_index"].to_numpy()] > 0)).group_by("settlement_point_id").agg(pl.col("cut").any()))
     is_cut = points.join(cut, on="settlement_point_id", how="left")["cut"].fill_null(False).to_numpy()
+    plain_resid = np.abs(observed - best * points["c_plain"].to_numpy() - (system_price if system_price is not None else np.median(observed - best * points["c_plain"].to_numpy())))
     for label, mask in (("points_cut_off_by_a_binding_contingency", is_cut), ("other_points", ~is_cut)):
         result[label] = {"n": int(mask.sum()), "p50_abs": round(float(np.median(resid[mask])), 3) if mask.any() else None,
-                         "max_abs": round(float(resid[mask].max()), 2) if mask.any() else None, "beyond_5": int((resid[mask] > 5).sum())}
+                         "max_abs": round(float(resid[mask].max()), 2) if mask.any() else None, "beyond_5": int((resid[mask] > 5).sum()),
+                         "p50_abs_plain_weights": round(float(np.median(plain_resid[mask])), 3) if mask.any() else None,
+                         "max_abs_plain_weights": round(float(plain_resid[mask].max()), 2) if mask.any() else None}
+    # Settlement points ERCOT de-energized in the base case (NP4-200-CD): published, and how many we price at all.
+    try:
+        dead = set(hour_rows(session.raw("dam_deenergized_settlement_points"), day, hour)["settlement_point"])
+        compared = set(points["settlement_point_id"])
+        result["deenergized_in_base_case"] = {"published": len(dead), "among_points_compared": len(dead & compared),
+                                              "residual_p50_abs": round(float(np.median(resid[points["settlement_point_id"].is_in(list(dead)).to_numpy()])), 3) if dead & compared else None}
+    except FileNotFoundError:
+        result["deenergized_in_base_case"] = None
+    # Electrically similar settlement points (NP4-158-SG) should share a published price; count the groups that do not.
+    try:
+        groups = hour_rows(session.raw("dam_electrically_similar_settlement_points"), day, hour).select("settlement_point", "group_index")
+        spread = (prices.select(pl.col("settlement_point"), pl.col("settlement_point_price")).join(groups, on="settlement_point")
+                  .group_by("group_index").agg((pl.col("settlement_point_price").max() - pl.col("settlement_point_price").min()).alias("spread"), pl.len()))
+        result["electrically_similar_groups"] = {"groups_priced": spread.height, "groups_with_price_spread_over_1_cent": int((spread["spread"] > 0.01).sum()),
+                                                 "largest_spread": round(float(spread["spread"].max()), 2) if spread.height else None}
+    except FileNotFoundError:
+        result["electrically_similar_groups"] = None
     return result
 
 

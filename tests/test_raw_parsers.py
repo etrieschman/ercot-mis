@@ -1,6 +1,7 @@
 import io
 from datetime import date
 
+import pyarrow as pa
 import pytest
 
 from ercot_mis.raw import ParseError, crr, dam, snake_case
@@ -173,3 +174,22 @@ def test_mapping_files_are_told_apart_by_their_header():
     assert "sp_hub_and_dc_tie_names" in mappings.parse_member(member, b"NAME\nHB_X\n")
     with pytest.raises(ParseError):
         mappings.parse_member(member, b"A,B\n1,2\n")
+
+
+def test_disclosure_members_are_dated_by_name_and_told_apart_by_header():
+    from ercot_mis.raw import disclosure
+
+    member = disclosure.classify_member("60d_DAM_EnergyOnlyOfferAwards-06-OCT-26.csv")
+    assert member.is_parsed and member.operating_date == date(2026, 10, 6) and member.hour is None
+    assert not disclosure.classify_member("README.txt").is_parsed
+    assert disclosure.classify_member("folder/") is None
+    awards = disclosure.parse_member(member, (
+        b"Delivery Date,Hour Ending,Settlement Point,QSE Name,Energy Only Offer Award in MW,Settlement Point Price,Offer ID\r\n"
+        b"10/06/2026,1:00,SP_A,QX,12.5,30.25,777\r\n"))
+    row = awards["dam_60d_energy_only_offer_awards"].to_pylist()[0]
+    assert row["energy_only_offer_award_in_mw"] == 12.5 and row["settlement_point_price"] == 30.25 and row["offer_id"] == "777"
+    gen_columns = [c.column_name for c in disclosure.TABLES["dam_60d_gen_resource_data"]]
+    assert {"awarded_quantity", "settlement_point_name", "resource_status", "hsl", "lsl"} <= set(gen_columns)
+    assert disclosure.TABLES["dam_60d_gen_resource_data"][gen_columns.index("awarded_quantity")].type == pa.float64()
+    assert disclosure.TABLES["dam_60d_gen_resource_data"][gen_columns.index("resource_status")].type == pa.string()
+    assert len(disclosure.TABLES) == 17 and all(t.startswith("dam_60d_") for t in disclosure.TABLES)
