@@ -85,7 +85,7 @@ def main() -> None:
     args = parser.parse_args()
     with em.open() as session:
         snaps = session.core("snapshot").collect()
-        crr_id = args.crr or snaps.filter(pl.col("model_kind") == "monthly").sort("month", "revision")["snapshot_id"][-1]
+        crr_id = args.crr or snaps.filter(pl.col("model_kind") == "crr_monthly").sort("month", "revision")["snapshot_id"][-1]
         dam_id = args.dam or snaps.filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision")["snapshot_id"][-1]
         print(f"CRR {crr_id}; DAM {dam_id}")
         check("CRR, ERCOT topology", session.network(crr_id))

@@ -5,11 +5,8 @@ one CRR month or DAM hour: nodes with a dense index, branches with reactance, ta
 ratio and two limits, contingencies as sets of branch indexes, GTCs as factor-weighted
 member sets, and a list of everything it left out and why. Core stores facts; this
 layer applies the judgment calls, each a named option defaulting to ERCOT practice.
-It is assembled on first request and kept under `out/network/<snapshot>/<key>/`, one
-Parquet file per frame plus `network.json`; the key covers the options and the versions
-of the code that built it, so a changed option or a rebuilt core gives a new folder.
-A manual override edited without a version bump (the GTC crosswalk) does not: pass
-`cache=False` or delete the folder.
+It is assembled from the core tables on every call (well under a second; a saved copy
+read slower than assembling, so none is kept).
 Consumer: `ftr_align/cases/ercot.py` builds its incidence matrix from `from_index`,
 `to_index` and `x_pu`, its limits from `base_limit_mw` and `contingency_limit_mw`,
 and its contingency keys from `branch_indexes`.

@@ -491,31 +491,25 @@ class Session:
 
         return viewer.build(self, left, right, reference_dam=reference_dam)
 
-    def network(self, snapshot_id: str, options=None, *, cache: bool = True):
-        """One snapshot as a DC model reads it: ``out.network``.
+    def network(self, snapshot_id: str, options=None):
+        """One snapshot as a DC model reads it: ``out.network``, assembled from the core tables on every call.
 
         ``options`` is an ``ercot_mis.out.network.Options`` (or keyword-free defaults):
         tie contraction, rating source and time-of-use block, which branches get
-        limits, the post-contingency rating. See ``ercot_mis.out.network``.
-
-        The network is assembled on first request and kept under
-        ``out/network/<snapshot>/<key>/`` as Parquet (one file per frame), where the key
-        covers the options and the versions of the code that built it; ask again and it
-        is read back. ``cache=False`` assembles without reading or writing.
+        limits, the post-contingency rating. See ``ercot_mis.out.network``. Assembly
+        takes well under a second; reading a saved copy took longer, so none is kept.
         """
-        from .core.build import core_id
         from .out import network as out
 
-        options = options or out.Options()
-        folder = self.data_dir / "out" / "network" / snapshot_id.replace(":", "-") / out.cache_key(core_id(), options)
-        if cache and (found := out.read(folder)) is not None:
-            return found
-        net = out.build_network(snapshot_id, out.core_tables(self, snapshot_id), options)
-        if cache:
-            out.write(net, folder)
-        return net
+        return out.build_network(snapshot_id, out.core_tables(self, snapshot_id), options or out.Options())
 
     # ----------------------------------------------------------------- reading
+
+    def injections(self, day: date) -> pl.DataFrame:
+        """The DAM's net injection per settlement point and hour for one operating day: ``out.injection`` (needs the 60-day disclosure built)."""
+        from .out import injection
+
+        return injection.injections(self, _as_date(day))
 
     def raw(self, table: str) -> pl.LazyFrame:
         """A lazy scan over every raw artifact of a table (``emil_id`` comes from the path)."""
@@ -542,9 +536,12 @@ class Session:
             raise FileNotFoundError(f"no {layer}.{table} artifacts under {folder}; run the build first")
         return pl.scan_parquet(str(folder / "**" / "*.parquet"), hive_partitioning=True, schema=schema, missing_columns="insert")
 
+    _last_run_id: str | None = None
+
     def _start_run(self, command: str) -> str:
         with self._writer() as writer:
-            return writer.start_run(command)
+            self._last_run_id = writer.start_run(command)
+            return self._last_run_id
 
     def _finish_run(self, run_id: str, failed: int) -> None:
         with self._writer() as writer:

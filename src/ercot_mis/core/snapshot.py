@@ -18,6 +18,7 @@ from ..clock import study_hour_start
 from ..raw import crr, dam
 
 CRR_PRODUCTS = ("NP7-801-M", "NP7-800-M")
+MODEL_KIND = {"dam": "dam", "monthly": "crr_monthly", "annual": "crr_annual"}  # the column's values name the market and the cadence
 DAM_PRODUCT = "NP4-500-SG"
 
 
@@ -61,7 +62,7 @@ def snapshots(session) -> pl.DataFrame:
             ordered = sorted(group, key=lambda pl_: (pl_[0]["posted_at"] is not None, pl_[0]["posted_at"] or 0, pl_[0]["sha256"]))
             for revision, (p, l) in enumerate(ordered, start=1):
                 base = {"emil_id": emil_id, "doc_id": p["doc_id"], "blob_sha256": p["sha256"], "posted_at": p["posted_at"],
-                        "model_kind": kind, "revision": revision}
+                        "model_kind": MODEL_KIND[kind], "revision": revision}
                 if kind == "dam":
                     hours = sorted({m.hour for n in p["members"] if (m := dam.classify_member(n)) and m.kind == "network_model" and m.hour})
                     for hour in hours:

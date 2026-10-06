@@ -309,8 +309,9 @@ def stability(mis: em.Session, dam_path, day: date, hour: int, D, C, crr_month: 
 
     def compare(label: str, a: dict, b: dict) -> None:
         shared = set(a) & set(b)
-        unique_a = {v: k for k, v in a.items() if list(a.values()).count(v) == 1}
-        unique_b = {v: k for k, v in b.items() if list(b.values()).count(v) == 1}
+        count_a, count_b = collections.Counter(a.values()), collections.Counter(b.values())
+        unique_a = {v: k for k, v in a.items() if count_a[v] == 1}
+        unique_b = {v: k for k, v in b.items() if count_b[v] == 1}
         both = set(unique_a) & set(unique_b)
         show(label, buses_a=len(a), buses_b=len(b), shared_numbers=len(shared), same_name_kv=sum(1 for k in shared if a[k] == b[k]),
              uniquely_named_in_both=len(both), keeping_their_number=sum(1 for v in both if unique_a[v] == unique_b[v]))
@@ -332,14 +333,16 @@ def stability(mis: em.Session, dam_path, day: date, hour: int, D, C, crr_month: 
     kinds = {"network_model", "generators", "loads", "settlement_points", "lines"}
     next_hour = load_dam(dam_path, hour + 1 if hour < 24 else hour - 1, kinds)
     compare(f"DAM bus numbers, hour {hour} vs next hour", bus_identity(D), bus_identity(next_hour))
-    for label, x, y in ((k, equipment(D)[k], equipment(next_hour)[k]) for k in ("generator", "load", "settlement_point", "branch")):
+    here_eq, next_eq = equipment(D), equipment(next_hour)
+    for label, x, y in ((k, here_eq[k], next_eq[k]) for k in ("generator", "load", "settlement_point", "branch")):
         common = set(x) & set(y)
         show(f"  {label} name -> (substation, kV) across hours", shared=len(common), same=sum(1 for k in common if x[k] == y[k]))
     other_paths = [p for p in package_paths(mis, "NP4-500-SG") if p != dam_path]
     if other_paths:
         other = load_dam(other_paths[-1], hour, kinds)
         compare("DAM bus numbers vs the oldest archived day", bus_identity(D), bus_identity(other))
-        for label, x, y in ((k, equipment(D)[k], equipment(other)[k]) for k in ("generator", "load", "settlement_point", "branch")):
+        other_eq = equipment(other)
+        for label, x, y in ((k, here_eq[k], other_eq[k]) for k in ("generator", "load", "settlement_point", "branch")):
             common = set(x) & set(y)
             show(f"  {label} name -> (substation, kV) across days", shared=len(common), same=sum(1 for k in common if x[k] == y[k]))
     for path in package_paths(mis, "NP7-800-M"):
@@ -383,8 +386,6 @@ def node_identity(mis: em.Session, dam_path, hour: int, D, C) -> None:
          buses_in_tie_groups=int(groups["len"].sum()), largest_group=int(groups["len"].max()) if groups.height else 0,
          ambiguous=int(crr["is_ambiguous"].sum()), no_attachments=int((crr["n_attachments"] == 0).sum()))
     for path in package_paths(mis, "NP7-800-M"):
-        with zipfile.ZipFile(path) as z:
-            months = {m.month for n in z.namelist() if (m := crr.classify_member(n)) and m.month} if False else None
         other = load_crr(path, {"network_model", "mapping_document", "sources_and_sinks"})
         if other["psse_bus"].height != C["psse_bus"].height or not other["psse_bus"]["name"].equals(C["psse_bus"]["name"]):
             other_nodes = node.crr_nodes(other["psse_bus"], other["psse_branch"], other["psse_transformer"], other["crr_mapping_autos"], other["crr_sources_and_sinks"])
@@ -470,7 +471,7 @@ def coverage_section(mis: em.Session, crr_month: date, day: date, hour: int) -> 
 
     section("coverage")
     snaps = mis.core("snapshot").collect()
-    crr_id = snaps.filter((pl.col("model_kind") == "monthly") & (pl.col("month") == crr_month)).sort("revision")["snapshot_id"][-1]
+    crr_id = snaps.filter((pl.col("model_kind") == "crr_monthly") & (pl.col("month") == crr_month)).sort("revision")["snapshot_id"][-1]
     dam_id = snaps.filter((pl.col("operating_date") == day) & (pl.col("hour") == hour)).sort("revision")["snapshot_id"][-1]
     rows = lambda table, sid: mis.core(table).filter(pl.col("snapshot_id") == sid).collect()  # noqa: E731
     for label, sid in (("crr", crr_id), ("dam", dam_id)):
