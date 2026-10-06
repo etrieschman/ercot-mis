@@ -40,6 +40,9 @@ limits and all of NP3-770-M.
 - DAM `core.gtc_member` stays empty until NP3-770-M definitions are parsed.
 
 ## ERCOT quirks
+
+- The `Time` column is naive local time, so the long day's repeated 1 a.m. appears twice;
+  `interval_start_utc` (second duplicate = repeated hour) is what core joins to a DAM hour (NAM-08).
 - One document format label for two file formats; detect by content.
 - Hours are interval starts; `hour_ending` is derived as start hour + 1.
 

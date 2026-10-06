@@ -35,6 +35,7 @@ import polars as pl
 from scipy import sparse
 
 import ercot_mis as em
+from ercot_mis.clock import hour_ending_start_expr
 from ercot_mis.out.network import Network
 from ercot_mis.shift_factors import DcSystem
 
@@ -45,10 +46,15 @@ def key(expr: pl.Expr) -> pl.Expr:
     return expr.str.to_uppercase().str.replace_all(r"[^A-Z0-9]", "")
 
 
-def hour_rows(frame: pl.LazyFrame, day: date, hour: int) -> pl.DataFrame:
-    """One delivery hour of a raw price table; if a day was posted twice, one posting only."""
-    rows = frame.filter((pl.col("delivery_date") == f"{day:%m/%d/%Y}")
-                        & (pl.col("hour_ending").str.split(":").list.first().cast(pl.Int64, strict=False) == hour)).collect()
+def hour_rows(frame: pl.LazyFrame, start_utc: datetime) -> pl.DataFrame:
+    """The rows of a raw price table for the hour starting at ``start_utc``; if a day was posted twice, one posting only.
+
+    ERCOT's (delivery date, hour ending, DST flag) become the instant through
+    ``clock.hour_ending_start_expr``, so the repeated and the missing hour of the two
+    transition days need no special case (NAM-08).
+    """
+    rows = (frame.with_columns(hour_ending_start_expr(pl.col("delivery_date").str.to_date("%m/%d/%Y"), pl.col("hour_ending"), pl.col("dst_flag")).alias("_start"))
+            .filter(pl.col("_start") == start_utc).drop("_start").collect())
     if rows.is_empty():
         return rows
     return rows.filter(pl.col("doc_id") == str(rows["doc_id"].cast(pl.Int64).max()))
@@ -88,15 +94,17 @@ def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[li
 
 
 def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | None:
-    _, day_text, he, _ = snapshot_id.split(":")
-    day, hour = date.fromisoformat(day_text), int(he[2:])
-    shadow = hour_rows(session.raw("dam_shadow_prices"), day, hour)
-    prices = hour_rows(session.raw("dam_settlement_point_prices"), day, hour)
+    snap = session.core("snapshot").filter(pl.col("snapshot_id") == snapshot_id).collect()
+    if snap.is_empty():
+        raise KeyError(f"{snapshot_id!r} is not in core.snapshot")
+    start_utc = snap["interval_start_utc"][0]
+    shadow = hour_rows(session.raw("dam_shadow_prices"), start_utc)
+    prices = hour_rows(session.raw("dam_settlement_point_prices"), start_utc)
     if shadow.is_empty() or prices.is_empty():
         return None
     # The system price (NP4-523-CD) is published; before it was pulled it was fitted as the median difference.
     try:
-        lam = hour_rows(session.raw("dam_system_lambda"), day, hour)
+        lam = hour_rows(session.raw("dam_system_lambda"), start_utc)
         system_price = float(lam["system_lambda"][0]) if lam.height else None
     except Exception:  # no artifact of the table yet
         system_price = None
@@ -147,6 +155,7 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         Wc = sparse.diags(np.where(has_bus, 1.0 / np.where(has_bus, kept, 1.0), 0.0)) @ Wc
         return Wc @ sf, plain
 
+    node_congestion = np.zeros(net.n_nodes)                 # plain node-level sum, for digging (detail only)
     point_congestion = np.zeros(points_frame.height)        # per-constraint weights and the heuristic (PRC-03)
     point_congestion_plain = np.zeros(points_frame.height)  # plain weights, cut-off buses at zero (what the check did before)
     cut_off_mu = np.zeros(net.n_nodes)  # per node: shadow price of binding rows whose contingency cuts the node off
@@ -163,7 +172,9 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         if name in gtc_rows:
             members, n_missing = gtc_rows[name]
             why = "used_gtc_crr_members" if not n_missing else "used_gtc_crr_members_incomplete"
-            agg, plain = aggregated(sum((factor * system.shift_factors([j])[0] for j, factor in members), np.zeros(net.n_nodes)), None)
+            sf = sum((factor * system.shift_factors([j])[0] for j, factor in members), np.zeros(net.n_nodes))
+            agg, plain = aggregated(sf, None)
+            node_congestion += mu * sf
             point_congestion += mu * agg
             point_congestion_plain += mu * plain
             used_mu += abs(mu)
@@ -195,7 +206,9 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         mu_by_outcome[why] = round(mu_by_outcome.get(why, 0.0) + mu, 2)
         if solver is not None:
             connected = solver.connected[:net.n_nodes] if why == "used_contingency_islanding" else None
-            agg, plain = aggregated(solver.shift_factors([j])[0], connected)
+            sf = solver.shift_factors([j])[0]
+            agg, plain = aggregated(sf, connected)
+            node_congestion += sign * mu * sf
             point_congestion += sign * mu * agg
             point_congestion_plain += sign * mu * plain
             if connected is not None:
@@ -241,6 +254,7 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
     result["residual_by_kind"] = {row["kind"]: {k: v for k, v in row.items() if k != "kind"} for row in by_kind.to_dicts()}
     if detail is not None:  # for digging into a residual: the points, the network and the solver
         detail.update(points=points.with_columns(pl.Series("residual", centred)), net=net, system=system, gtc_rows=gtc_rows, weights=weights, W=W,
+                      node_congestion=node_congestion, system_price=system_price, best_sign=best,
                       gtc_binding={n: mu for n, _, mu, *_ in rows if n in gtc_rows})
     # Points with a bus that some binding row's contingency cuts off, against the rest; for them, the
     # residual under the protocol's rule (PRC-03) and under the plain reading (cut-off buses at zero).
@@ -254,7 +268,7 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
                          "max_abs_plain_weights": round(float(plain_resid[mask].max()), 2) if mask.any() else None}
     # Settlement points ERCOT de-energized in the base case (NP4-200-CD): published, and how many we price at all.
     try:
-        dead = set(hour_rows(session.raw("dam_deenergized_settlement_points"), day, hour)["settlement_point"])
+        dead = set(hour_rows(session.raw("dam_deenergized_settlement_points"), start_utc)["settlement_point"])
         compared = set(points["settlement_point_id"])
         result["deenergized_in_base_case"] = {"published": len(dead), "among_points_compared": len(dead & compared),
                                               "residual_p50_abs": round(float(np.median(resid[points["settlement_point_id"].is_in(list(dead)).to_numpy()])), 3) if dead & compared else None}
@@ -262,7 +276,7 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         result["deenergized_in_base_case"] = None
     # Electrically similar settlement points (NP4-158-SG) should share a published price; count the groups that do not.
     try:
-        groups = hour_rows(session.raw("dam_electrically_similar_settlement_points"), day, hour).select("settlement_point", "group_index")
+        groups = hour_rows(session.raw("dam_electrically_similar_settlement_points"), start_utc).select("settlement_point", "group_index")
         spread = (prices.select(pl.col("settlement_point"), pl.col("settlement_point_price")).join(groups, on="settlement_point")
                   .group_by("group_index").agg((pl.col("settlement_point_price").max() - pl.col("settlement_point_price").min()).alias("spread"), pl.len()))
         result["electrically_similar_groups"] = {"groups_priced": spread.height, "groups_with_price_spread_over_1_cent": int((spread["spread"] > 0.01).sum()),

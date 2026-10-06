@@ -23,7 +23,7 @@ LAYER = "core"
 DAM_PRODUCT = snapshot.DAM_PRODUCT
 
 # Bump when the set of tables or how they are assembled changes.
-VERSION = 9
+VERSION = 10
 TABLES = ("node", "branch", "branch_rating", "contingency", "contingency_outage", "gtc", "gtc_member",
           "settlement_point", "settlement_point_bus", "load")
 
@@ -47,33 +47,61 @@ CRR_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "psse_load", "crr_m
               "crr_monitored_lines_and_transformers", "crr_contingencies", "crr_non_thermal_constraints")
 
 
-def _gtl_for_day(session, day) -> pl.DataFrame:
-    """The latest GTL workbook rows for a delivery date, or an empty frame when none is archived."""
+GTL_COLUMNS = ("interval_start_utc", "gtc_name", "market", "limit_mw")
+
+
+def gtl_for_day(session, day) -> tuple[pl.DataFrame, str | None]:
+    """The latest GTL workbook's rows for a delivery date and that document's blob, or an empty frame and None."""
     folder = session.data_dir / "raw" / "gtl_hourly"
+    empty = pl.DataFrame(schema={"interval_start_utc": pl.Datetime("us", "UTC"), "gtc_name": pl.String, "market": pl.String, "limit_mw": pl.Float64})
     if not folder.is_dir():
-        return pl.DataFrame(schema={"hour_ending": pl.Int64, "gtc_name": pl.String, "market": pl.String, "limit_mw": pl.Float64})
+        return empty, None
     rows = session.raw("gtl_hourly").filter(pl.col("delivery_date") == day).collect()
+    if "interval_start_utc" not in rows.columns:
+        raise ValueError("gtl_hourly artifacts predate interval_start_utc; run build_raw('NP3-766-M') first")
     if rows.is_empty():
-        return rows.select("hour_ending", "gtc_name", "market", "limit_mw")
+        return empty, None
     # Document IDs do not follow posting time (measured), so the latest posting is looked up in the catalog.
     posted = session.catalog.con.execute(
         "SELECT doc_id, posted_at FROM remote_doc WHERE emil_id = 'NP3-766-M' AND doc_id IN (SELECT UNNEST(?))", [rows["doc_id"].unique().to_list()]
     ).fetchall()
     order = sorted(posted, key=lambda r: (r[1] is None, r[1] or 0, r[0]))
     latest_id = order[-1][0] if order else rows.sort("doc_id")["doc_id"][-1]
-    return rows.filter(pl.col("doc_id") == latest_id).select("hour_ending", "gtc_name", "market", "limit_mw")
+    latest = rows.filter(pl.col("doc_id") == latest_id)
+    return latest.select(GTL_COLUMNS), latest["blob_sha256"][0]
 
 
-def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame) -> dict[str, pl.DataFrame]:
-    """Core tables for every snapshot of one package, read from its raw artifacts."""
+def package_inputs(session, emil_id: str, snaps: pl.DataFrame) -> tuple[str, pl.DataFrame]:
+    """Everything besides the package bytes that shapes its core tables, as a string for the cache key, plus the GTL rows.
+
+    The raw parser's identity (a parser bump must rebuild core), the GTL document a DAM
+    day's limits come from (it may arrive after the models), the name crosswalk's bytes,
+    and the package's snapshot ids (a revision renumbering must rebuild the rows that
+    carry it).
+    """
+    import hashlib
+
+    parts = [raw_build.parser_id(emil_id)]
+    gtl = pl.DataFrame(schema={"interval_start_utc": pl.Datetime("us", "UTC"), "gtc_name": pl.String, "market": pl.String, "limit_mw": pl.Float64})
+    if emil_id == DAM_PRODUCT:
+        gtl, gtl_blob = gtl_for_day(session, snaps["operating_date"][0])
+        parts.append(f"gtl={gtl_blob[:16] if gtl_blob else 'none'}")
+    crosswalk = session.data_dir / gtc.OVERRIDES
+    parts.append(f"xwalk={hashlib.sha256(crosswalk.read_bytes()).hexdigest()[:16] if crosswalk.is_file() else 'none'}")
+    parts.append("snapshots=" + ",".join(sorted(snaps["snapshot_id"])))
+    return "|".join(parts), gtl
+
+
+def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame, gtl: pl.DataFrame | None = None) -> dict[str, pl.DataFrame]:
+    """Core tables for every snapshot of one package, read from its raw artifacts (``gtl``: the day's GTL rows, DAM only)."""
     names = DAM_TABLES if emil_id == DAM_PRODUCT else CRR_TABLES
     raw = {t: _raw(session, t, emil_id, blob_sha256) for t in names}
     missing = [t for t, v in raw.items() if v is None]
     if missing:
         raise FileNotFoundError(f"raw tables not built for this package: {missing}")
     if emil_id == DAM_PRODUCT:
-        day = snaps["operating_date"][0]
-        gtl = _gtl_for_day(session, day)
+        if gtl is None:
+            gtl = gtl_for_day(session, snaps["operating_date"][0])[0]
         crosswalk = gtc.name_crosswalk(session.data_dir)
     parts: dict[str, list[pl.DataFrame]] = {t: [] for t in TABLES}
     for snap in snaps.iter_rows(named=True):
@@ -82,7 +110,7 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame)
             nodes = node.dam_nodes(r["psse_bus"], r["dam_lines"], r["dam_transformers"], r["dam_generators"], r["dam_loads"], r["dam_settlement_points"])
             branches, ratings = branch.dam_branches(nodes, r["psse_branch"], r["psse_transformer"], r["dam_lines"], r["dam_transformers"])
             contingencies, outages = contingency.dam_contingencies(branches, nodes, r["dam_contingencies"])
-            gtcs, members = gtc.dam_gtcs(gtl.filter(pl.col("hour_ending") == snap["hour"]), crosswalk)
+            gtcs, members = gtc.dam_gtcs(gtl.filter(pl.col("interval_start_utc") == snap["interval_start_utc"]), crosswalk)
             points, point_nodes = settlement_point.dam_settlement_points(nodes, r["dam_settlement_points"], r["dam_hub_buses"], r["dam_loads"])
             loads = load.dam_loads(nodes, r["psse_load"], r["dam_loads"])
         else:
@@ -119,14 +147,22 @@ def build(session, *, limit: int | None = None) -> list[dict]:
         packages = packages.head(limit)
     run_id = None
     for emil_id, blob, doc_id in packages.rows():
-        keys = {t: raw_build.artifact_key(version, blob, t) for t in TABLES}
+        package = snaps.filter(pl.col("blob_sha256") == blob)
+        try:
+            inputs, gtl = package_inputs(session, emil_id, package)
+        except Exception as error:
+            results.append({"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob, "status": "failed", "tables": len(TABLES), "rows": None,
+                            "seconds": 0.0, "error": f"{type(error).__name__}: {error}"})
+            continue
+        identity = f"{version}|{inputs}"
+        keys = {t: raw_build.artifact_key(identity, blob, t) for t in TABLES}
         rels = {t: Path(LAYER) / t / f"emil_id={emil_id}" / f"{blob[:16]}.parquet" for t in TABLES}
         record = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob, "status": "skipped", "tables": len(TABLES), "rows": None, "seconds": 0.0, "error": None}
         if set(keys.values()) <= existing and all((session.data_dir / rel).is_file() for rel in rels.values()):
             results.append(record)
             continue
         try:
-            tables = package_tables(session, emil_id, blob, snaps.filter(pl.col("blob_sha256") == blob))
+            tables = package_tables(session, emil_id, blob, package, gtl)
         except FileNotFoundError:
             results.append({**record, "status": "no_raw"})  # build_raw first
             continue
@@ -144,7 +180,7 @@ def build(session, *, limit: int | None = None) -> list[dict]:
             os.chmod(tmp, 0o600)
             os.replace(tmp, dest)
             placed.append((keys[table], raw_build.Written(table, dest, frame.height, dest.stat().st_size, ()), rels[table]))
-        session._add_artifacts(run_id, LAYER, emil_id, blob, version, placed)
+        session._add_artifacts(run_id, LAYER, emil_id, blob, identity, placed)
         results.append({**record, "status": "built", "tables": len(placed), "rows": sum(f.height for f in tables.values())})
     if run_id:
         session._finish_run(run_id, failed=sum(1 for r in results if r["status"] == "failed"))

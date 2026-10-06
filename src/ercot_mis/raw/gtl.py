@@ -20,9 +20,10 @@ from dataclasses import dataclass
 import polars as pl
 import pyarrow as pa
 
+from ..clock import local_timestamps_expr
 from .table import ParseError
 
-VERSION = 2
+VERSION = 3
 
 _SHEET = "Results"
 
@@ -48,7 +49,12 @@ def classify_document(path: str, data: bytes) -> GtlMember:
 
 
 def parse_gtl(data: bytes, label: str = "GTL") -> pa.Table:
-    """Long table ``gtl_hourly``: (interval_start, delivery_date, hour_ending, gtc_name, market, limit_mw)."""
+    """Long table ``gtl_hourly``: (interval_start, interval_start_utc, delivery_date, hour_ending, gtc_name, market, limit_mw).
+
+    ``interval_start`` is the workbook's naive local timestamp and ``hour_ending`` its clock
+    hour plus one; ``interval_start_utc`` is the instant (``clock.local_timestamps_expr``),
+    which is what core joins on.
+    """
     try:
         frame = pl.read_excel(io.BytesIO(data), sheet_name=_SHEET, infer_schema_length=0)
     except Exception as error:
@@ -72,11 +78,12 @@ def parse_gtl(data: bytes, label: str = "GTL") -> pa.Table:
     start = text.str.to_datetime("%Y-%m-%d %H:%M:%S", strict=False)
     if start.null_count():
         raise ParseError(f"{label}: {start.null_count()} 'Time' values are not 'YYYY-MM-DD HH:MM:SS' timestamps")
+    utc = pl.DataFrame({"t": start}).select(local_timestamps_expr(pl.col("t")).alias("u"))["u"]
     parts = []
     for name in names:
         for market, column in (("rt", names[name]), ("dam", dams[name])):
             parts.append(pl.DataFrame({
-                "interval_start": start, "delivery_date": start.dt.date(), "hour_ending": start.dt.hour().cast(pl.Int64) + 1,
+                "interval_start": start, "interval_start_utc": utc, "delivery_date": start.dt.date(), "hour_ending": start.dt.hour().cast(pl.Int64) + 1,
                 "gtc_name": pl.Series([name] * frame.height, dtype=pl.String),
                 "market": pl.Series([market] * frame.height, dtype=pl.String),
                 "limit_mw": frame[column].cast(pl.String).str.strip_chars().cast(pl.Float64, strict=False),

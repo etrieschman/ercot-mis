@@ -3,7 +3,8 @@
 ``dam:2026-10-14:he07:r1``, ``crr:monthly:2026-10:r1``,
 ``crr:annual:2029.1st6:seq6:2029-01:r2``. The revision ``r<n>`` orders packages that
 describe the same logical model by posting time: a DAM operating day, a CRR month, an
-annual term and sequence (``_Upd`` packages are revisions).
+annual term and sequence (``_Upd`` packages are revisions). A DAM hour also carries
+``interval_start_utc`` (``clock.study_hour_start``), the instant every hourly join uses.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from datetime import date
 
 import polars as pl
 
+from ..clock import study_hour_start
 from ..raw import crr, dam
 
 CRR_PRODUCTS = ("NP7-801-M", "NP7-800-M")
@@ -62,14 +64,15 @@ def snapshots(session) -> pl.DataFrame:
                     hours = sorted({m.hour for n in p["members"] if (m := dam.classify_member(n)) and m.kind == "network_model" and m.hour})
                     for hour in hours:
                         rows.append({**base, "snapshot_id": f"dam:{l.day}:he{hour:02d}:r{revision}", "operating_date": l.day,
-                                     "hour": hour, "month": None, "term": None, "sequence": None})
+                                     "hour": hour, "interval_start_utc": study_hour_start(l.day, hour), "month": None, "term": None, "sequence": None})
                 else:
                     for month in l.months:
                         term, sequence = (key if kind == "annual" else (None, None))
                         prefix = f"crr:annual:{term}:seq{sequence}" if kind == "annual" else "crr:monthly"
                         rows.append({**base, "snapshot_id": f"{prefix}:{month:%Y-%m}:r{revision}", "operating_date": None,
-                                     "hour": None, "month": month, "term": term, "sequence": sequence})
+                                     "hour": None, "interval_start_utc": None, "month": month, "term": term, "sequence": sequence})
     schema = {"snapshot_id": pl.String, "emil_id": pl.String, "doc_id": pl.String, "blob_sha256": pl.String,
               "posted_at": pl.Datetime("us", "UTC"), "model_kind": pl.String, "revision": pl.Int64,
-              "operating_date": pl.Date, "hour": pl.Int64, "month": pl.Date, "term": pl.String, "sequence": pl.Int64}
+              "operating_date": pl.Date, "hour": pl.Int64, "interval_start_utc": pl.Datetime("us", "UTC"), "month": pl.Date,
+              "term": pl.String, "sequence": pl.Int64}
     return pl.DataFrame(rows, schema=schema).sort("snapshot_id") if rows else pl.DataFrame(schema=schema)

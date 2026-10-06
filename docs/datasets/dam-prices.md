@@ -69,6 +69,8 @@ The header picks the table (`raw/prices.py`): `dam_shadow_prices`, `dam_lmps`,
   between two nodes of one level differs in the tenths digit alone.
 - Shadow prices are non-negative; they enter the price with a minus sign in the
   model's own orientation (settled by the data in `check_prices.py`, both signs tried).
+- Hours are matched to DAM models on `interval_start_utc` built from (delivery date, hour
+  ending, `dst_flag`); the flag marks the repeated hour of the long day (NAM-08).
 - The system price file writes the hour without a leading zero (`1:00`); the price files
   write `01:00`. The check reads the hour as a number.
 - Electrically similar settlement points are published as groups per hour; a few groups
