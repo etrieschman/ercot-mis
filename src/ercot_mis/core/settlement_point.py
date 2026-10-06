@@ -16,9 +16,11 @@ zone and distribution factor (``Ld``). This module puts both in one shape:
 
 Weights are facts from the files, normalized only so they sum to one: CRR hub and
 zone rows carry MW-scale weights, DAM zone LDFs sometimes sum to one and sometimes
-to the zone's MW. ERCOT's two average hubs (names ending ``AVG``) are derived: the
-bus average puts equal weight on every hub bus, the hub average puts equal weight on
-each hub and then on its buses. A DAM logical resource node has no bus of its own and
+to the zone's MW. A DAM hub follows Protocols 3.5.2: equal weight per Hub Bus, then
+equal weight per energized power flow bus inside it (the ``Hb`` file names both
+levels and the status). ERCOT's two average hubs (names ending ``AVG``) are derived
+from the four regional hubs: the hub average weighs each hub equally and then as
+above; the bus average weighs every Hub Bus of the four hubs equally. A DAM logical resource node has no bus of its own and
 takes the bus of its combined-cycle settlement point when the file names one.
 """
 
@@ -26,7 +28,10 @@ from __future__ import annotations
 
 import polars as pl
 
-VERSION = 1
+VERSION = 2
+
+# The hubs the two average hubs are built from (Protocols 3.5.2.6 and 3.5.2.7): the Panhandle hub is not one.
+AVERAGE_HUB_MEMBERS = ("HB_NORTH", "HB_SOUTH", "HB_HOUSTON", "HB_WEST")
 
 SP_COLUMNS = ("settlement_point_id", "kind", "type_text", "n_buses", "n_unresolved", "weight_sum_raw")
 NODE_COLUMNS = ("settlement_point_id", "bus_key", "weight", "raw_weight", "source", "node_number", "is_resolved")
@@ -107,20 +112,30 @@ def dam_settlement_points(nodes: pl.DataFrame, settlement_points: pl.DataFrame, 
               .filter((pl.col("kind") == "resource_node") | ((pl.col("kind") == "dc_tie") & pl.col("node_number").is_not_null()))
               .select("settlement_point_id", "node_number", pl.lit(1.0).alias("raw_weight"), pl.lit("dam_sp").alias("source")))
 
-    # Hubs: the Hb file's buses at equal weight; the two average hubs are derived from the real ones.
-    hb = hub_buses.select(pl.col("hub_name").cast(pl.String).alias("settlement_point_id"), pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"))
+    # Hubs (SP-01, Protocols 3.5.2.x): a hub is the plain average of its Hub Buses, and a Hub Bus the
+    # plain average of its energized power flow buses, so a bus weighs 1 / (hub buses) / (buses in its
+    # hub bus). De-energized rows are left out, as ERCOT leaves them out of the price. The two average
+    # hubs are derived: the hub average weighs the four regional hubs equally (not Panhandle), the bus
+    # average weighs every Hub Bus of those four hubs equally.
+    hb = hub_buses.select(pl.col("hub_name").cast(pl.String).alias("settlement_point_id"), pl.col("hub_bus_name").cast(pl.String).alias("_hub_bus"),
+                          pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"),
+                          pl.col("bus_status").cast(pl.String).str.to_uppercase().str.starts_with("ENERGIZED").alias("_energized"))
     hub_names = points.filter(pl.col("kind") == "hub")["settlement_point_id"]
-    real = hb.filter(pl.col("settlement_point_id").is_in(hub_names.implode())).with_columns(pl.lit(1.0).alias("raw_weight"))
+    real = hb.filter(pl.col("settlement_point_id").is_in(hub_names.implode()) & pl.col("_energized")).drop("_energized")
+    real = (real.with_columns(pl.col("node_number").count().over("settlement_point_id", "_hub_bus").alias("_in_hub_bus"))
+                .with_columns(pl.col("_hub_bus").n_unique().over("settlement_point_id").alias("_hub_buses"))
+                .with_columns((1.0 / pl.col("_hub_buses") / pl.col("_in_hub_bus")).alias("raw_weight")))
     derived = [name for name in hub_names if name not in set(real["settlement_point_id"]) and name.upper().endswith("AVG")]
-    parts = [real]
+    regional = real.filter(pl.col("settlement_point_id").str.to_uppercase().is_in(list(AVERAGE_HUB_MEMBERS)))
+    parts = [real.select("settlement_point_id", "node_number", "raw_weight")]
     for name in derived:
         if "BUS" in name.upper():
-            parts.append(real.select(pl.lit(name).alias("settlement_point_id"), "node_number", pl.lit(1.0).alias("raw_weight")))
+            parts.append(regional.with_columns(pl.col("_hub_bus").n_unique().alias("_all_hub_buses"))
+                         .select(pl.lit(name).alias("settlement_point_id"), "node_number", (1.0 / pl.col("_all_hub_buses") / pl.col("_in_hub_bus")).alias("raw_weight")))
         else:
-            per_hub = real.group_by("settlement_point_id").len().rename({"len": "_n"})
-            parts.append(real.join(per_hub, on="settlement_point_id").select(pl.lit(name).alias("settlement_point_id"), "node_number", (1.0 / pl.col("_n")).alias("raw_weight")))
-    hubs = pl.concat(parts).with_columns(pl.lit("dam_hub_buses").alias("source")) if parts else pl.DataFrame(schema={
-        "settlement_point_id": pl.String, "node_number": pl.Int64, "raw_weight": pl.Float64, "source": pl.String})
+            parts.append(regional.with_columns(pl.col("settlement_point_id").n_unique().alias("_hubs"))
+                         .select(pl.lit(name).alias("settlement_point_id"), "node_number", (pl.col("raw_weight") / pl.col("_hubs")).alias("raw_weight")))
+    hubs = pl.concat(parts).with_columns(pl.lit("dam_hub_buses").alias("source"))
 
     # Load zones: in-service loads of the zone, weighted by their MW distribution factor.
     zone_names = points.filter(pl.col("kind").is_in(["load_zone", "dc_tie"]))["settlement_point_id"]

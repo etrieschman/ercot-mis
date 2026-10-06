@@ -72,7 +72,7 @@ yet checked), `external` (needs data we do not pull yet).
 
 | id | type | assumption | where | ERCOT | check | status |
 |---|---|---|---|---|---|---|
-| SP-01 | forced | Hub price is the plain average of its buses; the two average hubs are derived from the real ones | `core/settlement_point.py` | Protocols define hubs as bus averages and the average hubs as averages of hubs and of hub buses | cite the section | open (reading) |
+| SP-01 | stated | A DAM hub weighs each Hub Bus equally and, inside a Hub Bus, each energized power flow bus equally; de-energized buses are left out; the hub average is the equal average of the North, South, Houston and West hubs and the bus average weighs every Hub Bus of those four equally | `core/settlement_point.py` | Protocols 3.5.2.1(3) and its siblings (hub price = system lambda minus the hub's aggregated shift factor times each shadow price, with per-Hub-Bus and per-bus distribution factors), 3.5.2.6 and 3.5.2.7 for the average hubs | the hub residual in `scripts/check_prices.py` before and after (2026-10-06: no hub was within a cent under the flat average) | verified (as reading; measured in the price reports) |
 | SP-02 | forced | Load zone weights are the loads' MW distribution factors, in-service loads only | `core/settlement_point.py` | Zone price is the load-weighted average | consistent with the `Ld` file | verified (as reading) |
 | SP-03 | measured | CRR hub and zone weights are normalized to one | `core/settlement_point.py` | The CSV gives MW-scale weights | measured | verified |
 | SP-04 | measured | CRR hubs and zones span far more buses than the DAM's hub-bus file and load list | `core/diff.py` | Unknown whether definition or resolution | read `diff_settlement_point` rows | open |
