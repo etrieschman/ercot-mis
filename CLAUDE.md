@@ -247,7 +247,8 @@ src/ercot_mis/
   shift_factors.py  DcSystem: the one place shift factors are computed (factorize once; outaged() re-solves under a
                     contingency, with split buses and islanding); needs the `shift-factors` extra (numpy, scipy)
   clock.py          ERCOT's hours as UTC instants (DAM study hour, price rows' hour ending + DST flag, GTL timestamps)
-  viewer/           single-file substation-by-substation network viewer (template.html + data builder); output is CEII
+  viewer/           single-file substation-by-substation network viewer (template.html + data builder); output is CEII;
+                    `em.open().viewer()` with no arguments pairs the latest monthly CRR model with the latest DAM noon
 demo/tour.ipynb              the walkthrough of every call, with explanations; pulls into demo/data/ (gitignored); commit without outputs
 scripts/daily_pull.py        fetch every pulled product, list tracked EWS ones, build_raw + build_core, price check on the newest
                              days, at-risk line; launchd template in scripts/launchd/

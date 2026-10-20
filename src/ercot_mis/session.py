@@ -482,13 +482,23 @@ class Session:
         path.chmod(0o600)
         return result
 
-    def viewer(self, left: str, right: str | None = None, *, reference_dam: str | None = None) -> Path:
-        """Write the single-file network viewer for one snapshot or a pair and return its path.
+    def viewer(self, left: str | None = None, right: str | None = None, *, reference_dam: str | None = None) -> Path:
+        """Write the single-file network viewer and return its path.
 
-        The page holds CEII and stays inside the data folder (``reports/viewer/``). See ``ercot_mis.viewer``.
+        With no arguments: the latest monthly CRR model beside hour 12 of the latest DAM day.
+        Otherwise one snapshot id, or a pair. The page holds CEII and stays inside the data
+        folder (``reports/viewer/``); open it with ``?nohash`` if its address could leave the
+        machine. See ``ercot_mis.viewer``.
         """
         from . import viewer
 
+        if left is None:
+            snaps = self.core("snapshot").collect()
+            crr = snaps.filter(pl.col("model_kind") == "crr_monthly").sort("month", "revision")
+            dam = snaps.filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision")
+            if crr.is_empty() or dam.is_empty():
+                raise ValueError("no monthly CRR model or no DAM day in core.snapshot; run build_core() first or pass snapshot ids")
+            left, right = crr["snapshot_id"][-1], dam["snapshot_id"][-1]
         return viewer.build(self, left, right, reference_dam=reference_dam)
 
     def network(self, snapshot_id: str, options=None):
