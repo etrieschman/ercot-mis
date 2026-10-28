@@ -252,6 +252,7 @@ src/ercot_mis/
 demo/tour.ipynb              the walkthrough of every call, with explanations; pulls into demo/data/ (gitignored); commit without outputs
 scripts/daily_pull.py        fetch every pulled product, list tracked EWS ones, build_raw + build_core, price check on the newest
                              days, at-risk line; launchd template in scripts/launchd/
+scripts/urgent_pull.py       EWS products only, kept awake; run when the daily pull's notification says data is at risk
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs, GTL hours)
 scripts/measure_identity.py  key-matching and node-identity measurements -> data/reports/identity/*.json
@@ -348,7 +349,12 @@ decisions have rows; node and bus are used consistently in code and docs; the
 README and the network note are current. Done the same evening: injections and the hourly balance (INJ-01, INJ-02), the published load distribution factors against the model's (SP-02 verified), the transformer guard and tap test (RAT-01 guarded, RAT-11 measured), the network cache removed, the identity script's loop, duplicate rating rows counted, `model_kind` renamed. What remains is in the numbered list below.
 
 First, check health (2 min):
-- `tail -40 data/logs/daily_pull.log` and `cat data/logs/last_run.json`: `failed 0`;
+- `cat data/logs/last_run.json`: `level` is `ok`, `missed` (flags say why: no run for a
+  day and a half, asleep during the run, failures) or `urgent` (EWS data within a week of
+  rolling off; run `scripts/urgent_pull.py`). `days_until_loss` counts from the last clean
+  fetch per product (`data/logs/ews_captured.json`). The pull does not keep the Mac awake
+  on purpose (decided 2026-10-28): missed pulls are flagged, not prevented.
+- `tail -40 data/logs/daily_pull.log`: `failed 0`;
   the new lines are `previous run finished ... days ago`, `at risk: ...` and one
   `price check <day>: ...` line per day. **The 2026-10-07 run is the first with the new
   pull: confirm it ran the check and that the Public API products (now ten, including

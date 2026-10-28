@@ -2,7 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Runs the daily pull at 07:00 local time (after ERCOT posts the day's DAM model).
-  If the Mac is asleep at 07:00, launchd runs it at the next wake.
+  If the Mac is asleep at 07:00, launchd runs it at the next wake. It does not keep the
+  Mac awake: a missed or stalled pull is flagged, and scripts/urgent_pull.py is the fix
+  when the notification says EWS data is at risk.
 
   Install, from the repository root:
     sed -e "s#REPO#$PWD#g" -e "s#<string>UV</string>#<string>$(which uv)</string>#" \

@@ -141,9 +141,17 @@ uv run python scripts/daily_pull.py
 ```
 
 `scripts/launchd/` has a launchd template that runs it every morning on macOS.
-Transient download errors are retried within the run; a run that still has
-failures exits non-zero, writes `data/logs/last_run.json` and posts a macOS
-notification. `scripts/probe.py` lists what EWS offers for each product without
+Transient download errors are retried within the run. The run does not keep the Mac
+awake; a missed pull (no run for a day and a half, a run that slept, a failure) is
+flagged with a quiet macOS notification, and `data/logs/last_run.json` records the
+flags and the days until EWS data could first be lost. When that falls within a week
+the notification turns urgent and names the fix, which fetches only the EWS products:
+
+```bash
+uv run python scripts/urgent_pull.py
+```
+
+ `scripts/probe.py` lists what EWS offers for each product without
 downloading.
 
 ## Tests
