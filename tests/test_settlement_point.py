@@ -87,24 +87,24 @@ def test_dam_zone_weights_roll_an_out_of_service_load_to_its_targets():
     assert set(rows["source"]) == {"dam_loads", "dam_loads_rollover"} and points["n_buses"][0] == 2  # two buses, one row per source each
 
 
-def test_dam_logical_resource_node_takes_its_units_bus_only_when_they_share_one():
-    """SP-05: Sp gives the train no bus; Gn lists its units at resource nodes. One bus: the train is there. Several: unresolved,
-    because ERCOT's split uses each unit's registered HRL (Protocols 4.6.1.4), which no file carries."""
-    nodes = _nodes([20, 21], ["N20", "N21"])
-    sp = pl.DataFrame({"settlement_point_name": ["RN_CT", "RN_ST", "LRN_ONE", "LRN_TWO"],
+def test_dam_logical_resource_node_spreads_over_its_units_resource_nodes():
+    """SP-05: Sp gives the train no bus; Gn lists its units at resource nodes. One in-service unit, one share."""
+    nodes = _nodes([20, 21, 22], ["N20", "N21", "N22"])
+    sp = pl.DataFrame({"settlement_point_name": ["RN_CT", "RN_ST", "LRN_T", "LRN_OFF"],
                        "settlement_point_type": ["Resource Node", "Resource Node", "Logical Resource Node", "Logical Resource Node"],
                        "psse_bus_number": [20, 21, None, None], "combined_cycle_settlement_point": [None, None, None, None]},
                       schema_overrides={"psse_bus_number": pl.Int64, "combined_cycle_settlement_point": pl.String})
     hb = pl.DataFrame(schema={"hub_name": pl.String, "hub_bus_name": pl.String, "psse_bus_number": pl.Int64, "bus_status": pl.String})
     ld = pl.DataFrame(schema={"load_zone_name": pl.String, "psse_bus_number": pl.Int64, "load_status": pl.String, "raw_mw_ldf": pl.Float64})
-    gn = pl.DataFrame({"combined_cycle_logical_resource_node_settlement_point_name": ["LRN_ONE", "LRN_ONE", "LRN_ONE", "LRN_TWO", "LRN_TWO"],
-                       "resource_node_psse_bus_number": [20, 20, 20, 20, 21],
-                       "generator_status": ["In-Service", "In-Service", "Out-Of-Service", "In-Service", "In-Service"]})
+    # LRN_T: two turbines at RN_CT, a steam unit at RN_ST, a third turbine out of service elsewhere. LRN_OFF: every unit out, so all count.
+    gn = pl.DataFrame({"combined_cycle_logical_resource_node_settlement_point_name": ["LRN_T", "LRN_T", "LRN_T", "LRN_T", "LRN_OFF", "LRN_OFF"],
+                       "resource_node_psse_bus_number": [20, 20, 21, 22, 21, 22],
+                       "generator_status": ["In-Service", "In-Service", "In-Service", "Out-Of-Service", "Out-Of-Service", "Out-Of-Service"]})
     points, rows = spm.dam_settlement_points(nodes, sp, hb, ld, gn)
-    by = {r["settlement_point_id"]: r for r in points.to_dicts()}
-    one = rows.filter(pl.col("settlement_point_id") == "LRN_ONE")
-    assert one.select("bus_key", "weight", "source").rows() == [("N20", 1.0, "dam_gn")]
-    assert (by["LRN_TWO"]["n_buses"], by["LRN_TWO"]["n_unresolved"]) == (0, 1)
-    # without the generator file both stay unresolved, as before
-    points, _ = spm.dam_settlement_points(nodes, sp, hb, ld)
+    weights = lambda name: {r["bus_key"]: round(r["weight"], 4) for r in rows.filter(pl.col("settlement_point_id") == name).to_dicts()}
+    assert weights("LRN_T") == {"N20": round(2 / 3, 4), "N21": round(1 / 3, 4)}
+    assert weights("LRN_OFF") == {"N21": 0.5, "N22": 0.5}
+    assert set(rows.filter(pl.col("settlement_point_id").str.starts_with("LRN"))["source"]) == {"dam_gn"}
+    assert points["n_unresolved"].sum() == 0
+    points, _ = spm.dam_settlement_points(nodes, sp, hb, ld)  # without Gn both stay unresolved
     assert points.filter(pl.col("settlement_point_id").str.starts_with("LRN"))["n_unresolved"].to_list() == [1, 1]

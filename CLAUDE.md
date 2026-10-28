@@ -368,15 +368,14 @@ Then, in order:
 
 1. **Flow check, follow-ups** (`scripts/check_flows.py`, built 2026-10-28, runs daily on the newest
    day with awards): base-case binding rows reproduce ERCOT's flow; contingency rows miss by a
-   few MW at the median and split-bus contingencies by more (look there first); GTC rows wait
-   on NP3-770-M (PRC-04); a few enforced branches sit above their base limit every hour (which,
-   and why).
-2. **Combined-cycle trains whose units sit on several buses** stay unplaced (SP-05): ERCOT
-   splits a train by each unit's registered HRL (Protocols 4.6.1.4), which no file we pull
-   carries. Their generation is the whole of the flow check's unplaced MW. Any ERCOT product
-   that publishes unit HRLs (or the split) would close it; do not derive one from prices
-   (user, 2026-10-28). Trains on one bus are placed from the `Gn` file, which closed most of
-   the old list of unplaceable settlement points.
+   few MW at the median, with a long tail; a GTC with an incomplete borrowed member list misses
+   by far more (PRC-04, NP3-770-M); a few enforced branches sit above their base limit every
+   hour (which, and why). Verify the audit's claim that a split-bus row moves the wrong end
+   when its `Ctg` row runs opposite to the RAW (`core/contingency.py`, NAM-09).
+2. **Combined-cycle trains whose units sit on several buses** take an equal share per unit
+   (SP-05, `forced`): ERCOT splits a train by each unit's registered HRL (Protocols 4.6.1.4),
+   which no file we pull carries. The price check's `logical_resource_nodes` block confirms it.
+   An ERCOT product that publishes unit HRLs would replace the equal split with the protocol's.
 3. **GTC definitions from NP3-770-M** (one text PDF per constraint): the user's call on
    when; until then the evening residual stands (PRC-04).
 4. **Viewer**: check the coverage table on a real pair with `?nohash`; show `diff_load` in

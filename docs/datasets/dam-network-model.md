@@ -53,10 +53,10 @@ day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.
 - **Logical resource nodes (combined-cycle trains) have no bus in `Sp`**, and no
   combined-cycle settlement point either, although the column exists. The `Gn` file is
   where they are placed: every unit of a train names the train's logical resource node and
-  its own resource node and bus, and those agree with `Sp` row for row. When all of a train's
-  units sit on one bus, core places the train there. When they sit on several, Protocols
-  4.6.1.4 weighs each unit by its High Reasonability Limit from Resource Registration, which no
-  file we pull carries, so the train stays unresolved and its MW is counted as unplaced (SP-05).
+  its own resource node and bus, and those agree with `Sp` row for row. Protocols 4.6.1.4
+  weighs each unit by its High Reasonability Limit from Resource Registration, which no file
+  we pull carries. Core gives each in-service unit an equal share (SP-05); on one bus the
+  weights do not matter, and the price check reports both kinds of train apart.
   A train with no unit listed in an hour is one `Sp` marks de-energized.
 - A split-bus contingency row gives two split-bus columns: the end of the branch that
   stays holds its bus number, the end that moves to the new bus section holds a note

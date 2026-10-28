@@ -22,17 +22,16 @@ levels and the status). ERCOT's two average hubs (names ending ``AVG``) are deri
 from the four regional hubs: the hub average weighs each hub equally and then as
 above; the bus average weighs every Hub Bus of the four hubs equally. A DAM logical resource node (a
 combined-cycle train) has no bus in ``Sp``: it takes the bus of its combined-cycle settlement point when
-``Sp`` names one, and otherwise the bus of its units' resource nodes as the ``Gn`` file lists them, when
-they all sit on one bus. A train whose units sit on several buses stays unresolved: ERCOT weighs them by
-each unit's High Reasonability Limit from Resource Registration (Protocols 4.6.1.4), which no file we
-pull carries, so no weight is made up. SP-05.
+``Sp`` names one, and otherwise its units' resource nodes as the ``Gn`` file lists them. On several buses,
+each in-service unit takes an equal share: ERCOT weighs units by their registered High Reasonability Limit
+(Protocols 4.6.1.4), which no file we pull carries. SP-05.
 """
 
 from __future__ import annotations
 
 import polars as pl
 
-VERSION = 5
+VERSION = 6
 
 # The hubs the two average hubs are built from (Protocols 3.5.2.6 and 3.5.2.7): the Panhandle hub is not one.
 AVERAGE_HUB_MEMBERS = ("HB_NORTH", "HB_SOUTH", "HB_HOUSTON", "HB_WEST")
@@ -116,9 +115,8 @@ def dam_settlement_points(nodes: pl.DataFrame, settlement_points: pl.DataFrame, 
               .filter((pl.col("kind") == "resource_node") | ((pl.col("kind") == "dc_tie") & pl.col("node_number").is_not_null()))
               .select("settlement_point_id", "node_number", pl.lit(1.0).alias("raw_weight"), pl.lit("dam_sp").alias("source")))
 
-    # A logical resource node the Sp file leaves without a bus: the one bus Gn puts all of its units' resource
-    # nodes on (SP-05). With several buses the split needs each unit's registered HRL (Protocols 4.6.1.4),
-    # which is not published, so the point stays unresolved.
+    # A logical resource node the Sp file leaves without a bus: its units' resource nodes from Gn, one share per
+    # in-service unit (SP-05; ERCOT's HRL weights are not published).
     trains = _logical_resource_node_units(generators, direct.filter(pl.col("node_number").is_null())["settlement_point_id"])
     direct = pl.concat([direct.filter(~(pl.col("node_number").is_null() & pl.col("settlement_point_id").is_in(trains["settlement_point_id"].implode()))),
                         trains], how="diagonal_relaxed")
@@ -181,16 +179,17 @@ def dam_settlement_points(nodes: pl.DataFrame, settlement_points: pl.DataFrame, 
 
 
 def _logical_resource_node_units(generators: pl.DataFrame | None, points: pl.Series) -> pl.DataFrame:
-    """For each of ``points`` whose units' resource nodes all sit on one bus: that bus, weight one. Other points get no row."""
+    """Each point's units at their resource node buses, weight one per in-service unit (every unit when none is in service)."""
     empty = pl.DataFrame(schema={"settlement_point_id": pl.String, "node_number": pl.Int64, "raw_weight": pl.Float64, "source": pl.String})
     column = "combined_cycle_logical_resource_node_settlement_point_name"
     if generators is None or column not in generators.columns or points.is_empty():
         return empty
-    buses = (generators.filter(pl.col(column).is_in(points.implode()))
-             .select(pl.col(column).cast(pl.String).alias("settlement_point_id"), pl.col("resource_node_psse_bus_number").cast(pl.Int64).alias("node_number"))
-             .group_by("settlement_point_id").agg(pl.col("node_number").drop_nulls().unique()))
-    one_bus = buses.filter(pl.col("node_number").list.len() == 1).with_columns(pl.col("node_number").list.first())
-    return one_bus.select("settlement_point_id", "node_number", pl.lit(1.0).alias("raw_weight"), pl.lit("dam_gn").alias("source")).sort("settlement_point_id")
+    units = (generators.filter(pl.col(column).is_in(points.implode()))
+             .select(pl.col(column).cast(pl.String).alias("settlement_point_id"),
+                     pl.col("resource_node_psse_bus_number").cast(pl.Int64).alias("node_number"),
+                     pl.col("generator_status").cast(pl.String).str.to_uppercase().str.starts_with("IN").fill_null(False).alias("in_service")))
+    units = units.filter(pl.col("in_service") | ~pl.col("in_service").any().over("settlement_point_id"))
+    return units.select("settlement_point_id", "node_number", pl.lit(1.0).alias("raw_weight"), pl.lit("dam_gn").alias("source"))
 
 def no_settlement_points() -> tuple[pl.DataFrame, pl.DataFrame]:
     points = pl.DataFrame(schema={"settlement_point_id": pl.String, "kind": pl.String, "type_text": pl.String, "n_buses": pl.UInt32,

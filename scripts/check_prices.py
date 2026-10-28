@@ -315,6 +315,16 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
         pl.col("abs_residual").quantile(0.9).round(3).alias("p90_abs"), pl.col("abs_residual").max().round(2).alias("max_abs"),
         (pl.col("abs_residual") <= 1.0).sum().alias("within_1.00")).sort("kind")
     result["residual_by_kind"] = {row["kind"]: {k: v for k, v in row.items() if k != "kind"} for row in by_kind.to_dicts()}
+    # Combined-cycle trains (SP-05): placed on one bus, the price needs no weights; on several, each in-service unit
+    # takes an equal share where ERCOT uses registered HRLs (Protocols 4.6.1.4). Their residual, split that way.
+    trains = (session.core("settlement_point").filter((pl.col("snapshot_id") == snapshot_id) & (pl.col("type_text") == "Logical Resource Node"))
+              .select("settlement_point_id", "n_buses").collect())
+    on_buses = points.select("settlement_point_id").with_row_index("i").join(trains, on="settlement_point_id")
+    result["logical_resource_nodes"] = {}
+    for label, rows_ in (("one_bus", on_buses.filter(pl.col("n_buses") == 1)), ("several_buses", on_buses.filter(pl.col("n_buses") > 1))):
+        r = resid[rows_["i"].to_numpy()]
+        result["logical_resource_nodes"][label] = {"n": int(r.size), "p50_abs": round(float(np.median(r)), 3) if r.size else None,
+                                                   "max_abs": round(float(r.max()), 2) if r.size else None, "within_0.01": int((r <= 0.01).sum())}
     if detail is not None:  # for digging into a residual: the points, the network and the solver
         detail.update(points=points.with_columns(pl.Series("residual", centred)), net=net, system=system, gtc_rows=gtc_rows, weights=weights, W=W,
                       node_congestion=node_congestion, system_price=system_price, best_sign=best,
