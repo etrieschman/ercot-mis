@@ -156,6 +156,58 @@ uv run python scripts/urgent_pull.py
  `scripts/probe.py` lists what EWS offers for each product without
 downloading.
 
+## Back up the archive
+
+Nothing else holds a copy of an EWS document once it leaves its display window, and
+the data folder is excluded from Time Machine. `scripts/backup_data.py` copies what
+cannot be fetched again (the archive, a consistent copy of the catalog, `overrides/`,
+`reports/` and `logs/`) to an encrypted drive or to another machine, and never deletes
+anything there. Raw and core are left out: the next build makes them again.
+
+```bash
+uv run python scripts/backup_data.py /Volumes/<drive>/ercot-mis
+```
+
+It refuses a destination inside a cloud-synced folder or on an unencrypted volume
+(format the drive as APFS (Encrypted) in Disk Utility). For another Mac, pass
+`<host>.local:<path>` and turn on Remote Login there; that disk needs FileVault on.
+`scripts/launchd/ercot-mis.backup.plist` runs it daily: an unplugged drive is skipped,
+and a notification says when the last good backup is more than a week old. To
+restore, copy the backup into an empty data folder and run the daily pull.
+
+## Move to a new machine
+
+A clone carries only code. On the new machine:
+
+1. Install [uv](https://docs.astral.sh/uv/) and Homebrew's `libxmlsec1 pkg-config`,
+   clone the repository, then run the commands under [Setup](#setup).
+2. Copy the credentials from the old machine by AirDrop or a drive, never a synced
+   folder: `~/.ercot/` (`api.crt`, `api.key`; then `chmod 700 ~/.ercot && chmod 600
+   ~/.ercot/api.key`) and the repository's `.env`. Add the three Public API
+   secrets to the new Keychain (see [Credentials](#credentials)); on the old machine
+   `security find-generic-password -s ercot-mis -a <NAME> -w` shows each value.
+3. Stop the old machine's pull, so the copy is complete:
+   `launchctl unload ~/Library/LaunchAgents/ercot-mis.daily-pull.plist`.
+4. Copy the data folder whole, from the old machine (Remote Login on the new one):
+
+   ```bash
+   rsync -a --progress data/ <newmac>.local:<path to repo>/data/
+   ```
+
+   or restore a backup into it. Then `tmutil addexclusion data` on the new machine.
+5. Run the pull once by hand, `uv run python scripts/daily_pull.py`, and check
+   `data/logs/last_run.json`.
+6. Install the schedule (and the backup's, from its template):
+
+   ```bash
+   sed -e "s#REPO#$PWD#g" -e "s#<string>UV</string>#<string>$(which uv)</string>#" \
+       scripts/launchd/ercot-mis.daily-pull.plist > ~/Library/LaunchAgents/ercot-mis.daily-pull.plist
+   launchctl load ~/Library/LaunchAgents/ercot-mis.daily-pull.plist
+   ```
+
+Run the pull on one machine only: two pulls make two archives that drift apart. The
+old machine can be the backup destination instead.
+
 ## Tests
 
 ```bash

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Backs up the archive, the catalog and the hand-kept files every day at 13:00 local
+  time, away from the 07:00 pull. A drive that is not plugged in is skipped; a
+  notification says when the last good backup is more than a week old.
+  DEST is an encrypted local folder or another machine's host:path (see
+  scripts/backup_data.py).
+
+  Install, from the repository root (set DEST first):
+    sed -e "s#REPO#$PWD#g" -e "s#<string>UV</string>#<string>$(which uv)</string>#" -e "s#DEST#$DEST#g" \
+        scripts/launchd/ercot-mis.backup.plist > ~/Library/LaunchAgents/ercot-mis.backup.plist
+    launchctl load ~/Library/LaunchAgents/ercot-mis.backup.plist
+  Check:   launchctl list | grep ercot-mis ; cat REPO/data/logs/last_backup.json
+  Remove:  launchctl unload ~/Library/LaunchAgents/ercot-mis.backup.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ercot-mis.backup</string>
+    <key>WorkingDirectory</key>
+    <string>REPO</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>UV</string>
+        <string>run</string>
+        <string>python</string>
+        <string>scripts/backup_data.py</string>
+        <string>DEST</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>13</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>REPO/data/logs/backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>REPO/data/logs/backup.log</string>
+</dict>
+</plist>
