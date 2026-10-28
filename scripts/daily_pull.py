@@ -16,7 +16,8 @@ the flag turns urgent only when EWS data could actually be lost:
   ERCOT offers is not archived and its window is closing, or the product has not been
   fetched cleanly for so long that documents posted since then are about to roll off.
   The last clean fetch per product is kept in ``data/logs/ews_captured.json``. The
-  notification has a sound and names the fix: ``uv run python scripts/urgent_pull.py``.
+  notification's text is the command to run, ready to paste from Notification Center:
+  ``cd <repository> && uv run python scripts/urgent_pull.py``.
   The check runs before the fetch too, so a run that then stalls still warns.
 
 The flags, the level and the days until the first possible loss go to
@@ -30,6 +31,7 @@ DAM_OPERATING_DATES there. Schedule it with launchd: see scripts/launchd/.
 """
 
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -65,14 +67,19 @@ SLEPT_FLAG_MINUTES = 10
 # EWS data this close to rolling off makes the flag urgent.
 URGENT_DAYS = 7
 
-URGENT_COMMAND = "uv run python scripts/urgent_pull.py"
+# The fix an urgent notification names, runnable from any folder.
+URGENT_COMMAND = f"cd {shlex.quote(str(Path(__file__).resolve().parents[1]))} && uv run python scripts/urgent_pull.py"
 
 
-def notify(title: str, text: str, sound: str | None = None) -> None:
-    """A macOS notification, so a failed run does not hide in a log file."""
+def notify(title: str, text: str, subtitle: str | None = None) -> None:
+    """A macOS notification, so a failed run does not hide in a log file.
+
+    It stays in Notification Center; to keep it on screen until dismissed, set Script
+    Editor's notifications to Persistent (Alerts) in System Settings.
+    """
     if sys.platform != "darwin":
         return
-    script = f'display notification "{text}" with title "{title}"' + (f' sound name "{sound}"' if sound else "")
+    script = f'display notification "{text}" with title "{title}"' + (f' subtitle "{subtitle}"' if subtitle else "")
     subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
 
 
@@ -213,7 +220,7 @@ def is_urgent(risk: dict) -> bool:
 
 
 def alert_urgent(risk: dict) -> None:
-    notify("ercot-mis: EWS data at risk", f"{risk_line(risk)}. Run: {URGENT_COMMAND}", sound="Basso")
+    notify("ercot-mis: EWS data at risk", URGENT_COMMAND, subtitle=risk_line(risk))
 
 
 def check_prices_recent(mis: em.Session, days: int = PRICE_CHECK_DAYS) -> int:

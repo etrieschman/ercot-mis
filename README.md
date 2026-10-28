@@ -145,7 +145,9 @@ Transient download errors are retried within the run. The run does not keep the 
 awake; a missed pull (no run for a day and a half, a run that slept, a failure) is
 flagged with a quiet macOS notification, and `data/logs/last_run.json` records the
 flags and the days until EWS data could first be lost. When that falls within a week
-the notification turns urgent and names the fix, which fetches only the EWS products:
+the notification turns urgent and its text is the command to paste (it fetches only
+the EWS products). Notifications stay in Notification Center; to keep them on screen
+until dismissed, set Script Editor's notification style to Persistent in System Settings:
 
 ```bash
 uv run python scripts/urgent_pull.py
