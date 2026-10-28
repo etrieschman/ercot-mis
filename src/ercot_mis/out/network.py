@@ -50,8 +50,8 @@ What the assembly does, in order:
    that fell on dropped nodes is recorded per point as ``weight_dropped``.
 
 Nothing here decides which contingencies island the network: that depends on the
-consumer's connectivity check, as in ``ftr_align``. ``Session.network`` assembles a network on first request and keeps
-it on every call (assembly is cheap; a saved copy read slower than assembling).
+consumer's connectivity check, as in ``ftr_align``. ``Session.network`` assembles the
+network from core on every call; assembly is faster than reading a saved copy.
 """
 
 from __future__ import annotations
@@ -60,8 +60,6 @@ import math
 from dataclasses import asdict, dataclass, field
 
 import polars as pl
-
-VERSION = 4
 
 INF = math.inf
 
@@ -194,10 +192,6 @@ class CoreTables:
         schema={"settlement_point_id": pl.String, "bus_key": pl.String, "weight": pl.Float64, "is_resolved": pl.Boolean}))
 
 
-def is_dam(snapshot_id: str) -> bool:
-    return snapshot_id.startswith("dam:")
-
-
 def _components(nodes: list[str], edges: pl.DataFrame) -> dict[str, str]:
     """Union-find over ``edges`` (from_node_id, to_node_id): node -> component representative."""
     parent = {n: n for n in nodes}
@@ -258,7 +252,7 @@ def _limits(branch: pl.DataFrame, ratings: pl.DataFrame, options: Options, dam: 
 def build_network(snapshot_id: str, core: CoreTables, options: Options | None = None) -> Network:
     """Assemble one snapshot's :class:`Network` from its core tables."""
     options = options or Options()
-    dam = is_dam(snapshot_id)
+    dam = snapshot_id.startswith("dam:")
     buses = _node_ids(core.node, options.contract_ties)
     bus_to_node = buses.select("node_number", "node_id")
 
@@ -399,7 +393,3 @@ def core_tables(session, snapshot_id: str) -> CoreTables:
         raise KeyError(f"no core rows for {snapshot_id!r}; run build_core()")
     return CoreTables(node, rows("branch"), rows("branch_rating"), rows("contingency"), rows("contingency_outage"), rows("gtc"), rows("gtc_member"),
                       rows("settlement_point"), rows("settlement_point_bus"))
-
-
-# ---------------------------------------------------------------------- on disk
-

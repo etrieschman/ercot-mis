@@ -7,10 +7,8 @@ ends and factorizing again, which is exact for any number of outaged branches an
 needs no special case when the contingency cuts part of the network off: what stays
 connected to the slack is solved, and nodes cut off get a shift factor of zero.
 
-Everything that needs a shift factor (``checks/network.py``,
-``checks/prices.py``, later the flow check) goes through this module. It needs
-``numpy`` and ``scipy``, which the rest of the package does not: install the
-``shift-factors`` extra.
+Every check that needs a shift factor goes through this module. It needs ``numpy``
+and ``scipy``, which the rest of the package does not: install the ``shift-factors`` extra.
 """
 
 from __future__ import annotations

@@ -209,11 +209,6 @@ CONTINGENCY_COLUMNS = ("crr_contingency_id", "dam_contingency_id", "match_method
                        "n_shared_branches", "n_dam_other_rows", "has_split_bus", "n_candidates")
 
 
-def _branch_sets(outages: pl.DataFrame, column: str) -> pl.DataFrame:
-    return (outages.filter(pl.col(column).is_not_null()).group_by("contingency_id")
-            .agg(pl.col(column).unique().sort().alias("branches")))
-
-
 def match_contingencies(crr_outages: pl.DataFrame, dam_outages: pl.DataFrame, branch_matches: pl.DataFrame) -> pl.DataFrame:
     """One row per CRR contingency with its DAM contingency, plus unmatched DAM contingencies.
 
@@ -230,7 +225,6 @@ def match_contingencies(crr_outages: pl.DataFrame, dam_outages: pl.DataFrame, br
     crr_sets = (crr_dam.group_by("contingency_id")
                 .agg(pl.col("branch_id").n_unique().alias("n_crr_branches"),
                      pl.col("dam_branch_id").drop_nulls().unique().sort().alias("branches")))
-    dam_branch_rows = dam_outages.filter(pl.col("element_kind") == "branch")
     dam_sets = (dam_outages.group_by("contingency_id")
                 .agg(pl.col("branch_id").drop_nulls().unique().sort().alias("branches"),
                      (pl.col("element_kind") != "branch").sum().alias("n_dam_other_rows"),

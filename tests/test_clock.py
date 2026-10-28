@@ -18,8 +18,6 @@ def test_dam_study_hours_count_from_local_midnight():
     assert clock.study_hour_start(date(2026, 11, 1), 25) == datetime(2026, 11, 2, 5, tzinfo=UTC)
     # the short day (2026-03-08): hour 3 is 3 a.m. daylight time
     assert clock.study_hour_start(date(2026, 3, 8), 3) == datetime(2026, 3, 8, 8, tzinfo=UTC)
-    frame = pl.DataFrame({"day": [date(2026, 11, 1)] * 3, "hour": [2, 3, 25]}).select(clock.study_hour_start_expr(pl.col("day"), pl.col("hour")).alias("s"))
-    assert frame["s"].to_list() == [datetime(2026, 11, 1, 6, tzinfo=UTC), datetime(2026, 11, 1, 7, tzinfo=UTC), datetime(2026, 11, 2, 5, tzinfo=UTC)]
 
 
 def test_price_rows_use_the_dst_flag_for_the_repeated_hour():

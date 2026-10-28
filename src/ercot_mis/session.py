@@ -15,7 +15,6 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Protocol
 
 import polars as pl
 import requests
@@ -76,11 +75,6 @@ _ERCOT_NAME = re.compile(r"^man\.(\d{8})\.")
 
 # Errors a second attempt can fix: a stalled connection, a short read, a 5xx reply.
 _TRANSIENT = (requests.RequestException, EwsError, ConnectionError, TimeoutError)
-
-
-class Source(Protocol):
-    def list_documents(self, product: Product, start: datetime | None, end: datetime | None) -> list[RemoteDoc]: ...
-    def download(self, url: str) -> Iterator[bytes]: ...
 
 
 class BudgetError(RuntimeError):
@@ -170,7 +164,7 @@ class Session:
     @property
     def catalog(self) -> _ReadOnlyCatalog:
         """Read-only catalog access; each method call is its own short connection."""
-        return _ReadOnlyCatalog(self._catalog_path)
+        return _ReadOnlyCatalog(self.data_dir / "catalog.duckdb")
 
     def query(self, sql: str, params: list | None = None) -> list[tuple]:
         """Ad hoc read-only SQL on the catalog (``remote_doc``, ``archive_blob``, ``artifact``, ...); returns the rows."""
@@ -182,14 +176,10 @@ class Session:
         posted = dict(self.catalog.documents(emil_id, doc_ids).select("doc_id", "posted_at").rows())
         return max(doc_ids, key=lambda d: posting_order(posted.get(d), d))
 
-    @property
-    def _catalog_path(self) -> Path:
-        return self.data_dir / "catalog.duckdb"
-
     @contextmanager
     def _writer(self) -> Iterator[Catalog]:
         """The writable catalog, held only for the duration of the block."""
-        writer = Catalog(self._catalog_path)
+        writer = Catalog(self.data_dir / "catalog.duckdb")
         try:
             yield writer
         finally:
@@ -209,9 +199,6 @@ class Session:
             self._public_api = PublicApiClient.from_secrets()
         return self._public_api
 
-    def _source(self, spec: Product) -> Source:
-        return self.ews if spec.source == "ews" else self.public_api
-
     # ------------------------------------------------------------------ listing
 
     def list(self, product: str | int, since: date | datetime | str | None = None,
@@ -226,7 +213,7 @@ class Session:
         return self._list(get_product(product), since, until).drop(PRIVATE_COLUMNS)
 
     def _list(self, spec: Product, since, until) -> pl.DataFrame:
-        docs = self._source(spec).list_documents(spec, _bound(since), _bound(until))
+        docs = (self.ews if spec.source == "ews" else self.public_api).list_documents(spec, _bound(since), _bound(until))
         with self._writer() as writer:
             writer.record_listing(spec, docs, listed_at=datetime.now(timezone.utc))
             return writer.documents(spec.emil_id, [d.doc_id for d in docs if d.doc_id])
@@ -299,11 +286,11 @@ class Session:
                 "Narrow the window or raise the budget."
             )
 
-        source = self._source(spec)
+        source = (self.ews if spec.source == "ews" else self.public_api)
         results = []
         for row in wanted.sort("posted_at").iter_rows(named=True):
             outcome = {k: row[k] for k in ("emil_id", "doc_id", "report_group", "operating_date", "posted_at", "size_bytes")}
-            suffix = _suffix(row["file_name"], row["format"])
+            suffix = Path(row["file_name"] or "").suffix or (f".{row['format']}" if row["format"] else "")
             try:
                 blob = retrying(
                     lambda: self._archive(spec, source.download(row["url"]), suffix, expected_size=row["size_bytes"]),
@@ -355,9 +342,9 @@ class Session:
     def build_core(self, *, limit: int | None = None) -> pl.DataFrame:
         """Write every core table from the raw layer, skipping packages already built.
 
-        ``core/snapshot.parquet`` is rewritten each time; per package, ``node``, ``branch``,
-        ``branch_rating``, ``contingency``, ``contingency_outage``, ``gtc`` and ``gtc_member``
-        are written under ``core/<table>/emil_id=<EMIL>/``. See ``ercot_mis.core.build``.
+        ``core/snapshot.parquet`` is rewritten each time. Per network model package, every table
+        in ``ercot_mis.core.build.TABLES``; per disclosure day, ``hourly_award``. Each lands under
+        ``core/<table>/emil_id=<EMIL>/``.
         """
         from .core.build import build
 
@@ -543,20 +530,21 @@ class Session:
             raise FileNotFoundError(f"no {layer}.{table} artifacts under {folder}; run the build first")
         return pl.scan_parquet(str(folder / "**" / "*.parquet"), hive_partitioning=True, schema=schema, missing_columns="insert")
 
-    _last_run_id: str | None = None
+    # ----------------------------------------------------------------- recording builds (used by raw.build and core.build)
 
-    def _start_run(self, command: str) -> str:
+    def start_run(self, command: str) -> str:
+        """Open a ``run`` row in the catalog; returns its id."""
         with self._writer() as writer:
-            self._last_run_id = writer.start_run(command)
-            return self._last_run_id
+            return writer.start_run(command)
 
-    def _finish_run(self, run_id: str, failed: int) -> None:
+    def record_artifacts(self, run_id: str, layer: str, emil_id: str, blob_sha256: str, identity: str, placed: list) -> None:
+        """Register files a build has moved into place: ``placed`` is ``[(artifact key, Written, path relative to the data folder)]``."""
+        with self._writer() as writer:
+            writer.add_artifacts(run_id, layer, emil_id, blob_sha256, identity, placed)
+
+    def finish_run(self, run_id: str, failed: int) -> None:
         with self._writer() as writer:
             writer.finish_run(run_id, failed)
-
-    def _add_artifacts(self, *args) -> None:
-        with self._writer() as writer:
-            writer.add_artifacts(*args)
 
     def _archive(self, spec: Product, chunks: Iterable[bytes], suffix: str,
                  expected_size: int | None = None) -> store.StoredBlob:
@@ -590,11 +578,6 @@ def _as_date(value: date | str) -> date:
     if isinstance(value, datetime):
         return value.date()
     return value if isinstance(value, date) else date.fromisoformat(value)
-
-
-def _suffix(file_name: str | None, format: str | None) -> str:
-    suffix = Path(file_name or "").suffix
-    return suffix if suffix else (f".{format}" if format else "")
 
 
 def _product_from_name(name: str) -> Product:

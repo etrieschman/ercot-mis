@@ -299,17 +299,6 @@ class Catalog:
     def artifact_keys(self, layer: str) -> set[str]:
         return {k for (k,) in self.con.execute("SELECT artifact_key FROM artifact WHERE layer = ?", [layer]).fetchall()}
 
-    def artifact_tables(self, layer: str, blob_sha256: str) -> list[str]:
-        return [t for (t,) in self.con.execute(
-            "SELECT DISTINCT table_name FROM artifact WHERE layer = ? AND blob_sha256 = ?", [layer, blob_sha256]).fetchall()]
-
-    def artifact_paths(self, keys: Iterable[str]) -> list[str]:
-        keys = list(keys)
-        if not keys:
-            return []
-        return [p for (p,) in self.con.execute(
-            "SELECT path FROM artifact WHERE list_contains($keys, artifact_key)", {"keys": keys}).fetchall()]
-
     def artifacts(self, layer: str | None = None) -> pl.DataFrame:
         query = "SELECT * FROM artifact" + ("" if layer is None else " WHERE layer = $layer") + " ORDER BY written_at"
         return self.con.execute(query, {"layer": layer} if layer else {}).pl()

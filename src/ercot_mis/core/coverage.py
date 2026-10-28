@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import polars as pl
 
-VERSION = 1
-
 
 def _n(frame: pl.DataFrame, expr: pl.Expr) -> int:
     return int(frame.select(expr.fill_null(False).sum()).item()) if frame.height else 0

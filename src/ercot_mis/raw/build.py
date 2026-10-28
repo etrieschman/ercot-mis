@@ -165,20 +165,22 @@ def build(session, product: str | int, *, workers: int | None = None, limit: int
     packages = session.catalog.packages(spec.emil_id)
     if limit is not None:
         packages = packages[:limit]
-    existing = session.catalog.artifact_keys(LAYER)
+    # A package is built when every table it has in the catalog was written by this parser and its file is in place.
+    built = {blob: rows for (blob,), rows in session.catalog.artifacts(LAYER).partition_by("blob_sha256", as_dict=True).items()}
     todo, results = [], []
     for package in packages:
-        keys = {artifact_key(parser, package["sha256"], t) for t in session.catalog.artifact_tables(LAYER, package["sha256"])}
-        paths = [p for p in session.catalog.artifact_paths(keys) if p != NONE]
-        if keys and keys <= existing and all((session.data_dir / p).is_file() for p in paths):
+        rows = built.get(package["sha256"])
+        current = rows is not None and all(key == artifact_key(parser, package["sha256"], table) and (path == NONE or (session.data_dir / path).is_file())
+                                           for key, table, path in rows.select("artifact_key", "table_name", "path").rows())
+        if current:
             results.append({"emil_id": spec.emil_id, "doc_id": package["doc_id"], "blob_sha256": package["sha256"],
-                            "status": "skipped", "tables": len(keys), "rows": None, "seconds": 0.0, "error": None})
+                            "status": "skipped", "tables": rows.height, "rows": None, "seconds": 0.0, "error": None})
             continue
         todo.append(package)
     if not todo:
         return results
 
-    run_id = session._start_run(f"build_raw {spec.emil_id}")
+    run_id = session.start_run(f"build_raw {spec.emil_id}")
     tmp_dir = session.data_dir / LAYER / ".partial"
     tmp_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     jobs = {p["sha256"]: (session.data_dir / p["path"], spec.emil_id, p["doc_id"], p["sha256"], p["members"], tmp_dir, p["operating_date"]) for p in todo}
@@ -200,7 +202,7 @@ def build(session, product: str | int, *, workers: int | None = None, limit: int
                 os.chmod(artifact.tmp_path, 0o600)
                 os.replace(artifact.tmp_path, dest)
                 placed.append((artifact_key(parser, result.blob_sha256, artifact.table), artifact, rel))
-            session._add_artifacts(run_id, LAYER, spec.emil_id, result.blob_sha256, parser, placed)
+            session.record_artifacts(run_id, LAYER, spec.emil_id, result.blob_sha256, parser, placed)
         results.append(record)
 
     workers = workers or (1 if len(todo) == 1 else min(os.cpu_count() or 2, 6))
@@ -212,5 +214,5 @@ def build(session, product: str | int, *, workers: int | None = None, limit: int
             futures = [pool.submit(build_package, *args) for args in jobs.values()]
             for future in as_completed(futures):
                 finish(future.result())
-    session._finish_run(run_id, failed=sum(1 for r in results if r["status"] == "failed"))
+    session.finish_run(run_id, failed=sum(1 for r in results if r["status"] == "failed"))
     return results

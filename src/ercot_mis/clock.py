@@ -26,12 +26,6 @@ def study_hour_start(day: date, hour: int) -> datetime:
     return midnight.astimezone(timezone.utc) + timedelta(hours=hour - 1)
 
 
-def study_hour_start_expr(day: pl.Expr, hour: pl.Expr) -> pl.Expr:
-    """Column form of :func:`study_hour_start` (``day`` a Date, ``hour`` an integer)."""
-    midnight = day.cast(pl.Datetime("us")).dt.replace_time_zone(ZONE).dt.convert_time_zone("UTC")
-    return midnight + pl.duration(hours=hour - 1)
-
-
 def hour_ending_start_expr(delivery_date: pl.Expr, hour_ending: pl.Expr, dst_flag: pl.Expr) -> pl.Expr:
     """ERCOT's (date, ``HH:00`` hour ending, DST flag) as the interval's UTC start.
 
