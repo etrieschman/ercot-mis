@@ -31,7 +31,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | transport | own thin clients: EWS (certificate) and Public API (archive files, not JSON rows) |
 | transforms | Python parsers → `raw`; Python (polars) → `core`, `out`. The `.sql` runner was dropped on 2026-10-01; DuckDB remains for the catalog and ad hoc SQL |
 | storage | Parquet on disk (zstd, hive-partitioned), Arrow in memory, DuckDB catalog + SQL engine, polars for reading. **No connection outlives a call**: `Session` opens a read-only connection per read and takes the writer only to record a listing, a blob or an artifact, never across a download or a parse, so a notebook never blocks the daily pull |
-| bus identity | **equipment-based `bus_key`**, not PSS/E number or name (DAM renumbers every hour; names are substation names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `scripts/measure_identity.py` |
+| bus identity | **equipment-based `bus_key`**, not PSS/E number or name (DAM numbers change from hour to hour; names are substation names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `scripts/measure_identity.py` |
 | fidelity | **defaults do what ERCOT does; our analysis choices are named options.** `out.network` keeps CRR ties as branches and enforces the monitored breakers, as the auction does; contraction is `Options(contract_ties=True)`. Every assumption, its status and how it was checked lives in `docs/assumptions.md` (update it in the same commit as the code) |
 | data location | `data/` in this repo by default; `ERCOT_MIS_DATA` overrides |
 | network output | standardized tables + optional `ercot_mis.out.shift_factors` (DC solve and shift-factor rows, base case and under a contingency) |
@@ -156,8 +156,8 @@ Do not write "node" for the merged thing or "bus" for a CRR bus section again.
   unzipped, 195 members. Per hour (`_###`): a PSS/E `.RAW` plus CSVs `Ctg`
   (contingencies), `Ln` (lines), `Xf` (transformers), `Ld` (loads), `Gn`
   (generators), `Sp` (settlement points), `Hb` (hubs); per day: `SpCtg`, `SpNb`,
-  and a README. No two hourly files are byte-identical because **every hourly model
-  renumbers its nodes**; the equipment maps are identical across hours. Raw stays
+  and a README. No two hourly files are byte-identical because **hourly models
+  renumber part of their nodes** (most numbers carry over between consecutive hours); the equipment maps are identical across hours. Raw stays
   one table per file; semantic dedup belongs in core. The DAM snapshot key needs an hour: `dam:2026-10-14:he07:r1`.
 
 ### Dataset notes — `docs/datasets/`

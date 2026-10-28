@@ -52,3 +52,10 @@ def test_an_unregistered_method_is_refused():
 
     with pytest.raises(ValueError, match="no row in docs/assumptions.md"):
         match._registered(pl.DataFrame({"match_method": ["exact", "guess"]}), "match_branch")
+
+
+def test_every_measurement_names_a_row():
+    from ercot_mis.checks import register
+
+    ids = {r["id"] for r in rows()}
+    assert register.MEASURES and set(register.MEASURES) <= ids, set(register.MEASURES) - ids
