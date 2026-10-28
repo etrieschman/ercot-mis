@@ -156,25 +156,6 @@ uv run python scripts/urgent_pull.py
  `scripts/probe.py` lists what EWS offers for each product without
 downloading.
 
-## Back up the archive
-
-Nothing else holds a copy of an EWS document once it leaves its display window, and
-the data folder is excluded from Time Machine. `scripts/backup_data.py` copies what
-cannot be fetched again (the archive, a consistent copy of the catalog, `overrides/`,
-`reports/` and `logs/`) to an encrypted drive or to another machine, and never deletes
-anything there. Raw and core are left out: the next build makes them again.
-
-```bash
-uv run python scripts/backup_data.py /Volumes/<drive>/ercot-mis
-```
-
-It refuses a destination inside a cloud-synced folder or on an unencrypted volume
-(format the drive as APFS (Encrypted) in Disk Utility). For another Mac, pass
-`<host>.local:<path>` and turn on Remote Login there; that disk needs FileVault on.
-`scripts/launchd/ercot-mis.backup.plist` runs it daily: an unplugged drive is skipped,
-and a notification says when the last good backup is more than a week old. To
-restore, copy the backup into an empty data folder and run the daily pull.
-
 ## Move to a new machine
 
 A clone carries only code. On the new machine:
@@ -194,10 +175,10 @@ A clone carries only code. On the new machine:
    rsync -a --progress data/ <newmac>.local:<path to repo>/data/
    ```
 
-   or restore a backup into it. Then `tmutil addexclusion data` on the new machine.
+   Then `tmutil addexclusion data` on the new machine.
 5. Run the pull once by hand, `uv run python scripts/daily_pull.py`, and check
    `data/logs/last_run.json`.
-6. Install the schedule (and the backup's, from its template):
+6. Install the schedule:
 
    ```bash
    sed -e "s#REPO#$PWD#g" -e "s#<string>UV</string>#<string>$(which uv)</string>#" \
@@ -205,8 +186,7 @@ A clone carries only code. On the new machine:
    launchctl load ~/Library/LaunchAgents/ercot-mis.daily-pull.plist
    ```
 
-Run the pull on one machine only: two pulls make two archives that drift apart. The
-old machine can be the backup destination instead.
+Run the pull on one machine only: two pulls make two archives that drift apart.
 
 ## Tests
 

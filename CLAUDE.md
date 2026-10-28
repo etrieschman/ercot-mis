@@ -253,7 +253,6 @@ demo/tour.ipynb              the walkthrough of every call, with explanations; p
 scripts/daily_pull.py        fetch every pulled product, list tracked EWS ones, build_raw + build_core, price check on the newest
                              days, at-risk line; launchd template in scripts/launchd/
 scripts/urgent_pull.py       EWS products only, kept awake; run when the daily pull's notification says data is at risk
-scripts/backup_data.py      archive, catalog and hand-kept files to an encrypted drive or another machine; never deletes
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs, GTL hours)
 scripts/measure_identity.py  key-matching and node-identity measurements -> data/reports/identity/*.json
@@ -387,9 +386,9 @@ Then, in order:
    outage reports and CRR auction results.
 7. **Cross-model network** (one bus set for a CRR and a DAM network): the rule for a CRR
    bus that maps to two DAM buses is the user's call.
-8. **New machine / redundancy** (user, 2026-10-28: a new computer is here): the steps are
-   the README's "Move to a new machine"; `scripts/backup_data.py` (+ launchd template) is the
-   second copy. iCloud was ruled out (ECEII obligations unchecked; DuckDB under sync).
+8. **New machine / redundancy** (user, in the next couple of months): the data folder
+   moves with one `rsync` plus `~/.ercot/` and the Keychain secrets; the same `rsync` on a
+   schedule gives a second copy on another machine.
 
 Other open rows of `docs/assumptions.md`: RAT-04 (which RAW rate is the DAM's
 post-contingency limit), RAT-05 (the two rating fallbacks), RAT-11 (tap convention), NAM-06,
