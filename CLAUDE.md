@@ -197,70 +197,66 @@ pool re-imports `__main__`).
 
 ## Layout
 
-The package mirrors the data folder's layers. Each layer package owns its `build`;
-`Session` (returned by `em.open()`) strings them together and is the only writer.
+The package reads in one direction, layer by layer; `tests/test_layers.py` fails on a
+backward import. Each layer package owns its `build`; `Session` (returned by `em.open()`)
+strings them together and is the only writer.
 
 ```
 src/ercot_mis/
-  __init__.py       open() -> Session, re-exports
-  session.py        Session: list, fetch, ingest, probe (fill the archive); build_raw, build_core (write layers);
-                    raw(table), core(table), query(sql), network, injections, match_*, diff_*, viewer (read)
-  config.py         data folder resolution + synced-folder warning; Identity; secrets (env, .env, Keychain)
-  products.py       PRODUCTS: EMIL specs (report type, class, window, source, pull/track)
+  products.py, config.py, clock.py   vocabulary: EMIL specs; data folder, identity, secrets; ERCOT's hours as UTC instants
   sources/          how bytes arrive
     ews.py          EWS: build_request, sign (SHA-1 WS-Security), parse_reports, EwsClient
-    public_api.py   Public API: ID token, paged archive listing, paced calls, retry on 429; PublicApiClient
+    public_api.py   Public API: ID token, paged archive listing, paced calls, retry on 429
     retry.py        retrying(): fixed back-off for stalled downloads and listings
   archive/          layer 0: original documents, never edited
     store.py        content-addressed files (archive/<EMIL>/<sha256>.zip, read-only, atomic), zip member hashing
-    catalog.py      DuckDB catalog (read-only by default, short writes): remote_doc, archive_blob,
-                    archive_member, archive_source, run, artifact, lineage
+    catalog.py      DuckDB catalog: remote_doc, archive_blob, archive_member, archive_source, run, artifact, lineage;
+                    posting_order (TOP-11: the latest posting wins, an undated one counts as oldest)
   raw/              layer 1: typed tables, one per source file
     table.py        Column specs, snake_case, read_delimited (Arrow CSV, exact header check), read_sheet; ParseError
     psse.py         PSS/E v30 RAW -> psse_* tables, both dialects
     crr.py, dam.py  package member classification + parsers -> crr_* / dam_* tables
     gtl.py          NP3-766-M GTL workbook (whole document, not a zip) -> gtl_hourly
-    prices.py       DAM prices and pricing inputs (Public API): shadow prices, bus LMPs, settlement point prices,
-                    system lambda, de-energized points, electrically similar points, heuristic bus mapping, LDFs
-    mappings.py     NP4-160-SG / NP3-220-SG: ERCOT's settlement point and hub mappings in electrical-bus vocabulary
+    prices.py       DAM prices and pricing inputs (Public API)
+    mappings.py     NP4-160-SG / NP3-220-SG: settlement point and hub mappings in electrical-bus vocabulary
     disclosure.py   NP3-966-ER 60-Day DAM Disclosure: 17 tables (awards, offers, bids, ancillary services)
     build.py        parse packages in a process pool, write Parquet with identity columns, register artifacts
   core/             layer 2: tidy keyed tables shared by CRR and DAM
-    snapshot.py     snapshot IDs and revisions from the catalog and member names
-    node.py         equipment-based bus keys; CRR tie contraction (dam_nodes, crr_nodes)
-    branch.py       core.branch and core.branch_rating (crr_branches, dam_branches)
-    contingency.py  core.contingency and core.contingency_outage, resolved to branch/bus keys
-    gtc.py          core.gtc and core.gtc_member (CRR members; DAM hourly limits + crosswalk)
-    match.py        core.match_branch (exact -> ops+ckt -> prefix -> prefix+x), core.match_bus (settlement
-                    point -> matched branch endpoints by vote), core.match_contingency (name -> members)
-    settlement_point.py  core.settlement_point and core.settlement_point_bus (kind, bus weights; both models)
-    load.py         core.load: every load with its node, service status, MW; DAM zone, LDF and rollover flags
-    award.py        core.hourly_award: the DAM's awards as signed injections; net_injections (q) and hourly_balance
-    diff.py         core.diff_branch, core.diff_settlement_point and core.diff_load: both models side by side
-    coverage.py     counts of what a snapshot's tables carry and lack (viewer side panel, checks/identity.py)
-    build.py        writes every core table per package
+    snapshot.py     snapshot IDs and revisions
+    node.py         equipment-based bus keys; CRR tie contraction
+    branch.py       core.branch and core.branch_rating
+    contingency.py  core.contingency and core.contingency_outage, resolved to branch and bus keys
+    gtc.py          core.gtc and core.gtc_member
+    settlement_point.py  core.settlement_point and core.settlement_point_bus (DAM: resource nodes, hubs, zones)
+    load.py         core.load
+    award.py        core.hourly_award: the DAM's awards as signed injections
+    match.py        core.match_branch, core.match_bus, core.match_contingency; name_key
+    diff.py         core.diff_branch, core.diff_settlement_point, core.diff_load
+    coverage.py     counts of what a snapshot's tables carry and lack
+    build.py        every core table per package: a DAM step and a CRR step per snapshot
   out/              layer 3: what consumers read
-    injection.py    out.injection: q per settlement point and hour for a day (session.injections)
-    network.py      Network for one snapshot: nodes (or buses when ties are contracted), branches with limits, contingency
-                    index sets, signed GTC members, settlement point weights, dropped elements with
-                    reasons; Options = judgment calls
-  shift_factors.py  DcSystem: the one place shift factors are computed (factorize once; outaged() re-solves under a
-                    contingency, with split buses and islanding); needs the `shift-factors` extra (numpy, scipy)
-  clock.py          ERCOT's hours as UTC instants (DAM study hour, price rows' hour ending + DST flag, GTL timestamps)
-  viewer/           single-file substation-by-substation network viewer (template.html + data builder); output is CEII;
-                    `em.open().viewer()` with no arguments pairs the latest monthly CRR model with the latest DAM noon
-demo/tour.ipynb              the walkthrough of every call, with explanations; pulls into demo/data/ (gitignored); commit without outputs
-scripts/daily_pull.py        fetch every pulled product, list tracked EWS ones, build_raw + build_core, price check on the newest
-                             days, flow check on the newest day with awards, at-risk line; launchd template in scripts/launchd/
+    network.py      Network for one snapshot, built in six named steps; Options = judgment calls
+    shift_factors.py  DcSystem: the one place shift factors are computed (needs the `shift-factors` extra)
+    injection.py    out.injection: one day's awards (latest posting) and q per settlement point and hour
+  checks/           layer 4: the layers tested against ERCOT's results; each writes data/reports/<check>/
+    binding.py      NP4-191-CD's binding rows of one hour resolved onto our network (shared by prices and flows)
+    prices.py       price identity per DAM hour
+    flows.py        the awards through out.network: flows at binding rows vs ERCOT's, limits, unplaced MW
+    injections.py   the awards balance per hour (INJ-02)
+    ldf.py          ERCOT's load distribution factors vs the Ld file (SP-02)
+    network.py      DC solve; contracted vs ERCOT topology (TOP-01)
+    identity.py     how CRR and DAM keys line up
+    register.py     a measurement for every row of docs/assumptions.md no other check measures
+  viewer/           single-file network viewer (template.html + data builder); output is CEII
+  session.py        Session: list, fetch, ingest, probe; build_raw, build_core; raw, core, core_rows, raw_rows,
+                    network, injections, match_*, diff_*, viewer; start_run, record_artifacts, finish_run
+demo/tour.ipynb              the walkthrough of every call; pulls into demo/data/ (gitignored); commit without outputs
+scripts/check.py             runs any check: prices, flows, injections, ldf, network, identity, register
+scripts/daily_pull.py        fetch, build_raw + build_core, price check on the newest days, flow check on the newest
+                             day with awards, at-risk line; launchd template in scripts/launchd/
 scripts/urgent_pull.py       EWS products only, kept awake; run when the daily pull's notification says data is at risk
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs, GTL hours)
-checks/identity.py  key-matching and node-identity measurements -> data/reports/identity/*.json
-checks/prices.py      price identity per DAM hour: shadow prices x shift factors vs published prices -> data/reports/prices/*.json
-checks/network.py     DC solve on assembled networks; contracted vs ERCOT topology -> data/reports/network/*.json
-checks/injections.py  the DAM's awards balance per hour (INJ-02) -> data/reports/injections/*.json
-checks/flows.py       the awards through out.network: flows at binding rows vs ERCOT's, base-case limits, unplaced MW -> data/reports/flows/*.json
-checks/ldf.py         ERCOT's published load distribution factors vs the Ld file's shares (SP-02) -> data/reports/ldf/*.json
 tools/check_confidential.py  pre-commit guard (stdlib only; also blocks Keychain-stored secrets and notebooks with outputs)
 .github/workflows/ci.yml     tests + guard on every push
 tests/                       synthetic-only tests; test_guard also scans every tracked file
@@ -292,7 +288,7 @@ measurements live in the scripts that make them and the dated reports under
 
 ## Pick up here (next session)
 
-State at the end of 2026-10-06. Scope unchanged since 2026-10-01: **an impeccable fetcher
+State at the end of 2026-10-28 (the repo moved to a new Mac that day). Scope unchanged since 2026-10-01: **an impeccable fetcher
 for the network models and their inputs; research (ftr_align cases) is on hold.** Rules
 confirmed by the user on 2026-10-06, on top of the three from 2026-10-01 (strict
 vocabulary; the register is for choices and `diff_*` for discrepancies; models are tested
@@ -311,6 +307,22 @@ against what cleared without re-clearing):
   check scripts compare directly (counts, differences, their sizes) and never fit,
   regress or correlate. Correlations and fits are for exploring a question by hand,
   never for deciding what the code does.
+- **Protocol first, always** (2026-10-28, "critical"). Before picking any rule or weight,
+  find ERCOT's own rule (Protocols, READMEs) and ERCOT's data for it, scanning every raw
+  table. Only when that data is not published may we pick, and the pick is a `forced`
+  register row whose check names the script that confirms it (SP-05 is the example).
+- **Every register row names a script or test that measures it** (`checks/register.py`
+  for rows no other check covers; `scripts/check.py register`).
+- **Legibility** (2026-10-28): the package reads layer by layer (`tests/test_layers.py`);
+  no one-line helper unless it is used everywhere; short declarative docstrings;
+  `~/dev/flexload` is the reference style (dense lines, no auto-formatter).
+
+Done on 2026-10-28 (all on `main`): the flow check; combined-cycle trains placed from the
+`Gn` file (SP-05); four faithfulness fixes (match cache key, undated GTL postings, split-bus
+end orientation, reposted disclosure days); the checks moved into `ercot_mis/checks/` with
+one binding-row resolver and one runner (`scripts/check.py`); core and network builders in
+named steps; dead code out; a measurement for every register row. Refactors were proven
+output-identical by diffing reports and recomputed packages before and after.
 
 Built on 2026-10-06 (all on `main`): seven more products parsed (system lambda,
 de-energized points, electrically similar points, heuristic bus mapping, load
@@ -357,40 +369,41 @@ First, check health (2 min):
   on purpose (decided 2026-10-28): missed pulls are flagged, not prevented.
 - `tail -40 data/logs/daily_pull.log`: `failed 0`;
   the new lines are `previous run finished ... days ago`, `at risk: ...` and one
-  `price check <day>: ...` line per day. **The 2026-10-07 run is the first with the new
-  pull: confirm it ran the check and that the Public API products (now ten, including
-  the disclosure and the LDFs, which are large) fit the time.**
+  `price check <day>: ...` and `flow check <day>: ...` lines. **The 2026-10-29 run is the
+  first launchd run on the new Mac: confirm it appears in the log.**
 - `launchctl list | grep ercot-mis`: last exit code 0.
-- The machine slept through 2026-10-03 and 04; launchd caught up on the 05th. The user
-  may schedule a daily wake (`sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00`); not done.
+- The user may schedule a daily wake (`sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00`); not done.
 
 Then, in order:
 
-1. **Flow check, follow-ups** (`checks/flows.py`, built 2026-10-28, runs daily on the newest
-   day with awards): base-case binding rows reproduce ERCOT's flow; contingency rows miss by a
-   few MW at the median, with a long tail; a GTC with an incomplete borrowed member list misses
-   by far more (PRC-04, NP3-770-M); a few enforced branches sit above their base limit every
-   hour (which, and why). Verify the audit's claim that a split-bus row moves the wrong end
-   when its `Ctg` row runs opposite to the RAW (`core/contingency.py`, NAM-09).
-2. **Combined-cycle trains whose units sit on several buses** take an equal share per unit
+1. **Flow check, follow-ups** (`checks/flows.py`, runs daily on the newest day with
+   awards): base-case binding rows reproduce ERCOT's flow; contingency rows miss by a few MW
+   at the median, with a long tail; a GTC with an incomplete borrowed member list misses by
+   far more (PRC-04, NP3-770-M); a few enforced branches sit above their base limit every
+   hour (which, and why).
+2. **Register rows the measurements reopened** (`scripts/check.py register`): TOP-03/04
+   (some branches the CRR Outages file names are in service in the RAW), TOP-06 (the CRR
+   network keeps more than one swing record), NAM-01 (a few CRR line names run to-from),
+   RAT-04 (the CRR emergency rating almost never equals DAM rate B).
+3. **Combined-cycle trains whose units sit on several buses** take an equal share per unit
    (SP-05, `forced`): ERCOT splits a train by each unit's registered HRL (Protocols 4.6.1.4),
    which no file we pull carries. The price check's `logical_resource_nodes` block confirms it.
    An ERCOT product that publishes unit HRLs would replace the equal split with the protocol's.
-3. **GTC definitions from NP3-770-M** (one text PDF per constraint): the user's call on
+4. **GTC definitions from NP3-770-M** (one text PDF per constraint): the user's call on
    when; until then the evening residual stands (PRC-04).
-4. **Viewer**: check the coverage table on a real pair with `?nohash`; show `diff_load` in
+5. **Viewer**: check the coverage table on a real pair with `?nohash`; show `diff_load` in
    the side panel; label the DAM load column "LDF" (the DAM RAW gives every load 0 MW).
-5. **Smaller leftovers**: count the match and GTC duplicates `keep="first"` resolves
+6. **Smaller leftovers**: count the match and GTC duplicates `keep="first"` resolves
    (RAT-12); a glossary page if the notebook's cell is not enough; the night-time offset
    of a few cents between the fitted and the published system price in hours with few
    binding rows (unexplained; `system_price.fitted_median_minus_published`).
-6. **Planning-stage inputs** as the user asks; EWS report type IDs for transmission
+7. **Planning-stage inputs** as the user asks; EWS report type IDs for transmission
    outage reports and CRR auction results.
-7. **Cross-model network** (one bus set for a CRR and a DAM network): the rule for a CRR
+8. **Cross-model network** (one bus set for a CRR and a DAM network): the rule for a CRR
    bus that maps to two DAM buses is the user's call.
-8. **New machine / redundancy** (user, in the next couple of months): the data folder
-   moves with one `rsync` plus `~/.ercot/` and the Keychain secrets; the same `rsync` on a
-   schedule gives a second copy on another machine.
+9. **Redundancy**: the move to the new Mac is done (2026-10-28); the same `rsync` on a
+   schedule would give a second copy on another machine. Confirm the old Mac's launchd job
+   is unloaded (two pulls make two archives).
 
 Other open rows of `docs/assumptions.md`: RAT-04 (which RAW rate is the DAM's
 post-contingency limit), RAT-05 (the two rating fallbacks), RAT-11 (tap convention), NAM-06,

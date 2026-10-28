@@ -58,8 +58,18 @@ with em.open() as session:
 ```
 
 The viewer page holds CEII (equipment names); it is written inside the data folder and
-must not be shared. `checks/prices.py` tests a DAM network against the prices
-ERCOT published for that hour.
+must not be shared.
+
+The checks in `ercot_mis/checks/` test the layers against what ERCOT published. Each
+writes a report under `data/reports/<check>/`:
+
+```bash
+uv run python scripts/check.py prices --day 2026-09-30
+```
+
+`prices` rebuilds every settlement point price from the binding constraints; `flows`
+pushes the DAM's own awards through the network; `register` measures every row of
+`docs/assumptions.md` that no other check covers. The script's docstring lists the rest.
 
 `docs/out-network.md` lists the conventions behind `network()` and its options;
 `docs/assumptions.md` lists every choice the code makes and how it was checked;
