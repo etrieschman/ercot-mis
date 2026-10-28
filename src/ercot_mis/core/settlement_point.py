@@ -100,96 +100,100 @@ def crr_settlement_points(nodes: pl.DataFrame, sources_sinks: pl.DataFrame) -> t
 
 def dam_settlement_points(nodes: pl.DataFrame, settlement_points: pl.DataFrame, hub_buses: pl.DataFrame,
                           loads: pl.DataFrame, generators: pl.DataFrame | None = None) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """From one hour's ``dam_settlement_points``, ``dam_hub_buses``, ``dam_loads`` and ``dam_generators``."""
-    to_node = nodes.select("node_number", "bus_key")
+    """One DAM hour's settlement points and their bus weights, from its ``Sp``, ``Hb``, ``Ld`` and ``Gn`` files."""
     sp = settlement_points.select(pl.col("settlement_point_name").alias("settlement_point_id"), pl.col("settlement_point_type").alias("type_text"),
                                   pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"),
                                   pl.col("combined_cycle_settlement_point").cast(pl.String).alias("_cc"))
     points = sp.select("settlement_point_id", _kind_from_type(pl.col("type_text")).alias("kind"), "type_text").unique(subset=["settlement_point_id"])
+    direct = _dam_resource_nodes(sp, points, generators)
+    zones = _dam_zones(loads, points).filter(~pl.col("settlement_point_id").is_in(direct["settlement_point_id"].implode()))  # a DC tie with a bus of its own keeps it
+    rows = pl.concat([direct, _dam_hubs(hub_buses, points), zones], how="diagonal_relaxed").join(nodes.select("node_number", "bus_key"), on="node_number", how="left")
+    # A settlement point with no row at all (a hub without Hb rows, a zone without loads) still appears, unresolved.
+    missing = points.filter(~pl.col("settlement_point_id").is_in(rows["settlement_point_id"].implode())).select(
+        "settlement_point_id", pl.lit(None, pl.Int64).alias("node_number"), pl.lit(None, pl.Float64).alias("raw_weight"),
+        pl.lit("dam_sp").alias("source"), pl.lit(None, pl.String).alias("bus_key"))
+    return _finish(points, pl.concat([rows.select("settlement_point_id", "node_number", "raw_weight", "source", "bus_key"), missing]))
 
-    # Resource nodes: the file's bus; a logical resource node borrows its combined-cycle point's bus.
+
+def _dam_resource_nodes(sp: pl.DataFrame, points: pl.DataFrame, generators: pl.DataFrame | None) -> pl.DataFrame:
+    """Resource nodes and DC ties with a bus of their own: the ``Sp`` file's bus.
+
+    A logical resource node (a combined-cycle train) takes its combined-cycle point's bus when ``Sp``
+    names one; otherwise its units' resource node buses from ``Gn``, one share per in-service unit
+    (every unit when none is in service). ERCOT weighs units by registered HRL, which is not published (SP-05).
+    """
     by_name = sp.select(pl.col("settlement_point_id").alias("_cc"), pl.col("node_number").alias("_cc_bus"))
     direct = (sp.join(by_name, on="_cc", how="left")
               .with_columns(pl.coalesce(pl.col("node_number"), pl.col("_cc_bus")).alias("node_number"))
               .join(points.select("settlement_point_id", "kind"), on="settlement_point_id")
               .filter((pl.col("kind") == "resource_node") | ((pl.col("kind") == "dc_tie") & pl.col("node_number").is_not_null()))
               .select("settlement_point_id", "node_number", pl.lit(1.0).alias("raw_weight"), pl.lit("dam_sp").alias("source")))
+    column = "combined_cycle_logical_resource_node_settlement_point_name"
+    without_bus = direct.filter(pl.col("node_number").is_null())["settlement_point_id"]
+    if generators is None or column not in generators.columns or without_bus.is_empty():
+        return direct
+    units = (generators.filter(pl.col(column).is_in(without_bus.implode()))
+             .select(pl.col(column).cast(pl.String).alias("settlement_point_id"),
+                     pl.col("resource_node_psse_bus_number").cast(pl.Int64).alias("node_number"),
+                     pl.col("generator_status").cast(pl.String).str.to_uppercase().str.starts_with("IN").fill_null(False).alias("in_service")))
+    units = (units.filter(pl.col("in_service") | ~pl.col("in_service").any().over("settlement_point_id"))
+             .select("settlement_point_id", "node_number", pl.lit(1.0).alias("raw_weight"), pl.lit("dam_gn").alias("source")))
+    placed = pl.col("node_number").is_null() & pl.col("settlement_point_id").is_in(units["settlement_point_id"].implode())
+    return pl.concat([direct.filter(~placed), units], how="diagonal_relaxed")
 
-    # A logical resource node the Sp file leaves without a bus: its units' resource nodes from Gn, one share per
-    # in-service unit (SP-05; ERCOT's HRL weights are not published).
-    trains = _logical_resource_node_units(generators, direct.filter(pl.col("node_number").is_null())["settlement_point_id"])
-    direct = pl.concat([direct.filter(~(pl.col("node_number").is_null() & pl.col("settlement_point_id").is_in(trains["settlement_point_id"].implode()))),
-                        trains], how="diagonal_relaxed")
 
-    # Hubs (SP-01, Protocols 3.5.2.x): a hub is the plain average of its Hub Buses, and a Hub Bus the
-    # plain average of its energized power flow buses, so a bus weighs 1 / (hub buses) / (buses in its
-    # hub bus). De-energized rows are left out, as ERCOT leaves them out of the price. The two average
-    # hubs are derived: the hub average weighs the four regional hubs equally (not Panhandle), the bus
-    # average weighs every Hub Bus of those four hubs equally.
+def _dam_hubs(hub_buses: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
+    """Hubs (SP-01, Protocols 3.5.2): each Hub Bus weighs the same, and inside one each energized bus weighs the same.
+
+    A bus therefore weighs 1 / (hub buses) / (buses in its Hub Bus); de-energized buses are left out, as
+    ERCOT leaves them out of the price. The two average hubs are derived from the four regional hubs
+    (not Panhandle): the hub average weighs those hubs equally, the bus average every Hub Bus of them equally.
+    """
     hb = hub_buses.select(pl.col("hub_name").cast(pl.String).alias("settlement_point_id"), pl.col("hub_bus_name").cast(pl.String).alias("_hub_bus"),
                           pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"),
                           pl.col("bus_status").cast(pl.String).str.to_uppercase().str.starts_with("ENERGIZED").alias("_energized"))
     hub_names = points.filter(pl.col("kind") == "hub")["settlement_point_id"]
-    real = hb.filter(pl.col("settlement_point_id").is_in(hub_names.implode()) & pl.col("_energized")).drop("_energized")
-    real = (real.with_columns(pl.col("node_number").count().over("settlement_point_id", "_hub_bus").alias("_in_hub_bus"))
-                .with_columns(pl.col("_hub_bus").n_unique().over("settlement_point_id").alias("_hub_buses"))
-                .with_columns((1.0 / pl.col("_hub_buses") / pl.col("_in_hub_bus")).alias("raw_weight")))
-    derived = [name for name in hub_names if name not in set(real["settlement_point_id"]) and name.upper().endswith("AVG")]
+    real = (hb.filter(pl.col("settlement_point_id").is_in(hub_names.implode()) & pl.col("_energized")).drop("_energized")
+            .with_columns(pl.col("node_number").count().over("settlement_point_id", "_hub_bus").alias("_in_hub_bus"))
+            .with_columns(pl.col("_hub_bus").n_unique().over("settlement_point_id").alias("_hub_buses"))
+            .with_columns((1.0 / pl.col("_hub_buses") / pl.col("_in_hub_bus")).alias("raw_weight")))
     regional = real.filter(pl.col("settlement_point_id").str.to_uppercase().is_in(list(AVERAGE_HUB_MEMBERS)))
     parts = [real.select("settlement_point_id", "node_number", "raw_weight")]
-    for name in derived:
+    for name in (n for n in hub_names if n not in set(real["settlement_point_id"]) and n.upper().endswith("AVG")):
         if "BUS" in name.upper():
             parts.append(regional.with_columns(pl.col("_hub_bus").n_unique().alias("_all_hub_buses"))
                          .select(pl.lit(name).alias("settlement_point_id"), "node_number", (1.0 / pl.col("_all_hub_buses") / pl.col("_in_hub_bus")).alias("raw_weight")))
         else:
             parts.append(regional.with_columns(pl.col("settlement_point_id").n_unique().alias("_hubs"))
                          .select(pl.lit(name).alias("settlement_point_id"), "node_number", (pl.col("raw_weight") / pl.col("_hubs")).alias("raw_weight")))
-    hubs = pl.concat(parts).with_columns(pl.lit("dam_hub_buses").alias("source"))
+    return pl.concat(parts).with_columns(pl.lit("dam_hub_buses").alias("source"))
 
-    # Load zones (SP-02): in-service loads of the zone, weighted by their MW distribution factor. An out-of-service
-    # load the file marks rollover-capable hands its MW to the target loads it names, by the fractions given,
-    # when those targets are in service (the file's own rule; the ``Ld`` README calls it rollover).
+
+def _dam_zones(loads: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
+    """Load zones and DC-tie zones (SP-02): the zone's in-service loads, weighted by their MW distribution factor.
+
+    An out-of-service load the ``Ld`` file marks rollover-capable hands its MW to the target loads it
+    names, by the fractions given, when those targets are in service (the file's own rule).
+    """
     zone_names = points.filter(pl.col("kind").is_in(["load_zone", "dc_tie"]))["settlement_point_id"]
     in_service = pl.col("load_status").str.to_uppercase().str.starts_with("IN")
     zone_loads = loads.filter(pl.col("load_zone_name").is_in(zone_names.implode()))
     zones = (zone_loads.filter(in_service)
              .select(pl.col("load_zone_name").cast(pl.String).alias("settlement_point_id"), pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"),
                      pl.col("raw_mw_ldf").cast(pl.Float64).alias("raw_weight"), pl.lit("dam_loads").alias("source")))
-    if "load_rollover_capable" in loads.columns:
-        targets = [(f"{n}_target_load_name", f"fraction_of_this_load_to_{n}_target_load") for n in ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th")
-                   if f"{n}_target_load_name" in loads.columns]
-        rolling = zone_loads.filter(~in_service & pl.col("load_rollover_capable").cast(pl.String).str.to_uppercase().str.starts_with("Y"))
-        receivers = loads.filter(in_service).select(pl.col("load_name").alias("_target"), pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"))
-        rolled = pl.concat([
-            rolling.select(pl.col("load_zone_name").cast(pl.String).alias("settlement_point_id"), pl.col(name).cast(pl.String).alias("_target"),
-                           (pl.col("raw_mw_ldf").cast(pl.Float64) * pl.col(fraction).cast(pl.Float64)).alias("raw_weight"))
-            for name, fraction in targets]).filter(pl.col("_target").is_not_null() & (pl.col("raw_weight") > 0))
-        rolled = rolled.join(receivers, on="_target", how="inner").select("settlement_point_id", "node_number", "raw_weight", pl.lit("dam_loads_rollover").alias("source"))
-        zones = pl.concat([zones, rolled])
-    zones = zones.filter(~pl.col("settlement_point_id").is_in(direct["settlement_point_id"].implode()))  # a DC tie with a bus of its own keeps it
+    if "load_rollover_capable" not in loads.columns:
+        return zones
+    targets = [(f"{n}_target_load_name", f"fraction_of_this_load_to_{n}_target_load") for n in ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th")
+               if f"{n}_target_load_name" in loads.columns]
+    rolling = zone_loads.filter(~in_service & pl.col("load_rollover_capable").cast(pl.String).str.to_uppercase().str.starts_with("Y"))
+    receivers = loads.filter(in_service).select(pl.col("load_name").alias("_target"), pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"))
+    rolled = pl.concat([
+        rolling.select(pl.col("load_zone_name").cast(pl.String).alias("settlement_point_id"), pl.col(name).cast(pl.String).alias("_target"),
+                       (pl.col("raw_mw_ldf").cast(pl.Float64) * pl.col(fraction).cast(pl.Float64)).alias("raw_weight"))
+        for name, fraction in targets]).filter(pl.col("_target").is_not_null() & (pl.col("raw_weight") > 0))
+    rolled = rolled.join(receivers, on="_target", how="inner").select("settlement_point_id", "node_number", "raw_weight", pl.lit("dam_loads_rollover").alias("source"))
+    return pl.concat([zones, rolled])
 
-    rows = pl.concat([direct, hubs, zones], how="diagonal_relaxed").join(to_node, on="node_number", how="left")
-    # A settlement point with no row at all (a hub without Hb rows, a zone without loads) still appears, unresolved.
-    missing = points.filter(~pl.col("settlement_point_id").is_in(rows["settlement_point_id"].implode())).select(
-        "settlement_point_id", pl.lit(None, pl.Int64).alias("node_number"), pl.lit(None, pl.Float64).alias("raw_weight"),
-        pl.lit("dam_sp").alias("source"), pl.lit(None, pl.String).alias("bus_key"))
-    rows = pl.concat([rows.select("settlement_point_id", "node_number", "raw_weight", "source", "bus_key"), missing])
-    return _finish(points, rows)
-
-
-
-def _logical_resource_node_units(generators: pl.DataFrame | None, points: pl.Series) -> pl.DataFrame:
-    """Each point's units at their resource node buses, weight one per in-service unit (every unit when none is in service)."""
-    empty = pl.DataFrame(schema={"settlement_point_id": pl.String, "node_number": pl.Int64, "raw_weight": pl.Float64, "source": pl.String})
-    column = "combined_cycle_logical_resource_node_settlement_point_name"
-    if generators is None or column not in generators.columns or points.is_empty():
-        return empty
-    units = (generators.filter(pl.col(column).is_in(points.implode()))
-             .select(pl.col(column).cast(pl.String).alias("settlement_point_id"),
-                     pl.col("resource_node_psse_bus_number").cast(pl.Int64).alias("node_number"),
-                     pl.col("generator_status").cast(pl.String).str.to_uppercase().str.starts_with("IN").fill_null(False).alias("in_service")))
-    units = units.filter(pl.col("in_service") | ~pl.col("in_service").any().over("settlement_point_id"))
-    return units.select("settlement_point_id", "node_number", pl.lit(1.0).alias("raw_weight"), pl.lit("dam_gn").alias("source"))
 
 def no_settlement_points() -> tuple[pl.DataFrame, pl.DataFrame]:
     points = pl.DataFrame(schema={"settlement_point_id": pl.String, "kind": pl.String, "type_text": pl.String, "n_buses": pl.UInt32,
