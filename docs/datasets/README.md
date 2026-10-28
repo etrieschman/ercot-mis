@@ -9,14 +9,14 @@ never node, bus, substation, device, contingency or constraint names, or file na
 
 **No numbers.** Notes record process, decisions and quirks. Counts, ratios and dates
 of the last clean run belong to the scripts that measure them (`validate_parsers.py`,
-`measure_identity.py`) and the reports they write under `data/reports/`.
+`checks/identity.py`) and the reports they write under `data/reports/`.
 
 | note | products | status |
 |---|---|---|
 | [psse-raw.md](psse-raw.md) | PSS/E v30 RAW, shared by CRR and DAM | parsed, validated |
 | [crr-network-model.md](crr-network-model.md) | NP7-801-M (annual), NP7-800-M (monthly) | parsed, validated |
 | [dam-network-model.md](dam-network-model.md) | NP4-500-SG | parsed, validated |
-| [identity-and-matching.md](identity-and-matching.md) | keys across CRR and DAM | measured by `scripts/measure_identity.py` |
+| [identity-and-matching.md](identity-and-matching.md) | keys across CRR and DAM | measured by `checks/identity.py` |
 | [generic-transmission-limits.md](generic-transmission-limits.md) | NP3-766-M, NP3-770-M | limits parsed; definitions archived |
 | [settlement-point-mappings.md](settlement-point-mappings.md) | NP4-160-SG, NP3-220-SG | parsed, not yet used by core |
 | _to write_ | NP5-615-SG | archived, not parsed |

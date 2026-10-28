@@ -36,10 +36,10 @@ dynamic line ratings; the monitored CSV already carries the resulting ratings).
   from member names (`classify_member`); the document's revision comes from the catalog.
 - **Exact header checks**: a changed or reordered header raises `ParseError`.
 - **Mapping-workbook node numbers stay text** (see quirks).
-- **The Outages file is informational.** The RAW already reflects the outage
-  scheduler: every outage whose equipment name matches a workbook operations name is
-  out of service in the RAW (`scripts/measure_identity.py` does not measure this yet;
-  checked by hand on one month, see docs/assumptions.md). Core does not apply it.
+- **The Outages file is not applied.** The RAW reflects the outage scheduler for its
+  own snapshot; the file spans the month. Of the branches it names through a workbook
+  operations name, most are out of service in the RAW and some are not
+  (`checks/register.py`, TOP-03 and TOP-04, open). Core does not apply it.
 - **Transformer name orientation is recorded**: `core.branch.is_name_reversed` is
   true when the `Autos` name lists the RAW's ends the other way round, so a CSV flow
   direction, which refers to the name, can be turned into the RAW orientation.

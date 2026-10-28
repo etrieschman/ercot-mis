@@ -31,7 +31,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | transport | own thin clients: EWS (certificate) and Public API (archive files, not JSON rows) |
 | transforms | Python parsers → `raw`; Python (polars) → `core`, `out`. The `.sql` runner was dropped on 2026-10-01; DuckDB remains for the catalog and ad hoc SQL |
 | storage | Parquet on disk (zstd, hive-partitioned), Arrow in memory, DuckDB catalog + SQL engine, polars for reading. **No connection outlives a call**: `Session` opens a read-only connection per read and takes the writer only to record a listing, a blob or an artifact, never across a download or a parse, so a notebook never blocks the daily pull |
-| bus identity | **equipment-based `bus_key`**, not PSS/E number or name (DAM numbers change from hour to hour; names are substation names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `scripts/measure_identity.py` |
+| bus identity | **equipment-based `bus_key`**, not PSS/E number or name (DAM numbers change from hour to hour; names are substation names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `checks/identity.py` |
 | fidelity | **defaults do what ERCOT does; our analysis choices are named options.** `out.network` keeps CRR ties as branches and enforces the monitored breakers, as the auction does; contraction is `Options(contract_ties=True)`. Every assumption, its status and how it was checked lives in `docs/assumptions.md` (update it in the same commit as the code) |
 | data location | `data/` in this repo by default; `ERCOT_MIS_DATA` overrides |
 | network output | standardized tables + optional `ercot_mis.out.shift_factors` (DC solve and shift-factor rows, base case and under a contingency) |
@@ -237,7 +237,7 @@ src/ercot_mis/
     load.py         core.load: every load with its node, service status, MW; DAM zone, LDF and rollover flags
     award.py        core.hourly_award: the DAM's awards as signed injections; net_injections (q) and hourly_balance
     diff.py         core.diff_branch, core.diff_settlement_point and core.diff_load: both models side by side
-    coverage.py     counts of what a snapshot's tables carry and lack (viewer side panel, measure_identity.py)
+    coverage.py     counts of what a snapshot's tables carry and lack (viewer side panel, checks/identity.py)
     build.py        writes every core table per package
   out/              layer 3: what consumers read
     injection.py    out.injection: q per settlement point and hour for a day (session.injections)
@@ -255,7 +255,7 @@ scripts/daily_pull.py        fetch every pulled product, list tracked EWS ones, 
 scripts/urgent_pull.py       EWS products only, kept awake; run when the daily pull's notification says data is at risk
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs, GTL hours)
-scripts/measure_identity.py  key-matching and node-identity measurements -> data/reports/identity/*.json
+checks/identity.py  key-matching and node-identity measurements -> data/reports/identity/*.json
 checks/prices.py      price identity per DAM hour: shadow prices x shift factors vs published prices -> data/reports/prices/*.json
 checks/network.py     DC solve on assembled networks; contracted vs ERCOT topology -> data/reports/network/*.json
 checks/injections.py  the DAM's awards balance per hour (INJ-02) -> data/reports/injections/*.json
@@ -286,7 +286,7 @@ measurements live in the scripts that make them and the dated reports under
 | M3 | core layer + SQL runner, cache skip, lineage, validation checks | 2026-09-17: raw writer with provenance (`build_raw`, process pool, cache skip, `run`/`artifact`/`lineage`); `build_core` writes snapshot, node, branch, branch_rating, contingency, contingency_outage, gtc, gtc_member for every archived package. 2026-09-24: both builds run at the end of the daily pull. 2026-10-01: SQL runner dropped; register lint (`tests/test_register.py`); `checks/prices.py`. Not yet: flow check, status page |
 | M4 | `out.network` + `ftr_align/cases/ercot.py` (on hold) | 2026-09-24: `session.network()` (per-snapshot, own vocabulary, ERCOT's topology by default, settlement point weights, audit frames, `docs/out-network.md`); `checks/network.py` solves it. 2026-10-06: the on-disk network cache was removed (assembly is faster). Not yet: `ercot.py` (on hold with the research) |
 | M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | 2026-10-01: prices pulled daily and parsed; price check. 2026-10-06: the price check runs daily; system lambda, de-energized points, electrically similar points, heuristic mapping and LDFs pulled and parsed; hub weights per Protocols 3.5.2; the 60-day disclosure pulled and parsed. Evening of 2026-10-06: `core.hourly_award` and `session.injections` (awards balance to a few MW a day). 2026-10-28: `checks/flows.py` on every day with awards and a model; one-bus combined-cycle trains placed from `Gn` |
-| M6 | CRR ↔ DAM matching + scorecard | matchers for branches, buses and contingencies with `match_method` and unmatched rows (`session.match_*`); `scripts/measure_identity.py` reports their rates. 2026-09-24: `prefix+x` tie-break by reactance, `core.diff_branch`, `core.settlement_point[_node]`, `core.diff_settlement_point`. Not yet: `diff_bus`/`diff_contingency`, `subset` contingency method, scorecard |
+| M6 | CRR ↔ DAM matching + scorecard | matchers for branches, buses and contingencies with `match_method` and unmatched rows (`session.match_*`); `checks/identity.py` reports their rates. 2026-09-24: `prefix+x` tie-break by reactance, `core.diff_branch`, `core.settlement_point[_node]`, `core.diff_settlement_point`. Not yet: `diff_bus`/`diff_contingency`, `subset` contingency method, scorecard |
 | M7 | `shift_factors` (restricted float32 PTDF/LODF, cache budget, cross-test vs `ftr_align.network.compute_ptdf`) | 2026-10-01: `ercot_mis.out.shift_factors` (sparse factorization, re-solve per contingency), used by the check scripts. The dense PTDF/LODF cache is on hold with the research |
 | M8 | scheduled pulls (Python files), docs, first release | 2026-10-06: `demo/tour.ipynb` is the walkthrough; the pull logs what is at risk |
 

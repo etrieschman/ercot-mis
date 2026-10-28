@@ -1,7 +1,7 @@
 # Identity and matching across CRR and DAM models
 
 How nodes, buses, branches, contingencies and constraints are identified within a model and
-matched across models. Numbers are deliberately absent: `scripts/measure_identity.py`
+matched across models. Numbers are deliberately absent: `checks/identity.py`
 measures everything stated here on real packages and writes a dated JSON report to
 `data/reports/identity/`. Re-run it when a new CRR month or DAM day arrives; if a
 statement below stops being true, change the code and the note together.

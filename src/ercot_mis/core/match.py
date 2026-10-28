@@ -47,7 +47,7 @@ COLUMNS = ("crr_branch_id", "dam_branch_id", "match_method", "operations_name", 
 # The DAM model clamps every branch reactance to at least this (per unit): CRR bus ties
 # (|x| = 0.0001) and short branches below it appear in DAM at exactly the floor.
 DAM_REACTANCE_FLOOR = 5e-4
-REACTANCE_TOLERANCE = 0.01  # relative; measured on real packages by scripts/measure_identity.py
+REACTANCE_TOLERANCE = 0.01  # relative; measured on real packages by checks/identity.py
 
 
 def reactance_agrees(crr_x: pl.Expr, dam_x: pl.Expr, tolerance: float = REACTANCE_TOLERANCE) -> pl.Expr:

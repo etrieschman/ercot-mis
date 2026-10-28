@@ -1,6 +1,6 @@
 """What a snapshot's core tables carry and what they lack: counts, nothing else.
 
-The viewer shows these beside each model and ``scripts/measure_identity.py`` records
+The viewer shows these beside each model and ``checks/identity.py`` records
 them, so a sparse table is seen as a fact about the source rather than mistaken for a
 bug. Every value is a count; a key says what is counted. The DAM RAW gives every load
 0 MW (the DAM distributes load through its distribution factors), so ``loads_with_mw``
