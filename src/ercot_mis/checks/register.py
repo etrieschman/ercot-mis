@@ -181,7 +181,8 @@ def rate_b_against_crr_emergency(m: Models) -> dict:
     crr = m.core("branch_rating", m.crr).filter((pl.col("rating_source") == "crr_monitored") & (pl.col("time_of_use") == "PeakWD"))
     dam = m.core("branch_rating", m.dam).filter(pl.col("rating_source") == "psse_raw")
     both = (pairs.join(crr.select(pl.col("branch_id").alias("crr_branch_id"), pl.col("emergency_mw").alias("crr_emergency")), on="crr_branch_id")
-            .join(dam.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("emergency_mw").alias("dam_rate_b"), pl.col("base_mw").alias("dam_rate_a")), on="dam_branch_id")
+            .join(dam.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("emergency_mw").alias("dam_rate_b"),
+                             pl.col("base_mw").alias("dam_rate_a")), on="dam_branch_id")
             .filter(pl.col("crr_emergency") > 0))
     return {"matched_with_both_ratings": both.height,
             "rate_b_within_1_mw": int(((both["dam_rate_b"] - both["crr_emergency"]).abs() <= 1).sum()),
@@ -271,7 +272,8 @@ def contingency_matching(m: Models) -> dict:
 @measures("NAM-10")
 def dam_branch_names(m: Models) -> dict:
     """DAM line and transformer names join the RAW on (from, to, circuit) as written: rows that only join the other way round."""
-    raw = pl.concat([m.raw("psse_branch", m.dam).select("i", "j", pl.col("ckt").str.strip_chars()), m.raw("psse_transformer", m.dam).select("i", "j", pl.col("ckt").str.strip_chars())])
+    raw = pl.concat([m.raw("psse_branch", m.dam).select("i", "j", pl.col("ckt").str.strip_chars()), m.raw("psse_transformer",
+                                                                                                          m.dam).select("i", "j", pl.col("ckt").str.strip_chars())])
     csv = pl.concat([m.raw(t, m.dam).select(pl.col("psse_from_bus_number").cast(pl.Int64).alias("i"), pl.col("psse_to_bus_number").cast(pl.Int64).alias("j"),
                                             pl.col("psse_ckt_id").str.strip_chars().alias("ckt")) for t in ("dam_lines", "dam_transformers")])
     raw = raw.with_columns(pl.col("i").cast(pl.Int64), pl.col("j").cast(pl.Int64))
@@ -304,7 +306,8 @@ def weights_sum_to_one(m: Models) -> dict:
 def point_kinds(m: Models) -> dict:
     """CRR kinds from name prefixes; DAM DC-tie points placed through their zone's loads."""
     crr = m.core("settlement_point", m.crr)
-    dam = m.core("settlement_point_bus", m.dam).join(m.core("settlement_point", m.dam).filter(pl.col("kind") == "dc_tie").select("settlement_point_id"), on="settlement_point_id")
+    dam = m.core("settlement_point_bus", m.dam).join(m.core("settlement_point",
+                                                            m.dam).filter(pl.col("kind") == "dc_tie").select("settlement_point_id"), on="settlement_point_id")
     return {"crr_by_kind": dict(crr.group_by("kind").len().sort("kind").rows()),
             "dam_dc_ties_by_source": dict(dam.group_by("settlement_point_id", "source").len().group_by("source").len().sort("source").rows())}
 
@@ -312,7 +315,8 @@ def point_kinds(m: Models) -> dict:
 @measures("SP-09")
 def load_status(m: Models) -> dict:
     """DAM load service status: the RAW's status against the ``Ld`` file's, for the same load."""
-    raw = m.raw("psse_load", m.dam).select(pl.col("i").cast(pl.Int64).alias("bus"), pl.col("id").str.strip_chars().alias("id"), (pl.col("status") == 1).alias("raw_in"))
+    raw = m.raw("psse_load", m.dam).select(pl.col("i").cast(pl.Int64).alias("bus"), pl.col("id").str.strip_chars().alias("id"),
+                                           (pl.col("status") == 1).alias("raw_in"))
     csv = m.raw("dam_loads", m.dam).select(pl.col("psse_bus_number").cast(pl.Int64).alias("bus"), pl.col("psse_load_id").str.strip_chars().alias("id"),
                                            pl.col("load_status").str.to_uppercase().str.starts_with("IN").alias("csv_in"))
     both = raw.join(csv, on=["bus", "id"])

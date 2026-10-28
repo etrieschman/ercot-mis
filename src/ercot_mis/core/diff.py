@@ -83,7 +83,8 @@ def diff_settlement_points(crr_points: pl.DataFrame, crr_point_nodes: pl.DataFra
     dam = dam_point_nodes.filter(pl.col("is_resolved")).select("settlement_point_id", "bus_key", pl.col("weight").alias("_w_dam"))
     both = (crr_points.select("settlement_point_id", pl.col("kind").alias("crr_kind"))
             .join(dam_points.select("settlement_point_id", pl.col("kind").alias("dam_kind")), on="settlement_point_id", how="inner"))
-    crr_counts = crr.group_by("settlement_point_id").agg(pl.len().cast(pl.UInt32).alias("n_crr_buses"), pl.col("bus_key").is_null().sum().cast(pl.UInt32).alias("n_crr_buses_unmatched"))
+    crr_counts = crr.group_by("settlement_point_id").agg(pl.len().cast(pl.UInt32).alias("n_crr_buses"),
+                                                         pl.col("bus_key").is_null().sum().cast(pl.UInt32).alias("n_crr_buses_unmatched"))
     dam_counts = dam.group_by("settlement_point_id").agg(pl.len().cast(pl.UInt32).alias("n_dam_buses"))
     shared = (crr.filter(pl.col("bus_key").is_not_null()).join(dam, on=["settlement_point_id", "bus_key"], how="inner")
               .group_by("settlement_point_id").agg(pl.len().cast(pl.UInt32).alias("n_shared_buses"), pl.col("_w_crr").sum().alias("shared_weight_crr"),

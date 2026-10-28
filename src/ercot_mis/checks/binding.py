@@ -66,7 +66,8 @@ def resolve(session, snapshot_id: str, net: Network, system: DcSystem, shadow: p
     substation = dict(net.nodes.select("index", name_key(pl.col("substation"))).rows())
     kv = dict(net.nodes.select("index", "kv").rows())
     branch_of = {k: (j, f, t) for k, j, f, t in net.branches.select(name_key(pl.col("branch_id")), "index", "from_index", "to_index").rows()}
-    ctg = net.contingencies.select(name_key(pl.col("contingency_id")).alias("k"), "branch_indexes", "split_branch_indexes", "split_ends", "n_unresolved", "n_dropped")
+    ctg = net.contingencies.select(name_key(pl.col("contingency_id")).alias("k"), "branch_indexes", "split_branch_indexes", "split_ends",
+                                   "n_unresolved", "n_dropped")
     outaged = {k: b for k, b in ctg.select("k", "branch_indexes").rows()}
     splits = {k: list(zip(i, e)) for k, i, e in ctg.select("k", "split_branch_indexes", "split_ends").rows() if i}
     partial = {k for k, u, d in ctg.select("k", "n_unresolved", "n_dropped").rows() if u or d}

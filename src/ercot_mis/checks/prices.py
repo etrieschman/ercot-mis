@@ -51,7 +51,8 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     point_ids = points_frame["settlement_point_id"].to_list()
 
     # ERCOT's own list of the settlement points each contingency cuts off (SpCtg), to compare with ours (NAM-07).
-    spctg = session.raw_rows("dam_settlement_point_contingencies", snapshot_id).select(name_key(pl.col("contingency_name")).alias("ctg"), "settlement_point_name")
+    spctg = session.raw_rows("dam_settlement_point_contingencies", snapshot_id).select(name_key(pl.col("contingency_name")).alias("ctg"),
+                                                                                       "settlement_point_name")
     ercot_cut = {ctg: set(g["settlement_point_name"]) for (ctg,), g in spctg.group_by("ctg")}
     cut_lists = {"binding_contingencies_compared": 0, "binding_contingencies_ercot_lists_none": 0, "agree": 0, "only_ours": 0, "only_ercot": 0}
     compared: set[str] = set()
@@ -119,7 +120,8 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     result["residual_when_every_row_applied"] = result["residual"] if share == 1.0 else None
     result["binding_rows_by_limit_flags"] = dict(sorted(by_flags.items()))
     result["system_price"] = {"source": "published" if system_price is not None else "fitted_median",
-                              "fitted_median_minus_published": round(float(np.median(observed + points["c"].to_numpy()) - system_price), 3) if system_price is not None else None}
+                              "fitted_median_minus_published": round(float(np.median(observed + points["c"].to_numpy()) - system_price),
+                                                                     3) if system_price is not None else None}
     hist, edges = np.histogram(residual, bins=RESIDUAL_BINS)
     result["residual_histogram"] = {f"<{e:g}": int(h) for h, e in zip(hist, edges[1:])}
     by_kind = points.with_columns(pl.Series("r", resid)).group_by("kind").agg(
@@ -131,7 +133,8 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     trains = session.core_rows("settlement_point", snapshot_id).filter(pl.col("type_text") == "Logical Resource Node").select("settlement_point_id", "n_buses")
     on_buses = points.select("settlement_point_id").with_row_index("i").join(trains, on="settlement_point_id")
     result["logical_resource_nodes"] = {label: _summary(resid[group["i"].to_numpy()], within=0.01)
-                                        for label, group in (("one_bus", on_buses.filter(pl.col("n_buses") == 1)), ("several_buses", on_buses.filter(pl.col("n_buses") > 1)))}
+                                        for label, group in (("one_bus", on_buses.filter(pl.col("n_buses") == 1)), ("several_buses",
+                                                                                                                    on_buses.filter(pl.col("n_buses") > 1)))}
 
     # Points with a bus some binding contingency cuts off, against the rest: under PRC-03 and under plain weights.
     cut = weights.with_columns(pl.Series("cut", cut_off_mu[weights["node_index"].to_numpy()] > 0)).group_by("settlement_point_id").agg(pl.col("cut").any())

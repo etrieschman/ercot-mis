@@ -107,7 +107,8 @@ def dam_settlement_points(nodes: pl.DataFrame, settlement_points: pl.DataFrame, 
     points = sp.select("settlement_point_id", _kind_from_type(pl.col("type_text")).alias("kind"), "type_text").unique(subset=["settlement_point_id"])
     direct = _dam_resource_nodes(sp, points, generators)
     zones = _dam_zones(loads, points).filter(~pl.col("settlement_point_id").is_in(direct["settlement_point_id"].implode()))  # a DC tie with a bus of its own keeps it
-    rows = pl.concat([direct, _dam_hubs(hub_buses, points), zones], how="diagonal_relaxed").join(nodes.select("node_number", "bus_key"), on="node_number", how="left")
+    rows = pl.concat([direct, _dam_hubs(hub_buses, points), zones], how="diagonal_relaxed").join(nodes.select("node_number", "bus_key"),
+                                                                                                 on="node_number", how="left")
     # A settlement point with no row at all (a hub without Hb rows, a zone without loads) still appears, unresolved.
     missing = points.filter(~pl.col("settlement_point_id").is_in(rows["settlement_point_id"].implode())).select(
         "settlement_point_id", pl.lit(None, pl.Int64).alias("node_number"), pl.lit(None, pl.Float64).alias("raw_weight"),
@@ -162,7 +163,8 @@ def _dam_hubs(hub_buses: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
     for name in (n for n in hub_names if n not in set(real["settlement_point_id"]) and n.upper().endswith("AVG")):
         if "BUS" in name.upper():
             parts.append(regional.with_columns(pl.col("_hub_bus").n_unique().alias("_all_hub_buses"))
-                         .select(pl.lit(name).alias("settlement_point_id"), "node_number", (1.0 / pl.col("_all_hub_buses") / pl.col("_in_hub_bus")).alias("raw_weight")))
+                         .select(pl.lit(name).alias("settlement_point_id"), "node_number",
+                                 (1.0 / pl.col("_all_hub_buses") / pl.col("_in_hub_bus")).alias("raw_weight")))
         else:
             parts.append(regional.with_columns(pl.col("settlement_point_id").n_unique().alias("_hubs"))
                          .select(pl.lit(name).alias("settlement_point_id"), "node_number", (pl.col("raw_weight") / pl.col("_hubs")).alias("raw_weight")))
@@ -191,7 +193,8 @@ def _dam_zones(loads: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
         rolling.select(pl.col("load_zone_name").cast(pl.String).alias("settlement_point_id"), pl.col(name).cast(pl.String).alias("_target"),
                        (pl.col("raw_mw_ldf").cast(pl.Float64) * pl.col(fraction).cast(pl.Float64)).alias("raw_weight"))
         for name, fraction in targets]).filter(pl.col("_target").is_not_null() & (pl.col("raw_weight") > 0))
-    rolled = rolled.join(receivers, on="_target", how="inner").select("settlement_point_id", "node_number", "raw_weight", pl.lit("dam_loads_rollover").alias("source"))
+    rolled = rolled.join(receivers, on="_target", how="inner").select("settlement_point_id", "node_number", "raw_weight",
+                                                                      pl.lit("dam_loads_rollover").alias("source"))
     return pl.concat([zones, rolled])
 
 

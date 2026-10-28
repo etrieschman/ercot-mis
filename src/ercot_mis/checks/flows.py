@@ -90,7 +90,8 @@ def node_injections(net: Network, q: pl.DataFrame) -> tuple[np.ndarray, dict]:
     rows = (q.join(net.settlement_points.select(pl.col("settlement_point_id").alias("settlement_point"), "kind", "n_nodes"), on="settlement_point", how="left")
             .with_columns(pl.col("kind").fill_null("not_in_model"), pl.col("n_nodes").fill_null(0)))
     placed, unplaced = rows.filter(pl.col("n_nodes") > 0), rows.filter(pl.col("n_nodes") == 0)
-    spread = placed.select("settlement_point", "net_mw").join(net.settlement_point_nodes.rename({"settlement_point_id": "settlement_point"}), on="settlement_point")
+    spread = placed.select("settlement_point",
+                           "net_mw").join(net.settlement_point_nodes.rename({"settlement_point_id": "settlement_point"}), on="settlement_point")
     x = np.zeros(net.n_nodes)
     np.add.at(x, spread["node_index"].to_numpy(), (spread["net_mw"] * spread["weight"]).to_numpy())
     by_kind = unplaced.group_by("kind").agg(pl.len().alias("points"), pl.col("net_mw").sum().round(1).alias("net_mw"),

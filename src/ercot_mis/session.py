@@ -441,7 +441,8 @@ class Session:
         from .core import diff
 
         def compute() -> pl.DataFrame:
-            return diff.diff_loads(self.core_rows("load", crr_snapshot_id), self.core_rows("load", dam_snapshot_id), self.match_buses(crr_snapshot_id, dam_snapshot_id))
+            return diff.diff_loads(self.core_rows("load", crr_snapshot_id), self.core_rows("load", dam_snapshot_id),
+                                   self.match_buses(crr_snapshot_id, dam_snapshot_id))
 
         return self._pair("diff_load", diff.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
 

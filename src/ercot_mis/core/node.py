@@ -100,7 +100,8 @@ def dam_nodes(bus: pl.DataFrame, lines: pl.DataFrame, transformers: pl.DataFrame
     nodes = bus.select(pl.col("i").alias("node_number"), pl.col("name").map_elements(_norm, return_dtype=pl.String).alias("raw_name"),
                        pl.col("basekv").alias("kv"), pl.col("ide").alias("node_type"))
     nodes = _keys(nodes, attachments, "node_number")
-    return nodes.with_columns(pl.col("node_number").alias("bus_group"), pl.lit(False).alias("is_tie_member"), pl.col("raw_name").alias("substation")).select(COLUMNS).sort("node_number")
+    return nodes.with_columns(pl.col("node_number").alias("bus_group"), pl.lit(False).alias("is_tie_member"),
+                              pl.col("raw_name").alias("substation")).select(COLUMNS).sort("node_number")
 
 
 def tie_groups(branch: pl.DataFrame, tie_reactance: float = TIE_REACTANCE) -> pl.DataFrame:

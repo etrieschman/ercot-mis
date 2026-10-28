@@ -23,7 +23,8 @@ def check(session, day: date, hour: int) -> dict:
     model = (ld.filter(pl.col("load_status").str.to_uppercase().str.starts_with("IN"))
              .group_by(pl.col("station_name_psse_bus_name").str.to_uppercase().alias("substation"), pl.col("load_zone_name").alias("zone"))
              .agg(pl.col("raw_mw_ldf").sum().alias("model_mw")))
-    zone_of = model.sort("model_mw", descending=True).unique(subset=["substation"], keep="first").select("substation", "zone")  # SP-02: a substation in two zones counts in its larger one
+    zone_of = model.sort("model_mw", descending=True).unique(subset=["substation"], keep="first").select("substation",
+                                                                                                         "zone")  # SP-02: a substation in two zones counts in its larger one
     model = model.group_by("substation").agg(pl.col("model_mw").sum()).join(zone_of, on="substation")
     published = ldf.group_by(pl.col("substation").str.to_uppercase().alias("substation")).agg(pl.col("distribution_factor").sum().alias("published"))
     both = (model.join(published, on="substation", how="inner")
@@ -35,7 +36,8 @@ def check(session, day: date, hour: int) -> dict:
         "model_substations": model.height, "published_substations": published.height, "matched_substations": both.height,
         "model_mw_total": round(float(model["model_mw"].sum()), 1), "model_mw_matched": round(float(both["model_mw"].sum()), 1),
         "published_total": round(float(published["published"].sum()), 1), "published_matched": round(float(both["published"].sum()), 1),
-        "share_abs_diff": {"p50": round(float(both["diff"].median()), 5), "p90": round(float(both["diff"].quantile(0.9)), 5), "max": round(float(both["diff"].max()), 5)},
+        "share_abs_diff": {"p50": round(float(both["diff"].median()), 5), "p90": round(float(both["diff"].quantile(0.9)), 5),
+                           "max": round(float(both["diff"].max()), 5)},
         "substations_where_shares_differ_over_1pct": int((both["diff"] > 0.01).sum()),
         "largest_share_difference_by_zone": {z: round(float(g["diff"].max()), 5) for (z,), g in both.group_by("zone")},
     }

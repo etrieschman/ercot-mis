@@ -49,7 +49,8 @@ TABLES: dict[str, tuple[Column, ...]] = {
     "heuristic_pricing_associations": (Column("MarketType"), Column("FromEBName", name="from_electrical_bus"),
                                        Column("ToEBName", name="to_electrical_bus"), Column("Type"), Column("Priority", I)),
     "load_distribution_factors": (Column("LdfDate", name="ldf_date"), Column("LdfHour", name="ldf_hour"), Column("SubStation", name="substation"),
-                                  Column("DistributionFactor", F), Column("LoadID", name="load_id"), Column("MVARDistributionFactor", F, "mvar_distribution_factor"),
+                                  Column("DistributionFactor", F), Column("LoadID", name="load_id"), Column("MVARDistributionFactor", F,
+                                                                                                            "mvar_distribution_factor"),
                                   Column("MRIDLoad", name="mrid_load"), _DST),
 }
 

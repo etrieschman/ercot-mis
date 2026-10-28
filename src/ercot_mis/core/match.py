@@ -108,7 +108,8 @@ def match_branches(crr_branch: pl.DataFrame, mapping_lines: pl.DataFrame, mappin
         several = (prefix.filter(pl.col("n_candidates") > 1).select("crr_branch_id", pl.col("_cands").alias("dam_branch_id")).explode("dam_branch_id")
                    .filter(~pl.col("dam_branch_id").is_in(taken.implode()))
                    .join(crr_branch.select(pl.col("branch_id").alias("crr_branch_id"), pl.col("x_pu").alias("_cx")), on="crr_branch_id")
-                   .join(dam_branch.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("x_pu").alias("_dx")).unique(subset=["dam_branch_id"]), on="dam_branch_id")
+                   .join(dam_branch.select(pl.col("branch_id").alias("dam_branch_id"),
+                                           pl.col("x_pu").alias("_dx")).unique(subset=["dam_branch_id"]), on="dam_branch_id")
                    .filter(reactance_agrees(pl.col("_cx"), pl.col("_dx")))
                    .group_by("crr_branch_id").agg(pl.col("dam_branch_id")).filter(pl.col("dam_branch_id").list.len() == 1)
                    .with_columns(pl.col("dam_branch_id").list.first()))
@@ -169,8 +170,10 @@ def match_buses(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl
 
     # Endpoint votes from matched branches.
     ends = (branch_matches.filter(pl.col("match_method") != "unmatched").select("crr_branch_id", "dam_branch_id")
-            .join(crr_branch.select(pl.col("branch_id").alias("crr_branch_id"), pl.col("from_bus_key").alias("cf"), pl.col("to_bus_key").alias("ct")), on="crr_branch_id")
-            .join(dam_branch.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("from_bus_key").alias("df"), pl.col("to_bus_key").alias("dt")), on="dam_branch_id"))
+            .join(crr_branch.select(pl.col("branch_id").alias("crr_branch_id"), pl.col("from_bus_key").alias("cf"),
+                                    pl.col("to_bus_key").alias("ct")), on="crr_branch_id")
+            .join(dam_branch.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("from_bus_key").alias("df"),
+                                    pl.col("to_bus_key").alias("dt")), on="dam_branch_id"))
     votes = pl.concat([ends.select(pl.col("cf").alias("crr_bus_key"), pl.col("df").alias("dam_bus_key")),
                        ends.select(pl.col("ct").alias("crr_bus_key"), pl.col("dt").alias("dam_bus_key")),
                        ends.select(pl.col("cf").alias("crr_bus_key"), pl.col("dt").alias("dam_bus_key")),
@@ -180,8 +183,10 @@ def match_buses(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl
     votes = votes.filter(~pl.col("crr_bus_key").is_in(taken_crr) & ~pl.col("dam_bus_key").is_in(taken_dam))
     best_crr = votes.group_by("crr_bus_key").agg(pl.col("n_votes").max().alias("_max_c"), pl.len().alias("n_candidates"))
     best_dam = votes.group_by("dam_bus_key").agg(pl.col("n_votes").max().alias("_max_d"))
-    degree_crr = pl.concat([ends.select(pl.col("cf").alias("k")), ends.select(pl.col("ct").alias("k"))]).group_by("k").len().rename({"k": "crr_bus_key", "len": "_deg_c"})
-    degree_dam = pl.concat([ends.select(pl.col("df").alias("k")), ends.select(pl.col("dt").alias("k"))]).group_by("k").len().rename({"k": "dam_bus_key", "len": "_deg_d"})
+    degree_crr = pl.concat([ends.select(pl.col("cf").alias("k")),
+                            ends.select(pl.col("ct").alias("k"))]).group_by("k").len().rename({"k": "crr_bus_key", "len": "_deg_c"})
+    degree_dam = pl.concat([ends.select(pl.col("df").alias("k")),
+                            ends.select(pl.col("dt").alias("k"))]).group_by("k").len().rename({"k": "dam_bus_key", "len": "_deg_d"})
     scored = (votes.join(best_crr, on="crr_bus_key").join(best_dam, on="dam_bus_key")
               .join(degree_crr, on="crr_bus_key").join(degree_dam, on="dam_bus_key")
               .filter((pl.col("n_votes") == pl.col("_max_c")) & (pl.col("n_votes") == pl.col("_max_d"))
@@ -268,4 +273,5 @@ def match_contingencies(crr_outages: pl.DataFrame, dam_outages: pl.DataFrame, br
         pl.lit(None, pl.String).alias("crr_contingency_id"), pl.col("contingency_id").alias("dam_contingency_id"),
         pl.lit("unmatched").alias("match_method"), pl.lit(0, pl.UInt32).alias("n_crr_branches"), pl.col("branches").list.len().cast(pl.UInt32).alias("n_dam_branches"),
         pl.lit(0, pl.UInt32).alias("n_shared_branches"), pl.col("n_dam_other_rows").cast(pl.UInt32), "has_split_bus", pl.lit(0, pl.UInt32).alias("n_candidates"))
-    return _registered(pl.concat([matched, rest, dam_rest]).select(CONTINGENCY_COLUMNS).sort("match_method", "crr_contingency_id", "dam_contingency_id"), "match_contingency")
+    return _registered(pl.concat([matched, rest, dam_rest]).select(CONTINGENCY_COLUMNS).sort("match_method", "crr_contingency_id",
+                                                                                             "dam_contingency_id"), "match_contingency")

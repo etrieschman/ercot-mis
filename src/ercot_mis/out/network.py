@@ -375,7 +375,8 @@ def _gtcs(core: CoreTables, kept: pl.DataFrame, branches: pl.DataFrame) -> tuple
                .join(reversed_names, on="branch_id", how="left")
                .with_columns(pl.col("is_name_reversed").fill_null(False))
                .with_columns((pl.col("factor") * sign).alias("factor"), pl.col("branch_index").is_not_null().alias("_in")))
-    counts = members.group_by("gtc_id").agg(pl.col("_in").sum().cast(pl.UInt32).alias("n_members"), (~pl.col("_in")).sum().cast(pl.UInt32).alias("n_unresolved"))
+    counts = members.group_by("gtc_id").agg(pl.col("_in").sum().cast(pl.UInt32).alias("n_members"),
+                                            (~pl.col("_in")).sum().cast(pl.UInt32).alias("n_unresolved"))
     gtcs = (core.gtc.select("gtc_id", "source", "limit_mw", "crr_gtc_id").join(counts, on="gtc_id", how="left")
             .with_columns(pl.col("n_members").fill_null(0), pl.col("n_unresolved").fill_null(0))
             .select("gtc_id", "source", "limit_mw", "n_members", "n_unresolved", "crr_gtc_id").sort("gtc_id"))

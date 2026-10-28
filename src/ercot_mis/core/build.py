@@ -64,7 +64,8 @@ def build(session, *, limit: int | None = None) -> list[dict]:
     if limit is not None:
         packages = packages.head(limit)
     for emil_id, blob, doc_id in packages.rows():
-        record = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob, "status": "skipped", "tables": len(TABLES), "rows": None, "seconds": 0.0, "error": None}
+        record = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob, "status": "skipped", "tables": len(TABLES), "rows": None,
+                  "seconds": 0.0, "error": None}
         package = snaps.filter(pl.col("blob_sha256") == blob)
         gtl = gtl_days.get(package["operating_date"][0], (pl.DataFrame(schema=GTL_SCHEMA), None)) if emil_id == DAM_PRODUCT else None
         identity = f"{core_id()}|{package_inputs(session, emil_id, package, gtl[1] if gtl else None)}"
@@ -83,7 +84,8 @@ def build(session, *, limit: int | None = None) -> list[dict]:
             results.append({**record, "status": "failed", "error": f"{type(error).__name__}: {error}"})
             continue
         if not tables:  # every month filtered out: remember that, or it is rebuilt every run
-            session.record_artifacts(run_id, LAYER, emil_id, blob, identity, [(none_key, raw_build.Written(raw_build.NONE, Path(raw_build.NONE), 0, 0, ()), Path(raw_build.NONE))])
+            session.record_artifacts(run_id, LAYER, emil_id, blob, identity, [(none_key, raw_build.Written(raw_build.NONE,
+                                                                                                           Path(raw_build.NONE), 0, 0, ()), Path(raw_build.NONE))])
             results.append({**record, "status": "built", "tables": 0, "rows": 0})
             continue
         placed = [(keys[t], _write(frame, session.data_dir / rels[t], tmp_dir, t), rels[t]) for t, frame in tables.items()]
@@ -181,7 +183,8 @@ def build_awards(session, existing: set[str], tmp_dir: Path, run_id: str) -> lis
         blob = package["sha256"]
         key = raw_build.artifact_key(identity, blob, "hourly_award")
         rel = Path(LAYER) / "hourly_award" / f"emil_id={product}" / f"{blob[:16]}.parquet"
-        record = {"emil_id": product, "doc_id": package["doc_id"], "blob_sha256": blob, "status": "skipped", "tables": 1, "rows": None, "seconds": 0.0, "error": None}
+        record = {"emil_id": product, "doc_id": package["doc_id"], "blob_sha256": blob, "status": "skipped", "tables": 1, "rows": None,
+                  "seconds": 0.0, "error": None}
         if key in existing and (session.data_dir / rel).is_file():
             results.append(record)
             continue

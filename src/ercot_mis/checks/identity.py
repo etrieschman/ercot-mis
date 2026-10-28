@@ -181,7 +181,8 @@ def crr_internal(C: dict[str, pl.DataFrame], r: Report) -> None:
          tag_unmatched=len(names(lines, "crr_tag") - line_names), ops_distinct=lines["operations_name"].n_unique(),
          ops_shared_by_many_tags=ops_dupes.height, max_tags_per_ops=int(ops_dupes["len"].max()) if ops_dupes.height else 0,
          from_to_numeric=int((with_numbers["f"].is_not_null() & with_numbers["t"].is_not_null()).sum()),
-         key_in_raw=len(either(keys(with_numbers.filter(pl.col("f").is_not_null() & pl.col("t").is_not_null()), "f", "t", "circuit_id")) & keys(br, "i", "j", "ckt")),
+         key_in_raw=len(either(keys(with_numbers.filter(pl.col("f").is_not_null() & pl.col("t").is_not_null()), "f", "t",
+                                    "circuit_id")) & keys(br, "i", "j", "ckt")),
          raw_branches_without_tag=br.height - len(line_names & names(lines, "crr_tag")),
          tag_patterns=patterns(lines["crr_tag"].to_list()), ops_patterns=patterns(lines["operations_name"].to_list()))
     with_numbers = autos.with_columns(numeric("from_number").alias("f"), numeric("to_number").alias("t"))
@@ -210,7 +211,8 @@ def dam_internal(D: dict[str, pl.DataFrame], r: Report) -> None:
          raw_x_below_1e3=int((br["x"].abs() < 1e-3).sum()), raw_x_negative=int((br["x"] < 0).sum()),
 
          branch_name_distinct=ln["branch_name"].n_unique(), name_patterns=patterns(ln["branch_name"].to_list()),
-         from_station_eq_raw_bus_name=sum(1 for b, s in zip(ln["psse_from_bus_number"].to_list(), ln["from_station_name_psse_bus_name"].to_list()) if bus_name.get(b) == norm(s)))
+         from_station_eq_raw_bus_name=sum(1 for b, s in zip(ln["psse_from_bus_number"].to_list(),
+                                                            ln["from_station_name_psse_bus_name"].to_list()) if bus_name.get(b) == norm(s)))
     r.show("transformers", csv_rows=dx.height, raw_rows=xf.height, key_match=len(xf_keys & keys(xf, "i", "j", "ckt")),
          raw_out_of_service=int((xf["stat"] != 1).sum()), name_patterns=patterns(dx["branch_name"].to_list()))
     for label, frame in (("lines", ln), ("transformers", dx)):
@@ -340,7 +342,8 @@ def node_identity(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
              ambiguous_a=int(a["is_ambiguous"].sum()), no_attachments_a=int((a["n_attachments"] == 0).sum()))
 
     here = dam_keys(D)
-    compare(f"DAM hour {hour} vs next hour", here, dam_keys(tables(session, latest(snaps, operating_date=dam["operating_date"], hour=hour + 1 if hour < 24 else hour - 1), names)))
+    compare(f"DAM hour {hour} vs next hour", here, dam_keys(tables(session, latest(snaps, operating_date=dam["operating_date"],
+                                                                                   hour=hour + 1 if hour < 24 else hour - 1), names)))
     oldest_day = snaps.filter(pl.col("model_kind") == "dam")["operating_date"].min()
     if oldest_day != dam["operating_date"]:
         compare("DAM vs the oldest archived day", here, dam_keys(tables(session, latest(snaps, operating_date=oldest_day, hour=hour), names)))
@@ -359,8 +362,10 @@ def node_identity(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
          ambiguous=int(crr["is_ambiguous"].sum()), no_attachments=int((crr["n_attachments"] == 0).sum()))
     months = snaps.filter((pl.col("model_kind") == "crr_monthly") & (pl.col("month") != crr_snap["month"]))["month"]
     if months.len():
-        other = tables(session, latest(snaps, model_kind="crr_monthly", month=months.max()), ("psse_bus", "psse_branch", "psse_transformer", "crr_mapping_autos", "crr_sources_and_sinks"))
-        other_nodes = node.crr_nodes(other["psse_bus"], other["psse_branch"], other["psse_transformer"], other["crr_mapping_autos"], other["crr_sources_and_sinks"])
+        other = tables(session, latest(snaps, model_kind="crr_monthly", month=months.max()), ("psse_bus", "psse_branch", "psse_transformer",
+                                                                                              "crr_mapping_autos", "crr_sources_and_sinks"))
+        other_nodes = node.crr_nodes(other["psse_bus"], other["psse_branch"], other["psse_transformer"], other["crr_mapping_autos"],
+                                     other["crr_sources_and_sinks"])
         ka, kb = set(crr["bus_key"]), set(other_nodes["bus_key"])
         r.show("CRR nodes vs another month", nodes_a=crr["bus_group"].n_unique(), nodes_b=other_nodes["bus_group"].n_unique(), keys_shared=len(ka & kb))
 
@@ -371,7 +376,8 @@ def matching(session, crr_id: str, dam_id: str, r: Report) -> None:
     for name, frame, left, right in (("branches", session.match_branches(crr_id, dam_id), "crr_branch_id", "dam_branch_id"),
                                      ("nodes", session.match_buses(crr_id, dam_id), "crr_bus_key", "dam_bus_key"),
                                      ("contingencies", session.match_contingencies(crr_id, dam_id), "crr_contingency_id", "dam_contingency_id")):
-        counts = frame.group_by("match_method").agg(pl.len().alias("n"), pl.col(left).is_not_null().sum().alias("crr"), pl.col(right).is_not_null().sum().alias("dam")).sort("match_method")
+        counts = frame.group_by("match_method").agg(pl.len().alias("n"), pl.col(left).is_not_null().sum().alias("crr"),
+                                                    pl.col(right).is_not_null().sum().alias("dam")).sort("match_method")
         r.show(name, **{f"{m}": f"{n} (crr {c}, dam {d})" for m, n, c, d in counts.rows()})
     ctg = session.match_contingencies(crr_id, dam_id).filter(pl.col("match_method") == "name")
     r.show("name-matched contingencies", n=ctg.height, identical_branch_sets=int(((ctg["n_shared_branches"] == ctg["n_crr_branches"]) & (ctg["n_crr_branches"] == ctg["n_dam_branches"])).sum()),
@@ -411,7 +417,8 @@ def matching(session, crr_id: str, dam_id: str, r: Report) -> None:
          crr_ties_matched=int(pairs["is_tie"].fill_null(False).sum()),
          crr_ties_matched_to_dam_floor=int((pairs["is_tie"].fill_null(False) & (pairs["dam_x_pu"].abs() == match.DAM_REACTANCE_FLOOR)).sum()),
          crr_x_below_floor=int((pairs["crr_x_pu"].abs() < match.DAM_REACTANCE_FLOOR).sum()))
-    r.show("  reactance agreement by method", **{m: f"{ok} of {n}" for m, ok, n in pairs.group_by("match_method").agg(pl.col("same_reactance").sum(), pl.len()).sort("match_method").rows()})
+    r.show("  reactance agreement by method", **{m: f"{ok} of {n}" for m, ok,
+                                                 n in pairs.group_by("match_method").agg(pl.col("same_reactance").sum(), pl.len()).sort("match_method").rows()})
     both = pairs.filter(pl.col("crr_enforced") & pl.col("dam_enforced") & pl.col("crr_base_mw").is_not_null() & (pl.col("dam_base_mw") > 0))
     ratio = both["crr_base_mw"] / both["dam_base_mw"]
     r.show("  enforced on both sides: CRR base over DAM rate A", n=both.height, quantiles=[round(ratio.quantile(q), 3) for q in (0.05, 0.25, 0.5, 0.75, 0.95)],
@@ -435,11 +442,13 @@ def coverage_section(session, crr_id: str, dam_id: str, r: Report) -> None:
     """What each model carries (core.coverage), and the matched and unmatched counts of the pair."""
     r.section("coverage")
     for label, sid in (("crr", crr_id), ("dam", dam_id)):
-        rows = {t: session.core_rows(t, sid) for t in ("node", "branch", "branch_rating", "load", "settlement_point", "settlement_point_bus", "contingency_outage")}
+        rows = {t: session.core_rows(t, sid) for t in ("node", "branch", "branch_rating", "load", "settlement_point",
+                                                       "settlement_point_bus", "contingency_outage")}
         counts = coverage.snapshot_coverage(rows["node"], rows["branch"], rows["branch_rating"], rows["load"], rows["settlement_point"],
                                             rows["settlement_point_bus"], rows["contingency_outage"], session.network(sid).branches)
         r.show(label, snapshot_id=sid, **counts)
-    r.show("pair", **coverage.pair_coverage(session.match_branches(crr_id, dam_id), session.match_buses(crr_id, dam_id), session.match_contingencies(crr_id, dam_id)))
+    r.show("pair", **coverage.pair_coverage(session.match_branches(crr_id, dam_id), session.match_buses(crr_id, dam_id),
+                                            session.match_contingencies(crr_id, dam_id)))
 
 
 def run(session, crr_id: str | None = None, dam_id: str | None = None, quiet: bool = False) -> dict:
@@ -457,6 +466,7 @@ def run(session, crr_id: str | None = None, dam_id: str | None = None, quiet: bo
     node_identity(session, dam_id, crr_id, D, C, r)
     matching(session, crr_id, dam_id, r)
     coverage_section(session, crr_id, dam_id, r)
-    result = {"crr": crr_id, "dam": dam_id, "crr_month": f"{crr['month']:%Y-%m}", "dam_day": str(dam["operating_date"]), "hour": dam["hour"], "sections": r.sections}
+    result = {"crr": crr_id, "dam": dam_id, "crr_month": f"{crr['month']:%Y-%m}", "dam_day": str(dam["operating_date"]),
+              "hour": dam["hour"], "sections": r.sections}
     write_report(session, "identity", f"{crr['month']:%Y-%m}_{dam['operating_date']}_he{dam['hour']:02d}", result)
     return result

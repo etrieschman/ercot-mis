@@ -41,7 +41,8 @@ def _rows(session, table: str, snapshot_id: str) -> pl.DataFrame:
 def crr_substations(session, crr_id: str, dam_id: str, node: pl.DataFrame, branch: pl.DataFrame) -> dict[int, str]:
     """A substation name for every CRR bus (see the module docstring)."""
     dam_station = dict(_rows(session, "node", dam_id).select("bus_key", "substation").rows())
-    matched = {c: dam_station.get(d) for c, d in session.match_buses(crr_id, dam_id).drop_nulls(["crr_bus_key", "dam_bus_key"]).select("crr_bus_key", "dam_bus_key").rows()}
+    matched = {c: dam_station.get(d) for c, d in session.match_buses(crr_id, dam_id).drop_nulls(["crr_bus_key",
+                                                                                                 "dam_bus_key"]).select("crr_bus_key", "dam_bus_key").rows()}
     substation = {bus: matched[key] for bus, key in node.select("node_number", "bus_key").rows() if matched.get(key)}
     # Spread to unmatched buses over ties and transformers (equipment inside a substation), whatever their status.
     inside = branch.filter(pl.col("is_tie") | (pl.col("kind") == "transformer")).select("from_node", "to_node").rows()
@@ -57,7 +58,8 @@ def crr_substations(session, crr_id: str, dam_id: str, node: pl.DataFrame, branc
     # substation to another, the other end is in the other substation. This places buses the node match
     # left undecided between several DAM buses of one substation.
     dam_bus_station = dict(_rows(session, "node", dam_id).select("node_number", "substation").rows())
-    dam_ends = {i: (dam_bus_station.get(f), dam_bus_station.get(t)) for i, f, t in _rows(session, "branch", dam_id).select("branch_id", "from_node", "to_node").rows()}
+    dam_ends = {i: (dam_bus_station.get(f), dam_bus_station.get(t)) for i, f, t in _rows(session, "branch", dam_id).select("branch_id",
+                                                                                                                           "from_node", "to_node").rows()}
     crr_ends = dict((i, (f, t)) for i, f, t in branch.select("branch_id", "from_node", "to_node").rows())
     pairs = [(crr_ends[c], dam_ends[d]) for c, d in session.match_branches(crr_id, dam_id).drop_nulls(["crr_branch_id", "dam_branch_id"])
              .select("crr_branch_id", "dam_branch_id").rows() if c in crr_ends and d in dam_ends and None not in dam_ends[d]]
