@@ -110,7 +110,7 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame,
             branches, ratings = branch.dam_branches(nodes, r["psse_branch"], r["psse_transformer"], r["dam_lines"], r["dam_transformers"])
             contingencies, outages = contingency.dam_contingencies(branches, nodes, r["dam_contingencies"])
             gtcs, members = gtc.dam_gtcs(gtl.filter(pl.col("interval_start_utc") == snap["interval_start_utc"]), crosswalk)
-            points, point_nodes = settlement_point.dam_settlement_points(nodes, r["dam_settlement_points"], r["dam_hub_buses"], r["dam_loads"])
+            points, point_nodes = settlement_point.dam_settlement_points(nodes, r["dam_settlement_points"], r["dam_hub_buses"], r["dam_loads"], r["dam_generators"])
             loads = load.dam_loads(nodes, r["psse_load"], r["dam_loads"])
         else:
             r = {t: raw[t].filter(pl.col("month") == snap["month"]) for t in names}

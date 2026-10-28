@@ -251,7 +251,7 @@ src/ercot_mis/
                     `em.open().viewer()` with no arguments pairs the latest monthly CRR model with the latest DAM noon
 demo/tour.ipynb              the walkthrough of every call, with explanations; pulls into demo/data/ (gitignored); commit without outputs
 scripts/daily_pull.py        fetch every pulled product, list tracked EWS ones, build_raw + build_core, price check on the newest
-                             days, at-risk line; launchd template in scripts/launchd/
+                             days, flow check on the newest day with awards, at-risk line; launchd template in scripts/launchd/
 scripts/urgent_pull.py       EWS products only, kept awake; run when the daily pull's notification says data is at risk
 scripts/probe.py             archive-depth probe over every EWS product
 scripts/validate_parsers.py  parse archived packages; check counts (RAW sections, DAM RAW vs CSVs, GTL hours)
@@ -259,6 +259,7 @@ scripts/measure_identity.py  key-matching and node-identity measurements -> data
 scripts/check_prices.py      price identity per DAM hour: shadow prices x shift factors vs published prices -> data/reports/prices/*.json
 scripts/check_network.py     DC solve on assembled networks; contracted vs ERCOT topology -> data/reports/network/*.json
 scripts/check_injections.py  the DAM's awards balance per hour (INJ-02) -> data/reports/injections/*.json
+scripts/check_flows.py       the awards through out.network: flows at binding rows vs ERCOT's, base-case limits, unplaced MW -> data/reports/flows/*.json
 scripts/check_ldf.py         ERCOT's published load distribution factors vs the Ld file's shares (SP-02) -> data/reports/ldf/*.json
 tools/check_confidential.py  pre-commit guard (stdlib only; also blocks Keychain-stored secrets and notebooks with outputs)
 .github/workflows/ci.yml     tests + guard on every push
@@ -284,7 +285,7 @@ measurements live in the scripts that make them and the dated reports under
 | M2 | PSS/E v30 parser + CRR raw layer (CSV vs XML check picks canonical) | parsers done (PSS/E both dialects, CRR, DAM, GTL workbook); `scripts/validate_parsers.py` clean on every archived package. Not yet: DynamicRatings, PowerFlowData.jl cross-check (needs Julia) |
 | M3 | core layer + SQL runner, cache skip, lineage, validation checks | 2026-09-17: raw writer with provenance (`build_raw`, process pool, cache skip, `run`/`artifact`/`lineage`); `build_core` writes snapshot, node, branch, branch_rating, contingency, contingency_outage, gtc, gtc_member for every archived package. 2026-09-24: both builds run at the end of the daily pull. 2026-10-01: SQL runner dropped; register lint (`tests/test_register.py`); `scripts/check_prices.py`. Not yet: flow check, status page |
 | M4 | `out.network` + `ftr_align/cases/ercot.py` (on hold) | 2026-09-24: `session.network()` (per-snapshot, own vocabulary, ERCOT's topology by default, settlement point weights, audit frames, `docs/out-network.md`); `scripts/check_network.py` solves it. 2026-10-06: the on-disk network cache was removed (assembly is faster). Not yet: `ercot.py` (on hold with the research) |
-| M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | 2026-10-01: prices pulled daily and parsed; price check. 2026-10-06: the price check runs daily; system lambda, de-energized points, electrically similar points, heuristic mapping and LDFs pulled and parsed; hub weights per Protocols 3.5.2; the 60-day disclosure pulled and parsed. Evening of 2026-10-06: `core.hourly_award` and `session.injections` (awards balance to a few MW a day); the flow check itself waits for the first overlapping day (mid-October) |
+| M5 | DAM prices, awards, settlement point weights, `out.hourly_injection` | 2026-10-01: prices pulled daily and parsed; price check. 2026-10-06: the price check runs daily; system lambda, de-energized points, electrically similar points, heuristic mapping and LDFs pulled and parsed; hub weights per Protocols 3.5.2; the 60-day disclosure pulled and parsed. Evening of 2026-10-06: `core.hourly_award` and `session.injections` (awards balance to a few MW a day). 2026-10-28: `scripts/check_flows.py` on every day with awards and a model; one-bus combined-cycle trains placed from `Gn` |
 | M6 | CRR ↔ DAM matching + scorecard | matchers for branches, buses and contingencies with `match_method` and unmatched rows (`session.match_*`); `scripts/measure_identity.py` reports their rates. 2026-09-24: `prefix+x` tie-break by reactance, `core.diff_branch`, `core.settlement_point[_node]`, `core.diff_settlement_point`. Not yet: `diff_bus`/`diff_contingency`, `subset` contingency method, scorecard |
 | M7 | `shift_factors` (restricted float32 PTDF/LODF, cache budget, cross-test vs `ftr_align.network.compute_ptdf`) | 2026-10-01: `ercot_mis.shift_factors` (sparse factorization, re-solve per contingency), used by the check scripts. The dense PTDF/LODF cache is on hold with the research |
 | M8 | scheduled pulls (Python files), docs, first release | 2026-10-06: `demo/tour.ipynb` is the walkthrough; the pull logs what is at risk |
@@ -365,15 +366,17 @@ First, check health (2 min):
 
 Then, in order:
 
-1. **Flow check, second half** when the first disclosure day with a model arrives (around
-   2026-10-15; the daily pull archives both): `session.injections(day)` through
-   `out.network` for that hour, flows against limits and against the binding rows of
-   NP4-191-CD. Settlement points to nodes through `settlement_point_nodes`; the 68 points
-   without a node (next item) will carry injections that have nowhere to go, so count them.
-2. **The 68 settlement points ERCOT prices and our network cannot place** (constant all
-   day; the `Sp` file gives them no bus): read what the file says about them and either
-   place them through NP4-160-SG or record why not; `deenergized_in_base_case.only_ours`
-   in the price report is the count.
+1. **Flow check, follow-ups** (`scripts/check_flows.py`, built 2026-10-28, runs daily on the newest
+   day with awards): base-case binding rows reproduce ERCOT's flow; contingency rows miss by a
+   few MW at the median and split-bus contingencies by more (look there first); GTC rows wait
+   on NP3-770-M (PRC-04); a few enforced branches sit above their base limit every hour (which,
+   and why).
+2. **Combined-cycle trains whose units sit on several buses** stay unplaced (SP-05): ERCOT
+   splits a train by each unit's registered HRL (Protocols 4.6.1.4), which no file we pull
+   carries. Their generation is the whole of the flow check's unplaced MW. Any ERCOT product
+   that publishes unit HRLs (or the split) would close it; do not derive one from prices
+   (user, 2026-10-28). Trains on one bus are placed from the `Gn` file, which closed most of
+   the old list of unplaceable settlement points.
 3. **GTC definitions from NP3-770-M** (one text PDF per constraint): the user's call on
    when; until then the evening residual stands (PRC-04).
 4. **Viewer**: check the coverage table on a real pair with `?nohash`; show `diff_load` in

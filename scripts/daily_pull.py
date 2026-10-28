@@ -1,10 +1,11 @@
-"""Daily pull: archive every EWS document before it rolls off, the public reports, build the layers, check prices.
+"""Daily pull: archive every EWS document before it rolls off, the public reports, build the layers, check prices and flows.
 
 EWS keeps nothing older than each product's display window (31 days for DAM network
 models, 365 for CRR models), so run this every day. It fetches pulled products, lists
 tracked EWS ones so their availability is recorded, then parses every new package into
 the raw layer and rebuilds core for it (packages already built are skipped by their
-cache key), then runs the price check on the newest days. It exits non-zero
+cache key), then runs the price check on the newest days and the flow check on the newest
+day with both awards and a model (the disclosure's 60-day lag decides which). It exits non-zero
 if anything failed; failed documents and packages are retried on the next run.
 
 The run does not keep the Mac awake. A missed or stalled pull is flagged instead, and
@@ -54,6 +55,9 @@ PUBLIC_API_LOOKBACK_DAYS = 31
 
 # The price check runs for this many of the newest days with prices and a model.
 PRICE_CHECK_DAYS = 2
+
+# The flow check runs for this many of the newest days with awards and a model.
+FLOW_CHECK_DAYS = 1
 
 # Per-product ceiling for one run; a first run over a full window stays well under it.
 MAX_GB = 5
@@ -241,6 +245,25 @@ def check_prices_recent(mis: em.Session, days: int = PRICE_CHECK_DAYS) -> int:
     return failed
 
 
+def check_flows_recent(mis: em.Session, days: int = FLOW_CHECK_DAYS) -> int:
+    """The flow check on the newest days with awards and a model; one log line per day. Returns the failure count."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import check_flows
+    import check_prices
+
+    failed = 0
+    for day in check_flows.days_with_flows(mis)[-days:]:
+        began = time.monotonic()
+        try:
+            results = check_flows.run(mis, check_prices.hour_ids(mis, day), quiet=True)
+        except Exception as error:
+            failed += 1
+            print(f"  flow check {day}: FAILED {type(error).__name__}: {error}", flush=True)
+            continue
+        print(f"  {check_flows.summary_line(day, results)}, {time.monotonic() - began:.0f}s", flush=True)
+    return failed
+
+
 def main() -> int:
     started = datetime.now(timezone.utc)
     wall, awake = time.time(), time.monotonic()  # monotonic stops while the Mac sleeps
@@ -271,6 +294,7 @@ def main() -> int:
                 print(f"  at risk: FAILED {type(error).__name__}: {error}", flush=True)
             failed += build_layers(mis)
             failed += check_prices_recent(mis)
+            failed += check_flows_recent(mis)
         finally:  # the status file and the notification happen whatever broke above
             slept = ((time.time() - wall) - (time.monotonic() - awake)) / 60
             if slept > SLEPT_FLAG_MINUTES:

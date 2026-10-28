@@ -51,8 +51,9 @@ prices, awards, limits, costs) are cast; identifiers, flags and indicators stay 
 
 ## Validation
 
-Row counts per table per day in `build_raw`'s result; the flow check (not built yet)
-is the test of the awards' meaning.
+Row counts per table per day in `build_raw`'s result. `scripts/check_flows.py` is the
+test of the awards' meaning: pushed through the hour's network, they should reproduce the
+flow ERCOT reports at every binding constraint (FLW-02), with nothing left unplaced (FLW-01).
 
 ## What core builds from it
 

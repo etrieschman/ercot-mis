@@ -85,3 +85,26 @@ def test_dam_zone_weights_roll_an_out_of_service_load_to_its_targets():
     weights = {k: round(w, 4) for k, w in rows.group_by("bus_key").agg(pl.col("weight").sum()).rows()}
     assert weights == {"N1": 0.75, "N2": 0.25}  # 60 + 15 and 20 + 5 of the rolled 20 MW; the dead load's own node gets nothing
     assert set(rows["source"]) == {"dam_loads", "dam_loads_rollover"} and points["n_buses"][0] == 2  # two buses, one row per source each
+
+
+def test_dam_logical_resource_node_takes_its_units_bus_only_when_they_share_one():
+    """SP-05: Sp gives the train no bus; Gn lists its units at resource nodes. One bus: the train is there. Several: unresolved,
+    because ERCOT's split uses each unit's registered HRL (Protocols 4.6.1.4), which no file carries."""
+    nodes = _nodes([20, 21], ["N20", "N21"])
+    sp = pl.DataFrame({"settlement_point_name": ["RN_CT", "RN_ST", "LRN_ONE", "LRN_TWO"],
+                       "settlement_point_type": ["Resource Node", "Resource Node", "Logical Resource Node", "Logical Resource Node"],
+                       "psse_bus_number": [20, 21, None, None], "combined_cycle_settlement_point": [None, None, None, None]},
+                      schema_overrides={"psse_bus_number": pl.Int64, "combined_cycle_settlement_point": pl.String})
+    hb = pl.DataFrame(schema={"hub_name": pl.String, "hub_bus_name": pl.String, "psse_bus_number": pl.Int64, "bus_status": pl.String})
+    ld = pl.DataFrame(schema={"load_zone_name": pl.String, "psse_bus_number": pl.Int64, "load_status": pl.String, "raw_mw_ldf": pl.Float64})
+    gn = pl.DataFrame({"combined_cycle_logical_resource_node_settlement_point_name": ["LRN_ONE", "LRN_ONE", "LRN_ONE", "LRN_TWO", "LRN_TWO"],
+                       "resource_node_psse_bus_number": [20, 20, 20, 20, 21],
+                       "generator_status": ["In-Service", "In-Service", "Out-Of-Service", "In-Service", "In-Service"]})
+    points, rows = spm.dam_settlement_points(nodes, sp, hb, ld, gn)
+    by = {r["settlement_point_id"]: r for r in points.to_dicts()}
+    one = rows.filter(pl.col("settlement_point_id") == "LRN_ONE")
+    assert one.select("bus_key", "weight", "source").rows() == [("N20", 1.0, "dam_gn")]
+    assert (by["LRN_TWO"]["n_buses"], by["LRN_TWO"]["n_unresolved"]) == (0, 1)
+    # without the generator file both stay unresolved, as before
+    points, _ = spm.dam_settlement_points(nodes, sp, hb, ld)
+    assert points.filter(pl.col("settlement_point_id").str.starts_with("LRN"))["n_unresolved"].to_list() == [1, 1]

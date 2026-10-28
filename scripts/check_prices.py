@@ -71,6 +71,23 @@ def hour_rows(frame: pl.LazyFrame, start_utc: datetime, session=None) -> pl.Data
     return rows.filter(pl.col("doc_id") == latest)
 
 
+def row_direction(substation: dict, kv: dict, f: int, t: int, from_station: str, to_station: str, from_kv: float, to_kv: float) -> float | None:
+    """+1 when a binding row's from-to runs with branch ``f``-``t``, -1 against it, None when the row's ends are not recognized.
+
+    A binding row names the branch and the direction of the flow that bound, as substations (and
+    voltages, for a transformer inside one substation). ``substation`` and ``kv`` map node index
+    to the keyed substation name and base kV.
+    """
+    if substation[f] != substation[t]:
+        return 1.0 if (substation[f], substation[t]) == (from_station, to_station) else -1.0 if (substation[t], substation[f]) == (from_station, to_station) else None
+    # Inside one substation the voltages tell the ends apart, to the tenth: ERCOT uses the
+    # tenths digit of the base kV to tell bus sections of one level apart.
+    ends, published = (round(kv[f], 1), round(kv[t], 1)), (round(from_kv, 1), round(to_kv, 1))
+    if published[0] == published[1] or set(ends) != set(published):
+        return None
+    return 1.0 if ends == published else -1.0
+
+
 def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[list[tuple[int, float]], int]]:
     """GTCs as signed DAM branch sets, borrowed from the CRR model of the same month.
 
@@ -137,15 +154,7 @@ def check_hour(session, snapshot_id: str, detail: dict | None = None) -> dict | 
     limit_flags = {k: f"secured={s} monitored={m} limited={l}" for k, s, m, l in net.branches.select(key(pl.col("branch_id")), "is_secured", "is_monitored", "is_limited").rows()}
     rows_by_flags: dict[str, int] = {}
 
-    def direction(f: int, t: int, from_station: str, to_station: str, from_kv: float, to_kv: float) -> float | None:
-        if substation[f] != substation[t]:
-            return 1.0 if (substation[f], substation[t]) == (from_station, to_station) else -1.0 if (substation[t], substation[f]) == (from_station, to_station) else None
-        # Inside one substation the voltages tell the ends apart, to the tenth: ERCOT uses the
-        # tenths digit of the base kV to tell bus sections of one level apart.
-        ends, published = (round(kv[f], 1), round(kv[t], 1)), (round(from_kv, 1), round(to_kv, 1))
-        if published[0] == published[1] or set(ends) != set(published):
-            return None
-        return 1.0 if ends == published else -1.0
+    direction = lambda f, t, *published: row_direction(substation, kv, f, t, *published)
 
     gtc_rows = borrowed_gtcs(session, snapshot_id, net)
     splits = {ctg: list(zip(idx, ends)) for ctg, idx, ends in net.contingencies.select(key(pl.col("contingency_id")), "split_branch_indexes", "split_ends").rows() if idx}

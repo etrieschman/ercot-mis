@@ -50,6 +50,14 @@ day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.
   disconnects: which resource nodes a contingency islands. Parsed
   (`dam_settlement_point_contingencies`), not yet used by core.
 - The load CSV header ends with a trailing comma its rows lack.
+- **Logical resource nodes (combined-cycle trains) have no bus in `Sp`**, and no
+  combined-cycle settlement point either, although the column exists. The `Gn` file is
+  where they are placed: every unit of a train names the train's logical resource node and
+  its own resource node and bus, and those agree with `Sp` row for row. When all of a train's
+  units sit on one bus, core places the train there. When they sit on several, Protocols
+  4.6.1.4 weighs each unit by its High Reasonability Limit from Resource Registration, which no
+  file we pull carries, so the train stays unresolved and its MW is counted as unplaced (SP-05).
+  A train with no unit listed in an hour is one `Sp` marks de-energized.
 - A split-bus contingency row gives two split-bus columns: the end of the branch that
   stays holds its bus number, the end that moves to the new bus section holds a note
   instead of a number (kept as text). `core.contingency_outage.split_end` says which
