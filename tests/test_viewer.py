@@ -32,6 +32,9 @@ class FakeSession:
     def core(self, table):
         return self.tables[table].lazy()
 
+    def core_rows(self, table, snapshot_id):
+        return self.tables[table].filter(pl.col("snapshot_id") == snapshot_id)
+
     def network(self, snapshot_id):
         class Net:  # only the enforced limits are read
             branches = pl.DataFrame({"branch_id": ["XF1"], "is_limited": [True], "base_limit_mw": [400.0]})

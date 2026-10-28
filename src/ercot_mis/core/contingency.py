@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import polars as pl
 
-VERSION = 2
+VERSION = 3
 
 CONTINGENCY_COLUMNS = ("contingency_id", "n_outages", "n_unresolved", "has_split_bus")
 OUTAGE_COLUMNS = ("contingency_id", "element_kind", "operation", "action", "branch_id", "bus_key",
@@ -56,10 +56,12 @@ def crr_contingencies(branches: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.Dat
 
 def dam_contingencies(branches: pl.DataFrame, nodes: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """From one hour's ``dam_contingencies`` CSV."""
+    # A row may name a branch in either direction; ``_reversed`` marks a row written against the RAW's from-to.
     keyed = branches.select(pl.col("from_node").alias("psse_from_bus_number"), pl.col("to_node").alias("psse_to_bus_number"),
-                            pl.col("ckt").alias("_ckt"), "branch_id")
+                            pl.col("ckt").alias("_ckt"), "branch_id", pl.lit(False).alias("_reversed"))
     keyed = pl.concat([keyed, keyed.select(pl.col("psse_to_bus_number").alias("psse_from_bus_number"),
-                                          pl.col("psse_from_bus_number").alias("psse_to_bus_number"), "_ckt", "branch_id")]).unique()
+                                          pl.col("psse_from_bus_number").alias("psse_to_bus_number"), "_ckt", "branch_id",
+                                          pl.lit(True).alias("_reversed"))]).unique(subset=["psse_from_bus_number", "psse_to_bus_number", "_ckt", "branch_id"], keep="first")
     bus_keys = nodes.select("node_number", "bus_key")
     number = lambda c: pl.col(c).cast(pl.String).str.strip_chars().cast(pl.Int64, strict=False)  # noqa: E731
     moves_from, moves_to = number("split_bus_psse_bus_number").is_null(), number("split_bus_psse_to_bus_number").is_null()
@@ -79,8 +81,9 @@ def dam_contingencies(branches: pl.DataFrame, nodes: pl.DataFrame, raw: pl.DataF
           .otherwise(pl.coalesce(pl.col("station_name_psse_bus_name"), pl.col("psse_id"))).alias("element_name"),
         pl.when(pl.col("element_kind") == "branch").then(pl.col("branch_id").is_not_null())
           .otherwise(pl.col("bus_key").is_not_null()).alias("is_resolved"),
-        pl.when((pl.col("operation") == "split_bus") & (pl.col("element_kind") == "branch") & moves_from & ~moves_to).then(pl.lit("from"))
-          .when((pl.col("operation") == "split_bus") & (pl.col("element_kind") == "branch") & moves_to & ~moves_from).then(pl.lit("to"))
+        # The end that moves, in the RAW branch's own from-to (NAM-09): a reversed row's "from" is the RAW's "to".
+        pl.when((pl.col("operation") == "split_bus") & (pl.col("element_kind") == "branch") & (moves_from ^ moves_to))
+          .then(pl.when(moves_from ^ pl.col("_reversed").fill_null(False)).then(pl.lit("from")).otherwise(pl.lit("to")))
           .otherwise(None).alias("split_end"),
     ).select(OUTAGE_COLUMNS)
     return _summarize(outages), outages

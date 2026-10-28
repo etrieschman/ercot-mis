@@ -35,7 +35,7 @@ def _is_dam(snapshot_id: str) -> bool:
 
 
 def _rows(session, table: str, snapshot_id: str) -> pl.DataFrame:
-    return session.core(table).filter(pl.col("snapshot_id") == snapshot_id).collect()
+    return session.core_rows(table, snapshot_id)
 
 
 def crr_substations(session, crr_id: str, dam_id: str, node: pl.DataFrame, branch: pl.DataFrame) -> dict[int, str]:

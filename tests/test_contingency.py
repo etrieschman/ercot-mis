@@ -45,7 +45,8 @@ def test_dam_contingencies_resolve_branches_by_key_and_equipment_by_bus():
     assert rows[("D1", "generator")]["bus_key"] == "c" and rows[("D1", "generator")]["psse_id"] == "G1"
     assert rows[("D3", "settlement_point")]["operation"] == "split_bus" and rows[("D3", "settlement_point")]["split_end"] is None
     splits = out.filter(pl.col("contingency_id") == "D5").sort("branch_id")
-    assert splits["branch_id"].to_list() == ["L2", "L2"] and splits["split_end"].to_list() == ["to", "from"]
+    # Both rows move node 2, which is L2's "from" end in the RAW; the first row names L2 backwards (NAM-09).
+    assert splits["branch_id"].to_list() == ["L2", "L2"] and splits["split_end"].to_list() == ["from", "from"]
     assert by["D5"]["has_split_bus"] and by["D5"]["n_unresolved"] == 0
 
 

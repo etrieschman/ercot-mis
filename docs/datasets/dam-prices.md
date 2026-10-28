@@ -7,7 +7,7 @@ their shadow prices (NP4-191-CD), the price at every electrical bus (NP4-183-CD)
 at every settlement point (NP4-190-CD). They are not inputs to a network model; they
 are the test of one. ERCOT's DAM has no loss component, so a price is the system
 price minus the shadow-price-weighted shift factors of the binding constraints, and
-`scripts/check_prices.py` holds our DAM network to that.
+`checks/prices.py` holds our DAM network to that.
 
 Beside them, the inputs ERCOT publishes for how it formed those prices: the system
 price itself (NP4-523-CD, the shadow price of the power balance constraint), the
@@ -84,7 +84,7 @@ the `SpCtg` file's settlement points per binding contingency against the points 
 solve leaves without a connected bus, and the base-case de-energized list (NP4-200-CD)
 against the points our network has no node for (NAM-07).
 
-`scripts/check_prices.py` writes `data/reports/prices/<snapshot>.json` per DAM hour:
+`checks/prices.py` writes `data/reports/prices/<snapshot>.json` per DAM hour:
 how many binding rows resolve to a branch, a contingency or a GTC, and the residual of
 the price check at the settlement points.
 
@@ -93,7 +93,7 @@ the price check at the settlement points.
 - The de-energized list (NP4-200-CD) names points the check never prices, because their
   buses are dropped from the network; pricing them needs the heuristic mapping
   (NP4-231-CD) resolved from electrical bus names to nodes through NP4-160-SG.
-- Settled 2026-10-06 (`scripts/check_ldf.py`): the published load distribution factors
+- Settled 2026-10-06 (`checks/ldf.py`): the published load distribution factors
   agree with the `Ld` file's substation shares to a fraction of a percent; the public
   report lists more substations and about nine percent more MW than the model's loads,
   under load identifiers that are not the model's load names.

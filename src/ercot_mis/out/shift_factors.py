@@ -7,8 +7,8 @@ ends and factorizing again, which is exact for any number of outaged branches an
 needs no special case when the contingency cuts part of the network off: what stays
 connected to the slack is solved, and nodes cut off get a shift factor of zero.
 
-Everything that needs a shift factor (``scripts/check_network.py``,
-``scripts/check_prices.py``, later the flow check) goes through this module. It needs
+Everything that needs a shift factor (``checks/network.py``,
+``checks/prices.py``, later the flow check) goes through this module. It needs
 ``numpy`` and ``scipy``, which the rest of the package does not: install the
 ``shift-factors`` extra.
 """
@@ -23,7 +23,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy.sparse.csgraph import connected_components
 
-from .out.network import Network
+from .network import Network
 
 
 class DcSystem:

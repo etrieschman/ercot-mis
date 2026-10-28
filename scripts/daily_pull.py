@@ -42,6 +42,7 @@ from pathlib import Path
 import polars as pl
 
 import ercot_mis as em
+from ercot_mis.checks import flows, prices
 from ercot_mis.products import Product
 from ercot_mis.raw.build import parsed_products
 
@@ -227,40 +228,17 @@ def alert_urgent(risk: dict) -> None:
     notify("ercot-mis: EWS data at risk", URGENT_COMMAND, subtitle=risk_line(risk))
 
 
-def check_prices_recent(mis: em.Session, days: int = PRICE_CHECK_DAYS) -> int:
-    """The price identity on the newest days with prices and a model; one log line per day. Returns the failure count."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import check_prices
-
+def run_checks(mis: em.Session) -> int:
+    """The price check on the newest days with prices, the flow check on the newest day with awards; one log line per day."""
     failed = 0
-    for day in check_prices.days_with_prices(mis)[-days:]:
-        began = time.monotonic()
-        try:
-            results = check_prices.run(mis, check_prices.hour_ids(mis, day), quiet=True)
-        except Exception as error:
-            failed += 1
-            print(f"  price check {day}: FAILED {type(error).__name__}: {error}", flush=True)
-            continue
-        print(f"  {check_prices.summary_line(day, results)}, {time.monotonic() - began:.0f}s", flush=True)
-    return failed
-
-
-def check_flows_recent(mis: em.Session, days: int = FLOW_CHECK_DAYS) -> int:
-    """The flow check on the newest days with awards and a model; one log line per day. Returns the failure count."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import check_flows
-    import check_prices
-
-    failed = 0
-    for day in check_flows.days_with_flows(mis)[-days:]:
-        began = time.monotonic()
-        try:
-            results = check_flows.run(mis, check_prices.hour_ids(mis, day), quiet=True)
-        except Exception as error:
-            failed += 1
-            print(f"  flow check {day}: FAILED {type(error).__name__}: {error}", flush=True)
-            continue
-        print(f"  {check_flows.summary_line(day, results)}, {time.monotonic() - began:.0f}s", flush=True)
+    for module, available, days in ((prices, prices.days_with_prices(mis), PRICE_CHECK_DAYS), (flows, flows.days_with_flows(mis), FLOW_CHECK_DAYS)):
+        for day in available[-days:]:
+            began = time.monotonic()
+            try:
+                print(f"  {module.summary_line(day, module.run(mis, day))}, {time.monotonic() - began:.0f}s", flush=True)
+            except Exception as error:
+                failed += 1
+                print(f"  {module.__name__.rsplit('.', 1)[-1]} check {day}: FAILED {type(error).__name__}: {error}", flush=True)
     return failed
 
 
@@ -293,8 +271,7 @@ def main() -> int:
                 failed += 1
                 print(f"  at risk: FAILED {type(error).__name__}: {error}", flush=True)
             failed += build_layers(mis)
-            failed += check_prices_recent(mis)
-            failed += check_flows_recent(mis)
+            failed += run_checks(mis)
         finally:  # the status file and the notification happen whatever broke above
             slept = ((time.time() - wall) - (time.monotonic() - awake)) / 60
             if slept > SLEPT_FLAG_MINUTES:

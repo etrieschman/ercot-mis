@@ -61,12 +61,7 @@ def gtl_for_day(session, day) -> tuple[pl.DataFrame, str | None]:
         raise ValueError("gtl_hourly artifacts predate interval_start_utc; run build_raw('NP3-766-M') first")
     if rows.is_empty():
         return empty, None
-    # Document IDs do not follow posting time (measured), so the latest posting is looked up in the catalog.
-    posted = session.query("SELECT doc_id, posted_at FROM remote_doc WHERE emil_id = 'NP3-766-M' AND doc_id IN (SELECT UNNEST(?))",
-                           [rows["doc_id"].unique().to_list()])
-    order = sorted(posted, key=lambda r: (r[1] is None, r[1] or 0, r[0]))
-    latest_id = order[-1][0] if order else rows.sort("doc_id")["doc_id"][-1]
-    latest = rows.filter(pl.col("doc_id") == latest_id)
+    latest = rows.filter(pl.col("doc_id") == session.latest_doc("NP3-766-M", rows["doc_id"].unique()))  # NAM-04, TOP-11
     return latest.select(GTL_COLUMNS), latest["blob_sha256"][0]
 
 
@@ -200,7 +195,7 @@ def build(session, *, limit: int | None = None) -> list[dict]:
     return results
 
 
-DISCLOSURE_PRODUCT = "NP3-966-ER"
+DISCLOSURE_PRODUCT = award.DISCLOSURE_PRODUCT
 AWARD_TABLES = {"gen": "dam_60d_gen_resource_data", "esr": "dam_60d_esr_data", "energy_only_offers": "dam_60d_energy_only_offer_awards",
                 "energy_bids": "dam_60d_energy_bid_awards", "ptp_bids": "dam_60d_ptp_obligation_bid_awards", "ptp_options": "dam_60d_ptp_obligation_option_awards"}
 
@@ -222,7 +217,7 @@ def build_awards(session, version: str, existing: set[str], tmp_dir: Path, run_i
             results.append({**record, "status": "no_raw"})
             continue
         try:
-            frame = award.hourly_awards(**raw)
+            frame = award.hourly_awards(**raw, doc_id=package["doc_id"])
         except Exception as error:
             results.append({**record, "status": "failed", "error": f"{type(error).__name__}: {error}"})
             continue

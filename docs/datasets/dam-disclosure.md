@@ -51,7 +51,7 @@ prices, awards, limits, costs) are cast; identifiers, flags and indicators stay 
 
 ## Validation
 
-Row counts per table per day in `build_raw`'s result. `scripts/check_flows.py` is the
+Row counts per table per day in `build_raw`'s result. `checks/flows.py` is the
 test of the awards' meaning: pushed through the hour's network, they should reproduce the
 flow ERCOT reports at every binding constraint (FLW-02), with nothing left unplaced (FLW-01).
 
@@ -59,7 +59,7 @@ flow ERCOT reports at every binding constraint (FLW-02), with nothing left unpla
 
 `core.hourly_award` (`core/award.py`): one row per award with its hour in UTC, the
 settlement point, a kind and a signed MW (INJ-01); `session.injections(day)` sums it to
-the net injection per settlement point and hour, and `scripts/check_injections.py`
+the net injection per settlement point and hour, and `checks/injections.py`
 checks that the system nets to zero per hour (INJ-02).
 
 ## Open questions

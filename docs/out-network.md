@@ -58,7 +58,7 @@ and its contingency keys from `branch_indexes`.
   records the weight that fell on dropped nodes (`weight_dropped`). This is the matrix
   that maps injections at settlement points (awards, bids) onto nodes. Without
   contraction a CRR point's weight is spread equally over its bus's nodes.
-- **Islanding contingencies are not screened here.** `ercot_mis.shift_factors.DcSystem.outaged`
+- **Islanding contingencies are not screened here.** `ercot_mis.out.shift_factors.DcSystem.outaged`
   finds the part cut off from the slack when it solves a contingency and reports it
   (`n_islanded`, `connected`); the network itself keeps every contingency.
 
@@ -66,7 +66,7 @@ and its contingency keys from `branch_indexes`.
 
 | option | default | meaning |
 |---|---|---|
-| `contract_ties` | `False` | ERCOT's topology: one row per model node, and CRR ties are branches at their RAW reactance, monitored ones with their breaker ratings. With `True`, one row per bus (nodes joined by in-service ties); the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`) and their limits with them. The cost of contraction is measured by `scripts/check_network.py`. Tie members keep their group key in their id (`<key>@<bus>`). No effect on DAM. |
+| `contract_ties` | `False` | ERCOT's topology: one row per model node, and CRR ties are branches at their RAW reactance, monitored ones with their breaker ratings. With `True`, one row per bus (nodes joined by in-service ties); the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`) and their limits with them. The cost of contraction is measured by `checks/network.py`. Tie members keep their group key in their id (`<key>@<bus>`). No effect on DAM. |
 | `rating_source` | model default | `crr_monitored` (CRR CSV, per time-of-use block) or `psse_raw` (RAW rate A/B). CRR defaults to the CSV, DAM to the RAW. |
 | `time_of_use` | `PeakWD` | The CRR CSV block; the CRR RAW is the PeakWD model. |
 | `limits` | `enforced` | Which branches get finite limits: `enforced` (CRR monitored, DAM secured), `monitored` (DAM monitored or secured), `all`. |

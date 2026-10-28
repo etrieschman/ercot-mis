@@ -61,7 +61,8 @@ def reactance_agrees(crr_x: pl.Expr, dam_x: pl.Expr, tolerance: float = REACTANC
     return (a - b).abs() <= tolerance * pl.max_horizontal(a, b)
 
 
-def _key(expr: pl.Expr) -> pl.Expr:
+def name_key(expr: pl.Expr) -> pl.Expr:
+    """A name as matching compares it: upper case, letters and digits only."""
     return expr.str.to_uppercase().str.replace_all(r"[^A-Z0-9]", "")
 
 
@@ -82,8 +83,8 @@ def match_branches(crr_branch: pl.DataFrame, mapping_lines: pl.DataFrame, mappin
     if placeholder is not None:
         ops = ops.with_columns(pl.when(pl.col("operations_name") == placeholder).then(None).otherwise(pl.col("operations_name")).alias("operations_name"))
     crr = crr_branch.select("branch_id", "ckt").rename({"branch_id": "crr_branch_id"}).join(ops, on="crr_branch_id", how="left")
-    crr = crr.with_columns(_key(pl.col("operations_name")).alias("_ops"), (_key(pl.col("operations_name")) + _key(pl.col("ckt"))).alias("_ops_ckt"))
-    dam = dam_branch.select(pl.col("branch_id").alias("dam_branch_id")).unique().with_columns(_key(pl.col("dam_branch_id")).alias("_dam"))
+    crr = crr.with_columns(name_key(pl.col("operations_name")).alias("_ops"), (name_key(pl.col("operations_name")) + name_key(pl.col("ckt"))).alias("_ops_ckt"))
+    dam = dam_branch.select(pl.col("branch_id").alias("dam_branch_id")).unique().with_columns(name_key(pl.col("dam_branch_id")).alias("_dam"))
 
     exact = crr.join(dam, left_on="_ops", right_on="_dam", how="inner").with_columns(pl.lit("exact").alias("match_method"))
     rest = crr.filter(~pl.col("crr_branch_id").is_in(exact["crr_branch_id"].implode()))

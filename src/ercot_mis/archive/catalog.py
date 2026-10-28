@@ -109,6 +109,11 @@ SCHEMA = (
 TABLES = {re.search(r"EXISTS (\w+)", statement).group(1) for statement in SCHEMA}
 
 
+def posting_order(posted_at: datetime | None, tiebreak: str) -> tuple:
+    """Sort key for revisions of one document: ERCOT's posting time, oldest first; an undated one counts as oldest (TOP-11)."""
+    return (posted_at is not None, posted_at or datetime.min.replace(tzinfo=timezone.utc), len(tiebreak), tiebreak)
+
+
 def _connect(path: Path, read_only: bool) -> duckdb.DuckDBPyConnection:
     """Open the file, waiting out another process's lock for a while."""
     for wait in (*LOCK_WAITS, None):

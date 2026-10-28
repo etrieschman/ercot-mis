@@ -58,7 +58,7 @@ with em.open() as session:
 ```
 
 The viewer page holds CEII (equipment names); it is written inside the data folder and
-must not be shared. `scripts/check_prices.py` tests a DAM network against the prices
+must not be shared. `checks/prices.py` tests a DAM network against the prices
 ERCOT published for that hour.
 
 `docs/out-network.md` lists the conventions behind `network()` and its options;

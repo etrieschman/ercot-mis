@@ -392,7 +392,7 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
 def core_tables(session, snapshot_id: str) -> CoreTables:
     """Read one snapshot's rows from every core table."""
     def rows(table: str) -> pl.DataFrame:
-        return session.core(table).filter(pl.col("snapshot_id") == snapshot_id).collect().drop("snapshot_id")
+        return session.core_rows(table, snapshot_id).drop("snapshot_id")
 
     node = rows("node")
     if node.is_empty():

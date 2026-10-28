@@ -7,6 +7,7 @@ layers, ``raw(table)`` and ``core(table)`` read them.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import zipfile
 from collections.abc import Iterable, Iterator
@@ -25,7 +26,7 @@ from .sources.retry import retrying
 from .sources.ews import ERCOT_TZ, EwsClient, EwsError, RemoteDoc
 from .sources.public_api import PublicApiClient
 from .archive import store
-from .archive.catalog import Catalog
+from .archive.catalog import Catalog, posting_order
 
 # Columns that embed the participant DUNS (ERCOT's file names) or point at the
 # participant's download servlet. They stay in the catalog and never leave it.
@@ -174,6 +175,12 @@ class Session:
     def query(self, sql: str, params: list | None = None) -> list[tuple]:
         """Ad hoc read-only SQL on the catalog (``remote_doc``, ``archive_blob``, ``artifact``, ...); returns the rows."""
         return self.catalog.query(sql, params)
+
+    def latest_doc(self, emil_id: str, doc_ids: Iterable[str]) -> str:
+        """Of ``doc_ids``, the one ERCOT posted last; an undated one counts as oldest (TOP-11)."""
+        doc_ids = list(doc_ids)
+        posted = dict(self.catalog.documents(emil_id, doc_ids).select("doc_id", "posted_at").rows())
+        return max(doc_ids, key=lambda d: posting_order(posted.get(d), d))
 
     @property
     def _catalog_path(self) -> Path:
@@ -356,128 +363,118 @@ class Session:
 
         return pl.DataFrame(build(self, limit=limit), schema=BUILD_SCHEMA)
 
+    # ----------------------------------------------------------------- one model
+
+    def snapshot(self, snapshot_id: str) -> dict:
+        """The ``core.snapshot`` row of one model."""
+        rows = pl.read_parquet(self.data_dir / "core" / "snapshot.parquet").filter(pl.col("snapshot_id") == snapshot_id)
+        if rows.is_empty():
+            raise KeyError(f"{snapshot_id!r} is not in core.snapshot; run build_core()")
+        return rows.row(0, named=True)
+
+    def core_rows(self, table: str, snapshot_id: str) -> pl.DataFrame:
+        """One model's rows of a core table, read from its package's file alone."""
+        snap = self.snapshot(snapshot_id)
+        path = self._package_file("core", table, snap)
+        if not path.is_file():
+            return self.core(table).filter(pl.col("snapshot_id") == snapshot_id).collect()
+        return pl.read_parquet(path).filter(pl.col("snapshot_id") == snapshot_id).with_columns(pl.lit(snap["emil_id"]).alias("emil_id"))
+
+    def raw_rows(self, table: str, snapshot_id: str) -> pl.DataFrame:
+        """One model's rows of a raw table: its package's file, narrowed to the DAM hour or the CRR month."""
+        snap = self.snapshot(snapshot_id)
+        path = self._package_file("raw", table, snap)
+        rows = pl.read_parquet(path) if path.is_file() else self.raw(table).filter(pl.col("blob_sha256") == snap["blob_sha256"]).collect().drop("emil_id")
+        if snap["hour"] is not None and "hour" in rows.columns:
+            rows = rows.filter(pl.col("hour") == snap["hour"])
+        if snap["month"] is not None and "month" in rows.columns:
+            rows = rows.filter(pl.col("month") == snap["month"])
+        return rows.with_columns(pl.lit(snap["emil_id"]).alias("emil_id"))
+
+    def _package_file(self, layer: str, table: str, snap: dict) -> Path:
+        return self.data_dir / layer / table / f"emil_id={snap['emil_id']}" / f"{snap['blob_sha256'][:16]}.parquet"
+
+    # ----------------------------------------------------------------- one CRR model against one DAM hour
+
     def match_branches(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
-        """``core.match_branch`` for one CRR model and one DAM hour, computed once and cached.
+        """``core.match_branch``: every CRR branch with the DAM branch it matched and the ``match_method``; unmatched rows kept."""
+        from .core import match
 
-        See ``ercot_mis.core.match``. Rows: every CRR branch with its DAM branch and the
-        ``match_method`` that found it, plus DAM branches nothing matched.
-        """
-        from .core.match import COLUMNS, VERSION, match_branches
+        def compute() -> pl.DataFrame:
+            return match.match_branches(self.core_rows("branch", crr_snapshot_id), self.raw_rows("crr_mapping_lines", crr_snapshot_id),
+                                        self.raw_rows("crr_mapping_autos", crr_snapshot_id), self.core_rows("branch", dam_snapshot_id))
 
-        key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
-        path = self.data_dir / "core" / "match_branch" / f"v{VERSION}" / f"{key}.parquet"
-        if path.is_file():
-            return pl.read_parquet(path)
-        crr = self.core("branch").filter(pl.col("snapshot_id") == crr_snapshot_id).collect()
-        dam = self.core("branch").filter(pl.col("snapshot_id") == dam_snapshot_id).collect()
-        if crr.is_empty() or dam.is_empty():
-            raise KeyError(f"no core.branch rows for {crr_snapshot_id!r} and {dam_snapshot_id!r}; run build_core()")
-        blob = self.core("snapshot").filter(pl.col("snapshot_id") == crr_snapshot_id).select("blob_sha256", "month").collect().row(0)
-        lines = self.raw("crr_mapping_lines").filter((pl.col("blob_sha256") == blob[0]) & (pl.col("month") == blob[1])).collect()
-        autos = self.raw("crr_mapping_autos").filter((pl.col("blob_sha256") == blob[0]) & (pl.col("month") == blob[1])).collect()
-        result = match_branches(crr, lines, autos, dam).with_columns(
-            pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id")
-        ).select("crr_snapshot_id", "dam_snapshot_id", *COLUMNS)
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        result.write_parquet(path, compression="zstd")
-        path.chmod(0o600)
-        return result
+        return self._pair("match_branch", match.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
 
     def match_buses(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
-        """``core.match_bus`` for one CRR model and one DAM hour: settlement points first, then
-        the endpoints of matched branches. Computed once and cached like ``match_branches``."""
-        from .core.match import BUS_COLUMNS, VERSION, match_buses
+        """``core.match_bus``: settlement points first, then the endpoints of matched branches."""
+        from .core import match
 
-        key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
-        path = self.data_dir / "core" / "match_bus" / f"v{VERSION}" / f"{key}.parquet"
-        if path.is_file():
-            return pl.read_parquet(path)
-        branches = self.match_branches(crr_snapshot_id, dam_snapshot_id)
-        crr_nodes = self.core("node").filter(pl.col("snapshot_id") == crr_snapshot_id).collect()
-        dam_nodes = self.core("node").filter(pl.col("snapshot_id") == dam_snapshot_id).collect()
-        crr_branch = self.core("branch").filter(pl.col("snapshot_id") == crr_snapshot_id).collect()
-        dam_branch = self.core("branch").filter(pl.col("snapshot_id") == dam_snapshot_id).collect()
-        result = match_buses(crr_nodes, dam_nodes, crr_branch, dam_branch, branches).with_columns(
-            pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id")
-        ).select("crr_snapshot_id", "dam_snapshot_id", *BUS_COLUMNS)
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        result.write_parquet(path, compression="zstd")
-        path.chmod(0o600)
-        return result
+        def compute() -> pl.DataFrame:
+            return match.match_buses(self.core_rows("node", crr_snapshot_id), self.core_rows("node", dam_snapshot_id),
+                                     self.core_rows("branch", crr_snapshot_id), self.core_rows("branch", dam_snapshot_id),
+                                     self.match_branches(crr_snapshot_id, dam_snapshot_id))
+
+        return self._pair("match_bus", match.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
 
     def match_contingencies(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
-        """``core.match_contingency``: by name, then by the translated branch set; cached."""
-        from .core.match import CONTINGENCY_COLUMNS, VERSION, match_contingencies
+        """``core.match_contingency``: by name, then by the translated branch set."""
+        from .core import match
 
-        key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
-        path = self.data_dir / "core" / "match_contingency" / f"v{VERSION}" / f"{key}.parquet"
-        if path.is_file():
-            return pl.read_parquet(path)
-        branches = self.match_branches(crr_snapshot_id, dam_snapshot_id)
-        crr = self.core("contingency_outage").filter(pl.col("snapshot_id") == crr_snapshot_id).collect()
-        dam = self.core("contingency_outage").filter(pl.col("snapshot_id") == dam_snapshot_id).collect()
-        result = match_contingencies(crr, dam, branches).with_columns(
-            pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id")
-        ).select("crr_snapshot_id", "dam_snapshot_id", *CONTINGENCY_COLUMNS)
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        result.write_parquet(path, compression="zstd")
-        path.chmod(0o600)
-        return result
+        def compute() -> pl.DataFrame:
+            return match.match_contingencies(self.core_rows("contingency_outage", crr_snapshot_id), self.core_rows("contingency_outage", dam_snapshot_id),
+                                             self.match_branches(crr_snapshot_id, dam_snapshot_id))
+
+        return self._pair("match_contingency", match.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
 
     def diff_branches(self, crr_snapshot_id: str, dam_snapshot_id: str, time_of_use: str = "PeakWD") -> pl.DataFrame:
-        """``core.diff_branch``: matched branches' kind, reactance, voltage levels, service and
-        ratings side by side with ``same_*`` verdicts. See ``ercot_mis.core.diff``. Cached."""
-        from .core.diff import VERSION, diff_branches
+        """``core.diff_branch``: matched branches' kind, reactance, voltages, service and ratings side by side, with ``same_*`` verdicts."""
+        from .core import diff
 
-        key = f"{crr_snapshot_id}__{dam_snapshot_id}__{time_of_use}".replace(":", "-")
-        path = self.data_dir / "core" / "diff_branch" / f"v{VERSION}" / f"{key}.parquet"
-        if path.is_file():
-            return pl.read_parquet(path)
-        matches = self.match_branches(crr_snapshot_id, dam_snapshot_id)
-        by = lambda table, sid: self.core(table).filter(pl.col("snapshot_id") == sid).collect()
-        result = diff_branches(matches, by("branch", crr_snapshot_id), by("node", crr_snapshot_id), by("branch_rating", crr_snapshot_id),
-                               by("branch", dam_snapshot_id), by("node", dam_snapshot_id), by("branch_rating", dam_snapshot_id), time_of_use)
-        result = result.with_columns(pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id"))
-        result = result.select("crr_snapshot_id", "dam_snapshot_id", pl.exclude("crr_snapshot_id", "dam_snapshot_id"))
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        result.write_parquet(path, compression="zstd")
-        path.chmod(0o600)
-        return result
+        def compute() -> pl.DataFrame:
+            crr, dam = crr_snapshot_id, dam_snapshot_id
+            return diff.diff_branches(self.match_branches(crr, dam), self.core_rows("branch", crr), self.core_rows("node", crr), self.core_rows("branch_rating", crr),
+                                      self.core_rows("branch", dam), self.core_rows("node", dam), self.core_rows("branch_rating", dam), time_of_use)
+
+        return self._pair("diff_branch", diff.VERSION, crr_snapshot_id, dam_snapshot_id, compute, suffix=f"__{time_of_use}")
 
     def diff_settlement_points(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
-        """``core.diff_settlement_point``: per settlement point name, the node sets the two models
-        put it on, compared through ``core.match_bus``. See ``ercot_mis.core.diff``. Cached."""
-        from .core.diff import VERSION, diff_settlement_points
+        """``core.diff_settlement_point``: per settlement point, the buses each model puts it on, compared through ``core.match_bus``."""
+        from .core import diff
 
-        key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
-        path = self.data_dir / "core" / "diff_settlement_point" / f"v{VERSION}" / f"{key}.parquet"
-        if path.is_file():
-            return pl.read_parquet(path)
-        by = lambda table, sid: self.core(table).filter(pl.col("snapshot_id") == sid).collect()
-        result = diff_settlement_points(by("settlement_point", crr_snapshot_id), by("settlement_point_bus", crr_snapshot_id),
-                                        by("settlement_point", dam_snapshot_id), by("settlement_point_bus", dam_snapshot_id),
-                                        self.match_buses(crr_snapshot_id, dam_snapshot_id))
-        result = result.with_columns(pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id"))
-        result = result.select("crr_snapshot_id", "dam_snapshot_id", pl.exclude("crr_snapshot_id", "dam_snapshot_id"))
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        result.write_parquet(path, compression="zstd")
-        path.chmod(0o600)
-        return result
+        def compute() -> pl.DataFrame:
+            crr, dam = crr_snapshot_id, dam_snapshot_id
+            return diff.diff_settlement_points(self.core_rows("settlement_point", crr), self.core_rows("settlement_point_bus", crr),
+                                               self.core_rows("settlement_point", dam), self.core_rows("settlement_point_bus", dam), self.match_buses(crr, dam))
+
+        return self._pair("diff_settlement_point", diff.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
 
     def diff_loads(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
-        """``core.diff_load``: per node carrying a load in either model, both models' loads there
-        (count, in service, MW, DAM distribution factor), compared through ``core.match_bus``. Cached."""
-        from .core.diff import VERSION, diff_loads
+        """``core.diff_load``: per bus carrying a load in either model, both models' loads there, compared through ``core.match_bus``."""
+        from .core import diff
 
-        key = f"{crr_snapshot_id}__{dam_snapshot_id}".replace(":", "-")
-        path = self.data_dir / "core" / "diff_load" / f"v{VERSION}" / f"{key}.parquet"
+        def compute() -> pl.DataFrame:
+            return diff.diff_loads(self.core_rows("load", crr_snapshot_id), self.core_rows("load", dam_snapshot_id), self.match_buses(crr_snapshot_id, dam_snapshot_id))
+
+        return self._pair("diff_load", diff.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
+
+    def _pair(self, table: str, version: int, crr_snapshot_id: str, dam_snapshot_id: str, compute, suffix: str = "") -> pl.DataFrame:
+        """A table about one CRR model and one DAM hour, computed once and kept until either model's core files or ``version`` change."""
+        packages = [self.snapshot(sid) for sid in (crr_snapshot_id, dam_snapshot_id)]
+        files = sorted(f for snap in packages for f in (self.data_dir / "core").glob(f"*/emil_id={snap['emil_id']}/{snap['blob_sha256'][:16]}.parquet"))
+        inputs = [(str(f.relative_to(self.data_dir)), f.stat().st_mtime_ns, f.stat().st_size) for f in files]
+        stamp = hashlib.sha256(repr((version, inputs)).encode()).hexdigest()[:16]
+        name = f"{crr_snapshot_id}__{dam_snapshot_id}{suffix}".replace(":", "-")
+        folder = self.data_dir / "core" / table
+        path = folder / f"{name}__{stamp}.parquet"
         if path.is_file():
             return pl.read_parquet(path)
-        by = lambda sid: self.core("load").filter(pl.col("snapshot_id") == sid).collect()
-        result = diff_loads(by(crr_snapshot_id), by(dam_snapshot_id), self.match_buses(crr_snapshot_id, dam_snapshot_id))
-        result = result.with_columns(pl.lit(crr_snapshot_id).alias("crr_snapshot_id"), pl.lit(dam_snapshot_id).alias("dam_snapshot_id"))
-        result = result.select("crr_snapshot_id", "dam_snapshot_id", pl.exclude("crr_snapshot_id", "dam_snapshot_id"))
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        ids = ("crr_snapshot_id", "dam_snapshot_id")
+        result = (compute().with_columns(pl.lit(crr_snapshot_id).alias(ids[0]), pl.lit(dam_snapshot_id).alias(ids[1]))
+                  .select(*ids, pl.exclude(*ids)))
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for stale in folder.glob(f"{name}__*.parquet"):
+            stale.unlink()
         result.write_parquet(path, compression="zstd")
         path.chmod(0o600)
         return result

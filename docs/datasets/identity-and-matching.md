@@ -135,7 +135,7 @@ a given hour.
   `bus_key`, which is what matching needs, since the DAM has already merged them. The
   network handed to a solver keeps the ties as branches by default, as ERCOT's auction
   does, and enforces the monitored ones; contraction is an option there
-  (`docs/out-network.md`, measured by `scripts/check_network.py`).
+  (`docs/out-network.md`, measured by `checks/network.py`).
 - **Branch matching** (`core/match.py`, `session.match_branches`): compare names
   with punctuation and case removed, in this order, recording the first method that
   succeeds as `match_method`: `exact`; `ops+ckt` (operations name followed by the

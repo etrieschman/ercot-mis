@@ -15,7 +15,7 @@ injection into the grid (INJ-01):
 
 Summed over a settlement point and hour this is the DAM's net injection, ``q``
 (``out.injection``). Summed over the system it should balance to zero within the
-market's tolerance (INJ-02), which ``scripts/check_injections.py`` measures. The files
+market's tolerance (INJ-02), which ``checks/injections.py`` measures. The files
 carry no DST flag, so on the long day the repeated hour is read as its first occurrence
 (NAM-08).
 """
@@ -26,9 +26,11 @@ import polars as pl
 
 from ..clock import hour_ending_start_expr
 
-VERSION = 2
+VERSION = 3
 
-COLUMNS = ("interval_start_utc", "delivery_date", "hour_ending", "settlement_point", "kind", "mw", "source_id")
+DISCLOSURE_PRODUCT = "NP3-966-ER"
+
+COLUMNS = ("interval_start_utc", "delivery_date", "hour_ending", "settlement_point", "kind", "mw", "source_id", "doc_id")
 
 
 def _rows(frame: pl.DataFrame, point: str, mw: str, kind: str, source_id: str, sign: float = 1.0) -> pl.DataFrame:
@@ -40,8 +42,8 @@ def _rows(frame: pl.DataFrame, point: str, mw: str, kind: str, source_id: str, s
 
 
 def hourly_awards(gen: pl.DataFrame, esr: pl.DataFrame, energy_only_offers: pl.DataFrame, energy_bids: pl.DataFrame,
-                  ptp_bids: pl.DataFrame, ptp_options: pl.DataFrame) -> pl.DataFrame:
-    """One frame of signed awards from the six award tables of one disclosure day."""
+                  ptp_bids: pl.DataFrame, ptp_options: pl.DataFrame, doc_id: str | None = None) -> pl.DataFrame:
+    """One frame of signed awards from the six award tables of one disclosure day, tagged with its document."""
     parts = [
         _rows(gen, "settlement_point_name", "awarded_quantity", "generation", "resource_name"),
         _rows(esr, "settlement_point_name", "awarded_quantity", "storage", "resource_name"),
@@ -53,7 +55,8 @@ def hourly_awards(gen: pl.DataFrame, esr: pl.DataFrame, energy_only_offers: pl.D
         _rows(ptp_options, "settlement_point_sink", "mw", "ptp_obligation_sink", "offer_id", -1.0),
     ]
     rows = pl.concat(parts)
-    rows = rows.with_columns(hour_ending_start_expr(pl.col("delivery_date").str.to_date("%m/%d/%Y"), pl.col("hour_ending"), pl.lit(None, pl.String)).alias("interval_start_utc"))
+    rows = rows.with_columns(hour_ending_start_expr(pl.col("delivery_date").str.to_date("%m/%d/%Y"), pl.col("hour_ending"), pl.lit(None, pl.String)).alias("interval_start_utc"),
+                             pl.lit(doc_id, pl.String).alias("doc_id"))
     return rows.select(COLUMNS).sort("interval_start_utc", "kind", "settlement_point", "source_id")
 
 
