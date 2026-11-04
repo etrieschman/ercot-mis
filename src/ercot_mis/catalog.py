@@ -15,7 +15,8 @@ from __future__ import annotations
 import os
 import re
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -136,6 +137,8 @@ def client_version() -> str:
 # Seconds between attempts to open a locked catalog, about a minute in total.
 LOCK_WAITS = (1, 2, 5, 10, 20, 30)
 
+CATALOG_FILE = "catalog.duckdb"
+
 # Catalog files this process has checked for every table; a read-only open checks each file once.
 _CHECKED: set[Path] = set()
 
@@ -162,6 +165,16 @@ class Catalog:
         finally:
             con.close()
         return not TABLES <= present
+
+    def query(self, sql: str, params: list | None = None) -> list[tuple]:
+        """Ad hoc SQL on the catalog; returns the rows."""
+        return self.con.execute(sql, params or []).fetchall()
+
+    def latest_doc(self, emil_id: str, doc_ids: Iterable[str]) -> str:
+        """Of ``doc_ids``, the one ERCOT posted last; an undated one counts as oldest (TOP-11)."""
+        doc_ids = list(doc_ids)
+        posted = dict(self.documents(emil_id, doc_ids).select("doc_id", "posted_at").rows())
+        return max(doc_ids, key=lambda d: posting_order(posted.get(d), d))
 
     def close(self) -> None:
         self.con.close()
@@ -337,3 +350,41 @@ class Catalog:
         except BaseException:
             self.con.rollback()
             raise
+
+
+@contextmanager
+def writing(data_dir: Path) -> Iterator[Catalog]:
+    """The writable catalog, held only for the duration of the block."""
+    writer = Catalog(Path(data_dir) / CATALOG_FILE)
+    try:
+        yield writer
+    finally:
+        writer.close()
+
+
+class ReadOnlyCatalog:
+    """Read-only catalog access that opens a connection per call and closes it before returning.
+
+    DuckDB allows one process at a time on the file, writer or readers, so a session that
+    kept a read-only connection open (a notebook left running) would block the daily
+    pull's writes. Every method of :class:`Catalog` is available; each call is its own
+    short connection, and results are plain frames and lists, never live cursors.
+    """
+
+    read_only = True
+
+    def __init__(self, data_dir: Path):
+        self.path = Path(data_dir) / CATALOG_FILE
+
+    def __getattr__(self, name: str):
+        if name.startswith("_") or not callable(getattr(Catalog, name, None)):
+            raise AttributeError(name)
+
+        def call(*args, **kwargs):
+            catalog = Catalog(self.path, read_only=True)
+            try:
+                return getattr(catalog, name)(*args, **kwargs)
+            finally:
+                catalog.close()
+
+        return call

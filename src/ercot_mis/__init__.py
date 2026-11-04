@@ -3,9 +3,10 @@
 from pathlib import Path
 
 from .config import ConfigError, Identity, load_identity, load_secret, resolve_data_dir, secure_permissions
-from .session import BudgetError, DownloadError, Probe, Session
+from .ews import EwsError, Probe, RemoteDoc
+from .fetch import BudgetError, DownloadError
 from .products import PRODUCTS, Product, get_product
-from .ews import EwsError, RemoteDoc
+from .session import Session
 
 __version__ = "0.0.1"
 

@@ -9,13 +9,13 @@ PACKAGE = Path(__file__).resolve().parents[1] / "src" / "ercot_mis"
 LAYERS = [
     {"products", "config", "clock"},  # vocabulary: no dependencies
     {"ews", "public_api"},            # how bytes arrive
-    {"store", "catalog"},             # layer 0: original documents
+    {"store", "catalog", "fetch"},    # layer 0: original documents, and how they arrive
     {"raw"},                          # layer 1: typed tables, one per source file
     {"core"},                         # layer 2: tidy keyed tables shared by CRR and DAM
     {"out"},                          # layer 3: what consumers read
     {"checks"},                       # layer 4: the layers tested against ERCOT's results
     {"viewer"},
-    {"session", "__init__"},          # strings the layers together; the only writer
+    {"session", "pull", "__init__"},  # strings the layers together; the only writer
 ]
 
 
