@@ -381,8 +381,8 @@ Then, in order:
 8. **Cross-model network** (one bus set for a CRR and a DAM network): the rule for a CRR
    bus that maps to two DAM buses is the user's call.
 9. **Redundancy**: the move to the new Mac is done (2026-10-28); the same `rsync` on a
-   schedule would give a second copy on another machine. Confirm the old Mac's launchd job
-   is unloaded (two pulls make two archives).
+   schedule would give a second copy on another machine. The old Mac's launchd job is
+   unloaded (confirmed 2026-11-04), so there is one pull and one archive.
 
 Other open rows of `docs/assumptions.md`: RAT-04 (which RAW rate is the DAM's
 post-contingency limit), RAT-05 (the two rating fallbacks), RAT-11 (tap convention), NAM-06,
