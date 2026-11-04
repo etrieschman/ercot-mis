@@ -208,7 +208,8 @@ src/ercot_mis/
   public_api.py     Public API: ID token, paged archive listing, paced calls, retry on 429
   store.py          layer 0, the archive: content-addressed files (archive/<EMIL>/<sha256>.zip, read-only, atomic), zip member hashing
   catalog.py        DuckDB catalog: remote_doc, archive_blob, archive_member, archive_source, run, artifact, lineage;
-                    posting_order (TOP-11: the latest posting wins, an undated one counts as oldest)
+                    posting_order (TOP-11: the latest posting wins, an undated one counts as oldest); writing(), ReadOnlyCatalog
+  fetch.py          how documents arrive: list_documents (a listing into the catalog), fetch (a document into the store), ingest (a local file)
   raw/              layer 1: typed tables, one per source file
     table.py        Column specs, snake_case, read_delimited (Arrow CSV, exact header check), read_sheet; ParseError
     psse.py         PSS/E v30 RAW -> psse_* tables, both dialects
@@ -245,8 +246,9 @@ src/ercot_mis/
     identity.py     how CRR and DAM keys line up
     register.py     a measurement for every row of docs/assumptions.md no other check measures
   viewer/           single-file network viewer (template.html + data builder); output is CEII
-  session.py        Session: list, fetch, ingest, probe; build_raw, build_core; raw, core, core_rows, raw_rows,
-                    network, injections, match_*, diff_*, viewer; start_run, record_artifacts, finish_run
+  session.py        Session, the hub: every method names the layer function doing the work. list, fetch, ingest, probe;
+                    build_raw, build_core; raw, core, core_rows, raw_rows; network, injections, match_*, diff_*, viewer
+  pull.py           the daily pull's bookkeeping: fetch_products, build_layers, at_risk (what a missed pull would lose), ews_captured.json
 demo/tour.ipynb              the walkthrough of every call; pulls into demo/data/ (gitignored); commit without outputs
 scripts/check.py             runs any check: prices, flows, injections, ldf, network, identity, register
 scripts/daily_pull.py        fetch, build_raw + build_core, price check on the newest days, flow check on the newest
