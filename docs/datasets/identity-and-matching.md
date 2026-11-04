@@ -9,29 +9,33 @@ statement below stops being true, change the code and the note together.
 ## Vocabulary
 
 Three words, used the same way in code, tables, the viewer and these notes (settled with
-the user on 2026-10-01; it is the node-breaker convention):
+the user on 2026-10-01 and tightened on 2026-11-04): a point of a node-breaker model is a
+node, a point of a bus-branch model is a bus.
 
-- **node**: the finest connection point a model gives, one RAW record. PSS/E calls
-  every RAW record a "bus", and only the raw layer keeps that word (`raw.psse_bus`);
-  processed layers say `node_number`. In a CRR model nodes are the sections between breakers; in a
-  DAM model ERCOT has already merged them, so each node is a bus on its own.
-- **bus**: nodes joined by closed breakers (in-service ties), one electrical point.
-  `bus_key` identifies a bus; `core.node` has one row per node with the `bus_key` of
-  the bus it belongs to. Buses are what the two models have in common, so matching
-  (`core.match_bus`) and settlement point weights (`core.settlement_point_bus`) are
-  at this level.
+- **node**: one RAW record of the CRR model, the finest point its closed breakers
+  separate. `core.node` (CRR only) has one row per node with the `bus_key` of the bus it
+  belongs to; CRR branches carry `from_node` and `to_node`. The DAM model is bus-branch
+  and has no nodes.
+- **bus**: one electrical point. In the DAM model every RAW record is a bus
+  (`bus_number`, `bus_type`); in the CRR model a bus is the nodes joined by closed
+  breakers (in-service ties), `n_nodes` of them. `core.bus` has one row per bus of either
+  model, keyed by `bus_key`. Buses are what the two models have in common, so matching
+  (`core.match_bus`), settlement point weights (`core.settlement_point_bus`) and loads
+  are at this level.
 - **substation**: the physical yard holding buses at several voltage levels. DAM RAW
-  names are substation names; CRR RAW names are node names. `core.node.raw_name` is the
-  name as the file gives it and `core.node.substation` is filled only where that name is
-  a substation (DAM); the viewer assigns CRR substations through the bus match.
+  names are substation names; CRR RAW names are node names. `core.bus.raw_name` is the
+  name as the file gives it (a CRR bus joins its nodes' names) and `core.bus.substation`
+  is filled only where that name is a substation (DAM); the viewer assigns CRR
+  substations through the bus match.
 
-`out.network` has one row per node by default and one per bus with `contract_ties=True`;
-its frames are named for the default (`nodes`, `node_id`), and `n_members` says how many
-nodes a bus holds.
+PSS/E calls every RAW record a "bus", and only the raw layer keeps that word
+(`raw.psse_bus`). `out.network` has one row per bus: for a CRR model with ties kept
+(ERCOT's auction topology) every node is a bus of one node, and `bus_key` repeats across
+a tie group; with `contract_ties=True` the rows are `core.bus`.
 
 ## What the keys in ERCOT's files are
 
-**Nodes.** A DAM RAW name is the *substation* name, shared by every node at that
+**RAW records.** A DAM RAW name is the *substation* name, shared by every bus at that
 substation; the CSVs' "Station Name/PSS/E Bus Name" column is the same string. CRR node
 names are 12-character electrical bus names (ERCOT's term), unique except for a few
 collisions. CRR and DAM numbers are unrelated numbering schemes. CRR numbers are stable month to
@@ -124,15 +128,15 @@ a given hour.
 
 ## Decisions
 
-- **Bus identity is equipment-based** (`core/node.py`). A `bus_key` is derived
-  from (substation, kV, attached branch/generator/load/settlement-point names); PSS/E
-  numbers are per-snapshot attributes kept for joins within the snapshot only. Nodes
-  with identical attachment sets (isolated nodes at one substation) get an ordinal
+- **Bus identity is equipment-based** (`core/bus.py`). A `bus_key` is derived
+  from (RAW name, kV, attached branch/generator/load/settlement-point names); PSS/E
+  numbers are per-snapshot attributes kept for joins within the snapshot only. Buses
+  with identical attachment sets (isolated buses at one substation) get an ordinal
   suffix and `is_ambiguous`; the suffix is not stable across snapshots, and does not
   need to be, because such buses are never part of the solved network.
-- **CRR ties are contracted for identity, not for solving.** `core.node` groups
-  nodes joined by in-service ties (|x| at or below `TIE_REACTANCE`) under one
-  `bus_key`, which is what matching needs, since the DAM has already merged them. The
+- **CRR ties are contracted for identity, not for solving.** `core.bus` joins the CRR
+  nodes connected by in-service ties (|x| at or below `TIE_REACTANCE`) into one bus with
+  one `bus_key`, which is what matching needs, since the DAM has already merged them. The
   network handed to a solver keeps the ties as branches by default, as ERCOT's auction
   does, and enforces the monitored ones; contraction is an option there
   (`docs/out-network.md`, measured by `checks/network.py`).

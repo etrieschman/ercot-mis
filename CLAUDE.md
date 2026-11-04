@@ -31,7 +31,7 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 | transport | own thin clients: EWS (certificate) and Public API (archive files, not JSON rows) |
 | transforms | Python parsers → `raw`; Python (polars) → `core`, `out`. The `.sql` runner was dropped on 2026-10-01; DuckDB remains for the catalog and ad hoc SQL |
 | storage | Parquet on disk (zstd, hive-partitioned), Arrow in memory, DuckDB catalog + SQL engine, polars for reading. **No connection outlives a call**: `Session` opens a read-only connection per read and takes the writer only to record a listing, a blob or an artifact, never across a download or a parse, so a notebook never blocks the daily pull |
-| bus identity | **equipment-based `bus_key`**, not PSS/E number or name (DAM numbers change from hour to hour; names are substation names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/node.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `checks/identity.py` |
+| bus identity | **equipment-based `bus_key`**, not PSS/E number or name (DAM numbers change from hour to hour; names are substation names). CRR bus ties (closed breakers and switches at PSS/E's minimum reactance, in service) are contracted **for identity and matching only**; `core/bus.py`; explained in `docs/datasets/identity-and-matching.md`, measured by `checks/identity.py` |
 | fidelity | **defaults do what ERCOT does; our analysis choices are named options.** `out.network` keeps CRR ties as branches and enforces the monitored breakers, as the auction does; contraction is `Options(contract_ties=True)`. Every assumption, its status and how it was checked lives in `docs/assumptions.md` (update it in the same commit as the code) |
 | data location | `data/` in this repo by default; `ERCOT_MIS_DATA` overrides |
 | network output | standardized tables + optional `ercot_mis.out.shift_factors` (DC solve and shift-factor rows, base case and under a contingency) |
@@ -45,18 +45,23 @@ to the bytes ERCOT published. **Public repo, code only.** First consumer:
 
 ### Vocabulary (settled 2026-10-01; the user's research and node-breaker convention)
 
-- **node** = the finest connection point a model gives: one RAW record. PSS/E calls it a
-  "bus", and only the raw layer keeps that word (`raw.psse_bus`); processed layers say
-  `node_number`, `node_type`, `from_node`, `to_node`.
-- **bus** = nodes joined by closed breakers. `bus_key` identifies it; matching
-  (`core.match_bus`, `session.match_buses`) and settlement point weights
-  (`core.settlement_point_bus`) are at bus level. A DAM node is a bus on its own.
+- **node** = a point of a node-breaker model: one RAW record of the CRR model, the finest
+  point its closed breakers separate. `core.node` (CRR only): `node_number`, `node_type`,
+  `bus_key`, `is_tie_member`; CRR branches carry `from_node`, `to_node`.
+- **bus** = a point of a bus-branch model: one RAW record of the DAM model (`bus_number`,
+  `bus_type`), or the CRR nodes that closed breakers (in-service ties) join into one
+  electrical point (`n_nodes`). `core.bus` holds both models' buses, keyed by `bus_key`;
+  matching (`core.match_bus`), settlement point weights (`core.settlement_point_bus`) and
+  loads are at bus level. DAM branches carry `from_bus_number`, `to_bus_number`.
 - **substation** = the physical yard (several voltage levels). Never "station", except
   where a raw column quotes ERCOT's header.
-- `out.network` rows are nodes by default and buses with `contract_ties`; the frames are
-  named for the default (`nodes`, `node_id`) and `n_members` counts the nodes in a bus.
+- `out.network` rows are **buses**: a solver's model is bus-branch. For a CRR model with
+  ties kept (ERCOT's auction topology, the default) every node is a bus of one node and
+  `bus_key` repeats across a tie group; with `contract_ties` the rows are `core.bus`.
+  Frames: `buses`, `bus_id`, `bus_index`, `settlement_point_buses`, `dropped_buses`.
+- PSS/E calls every record a "bus"; only the raw layer keeps that word (`raw.psse_bus`).
 
-Do not write "node" for the merged thing or "bus" for a CRR bus section again.
+Never write "node" for a DAM point or for the merged thing, and never "bus" for a CRR RAW record.
 - **electrical bus** is ERCOT's own name for a pricing point in its price and mapping
   files; it appears only in raw tables and the mapping tables, never in core or out.
 
@@ -72,8 +77,11 @@ Do not write "node" for the merged thing or "bus" for a CRR bus section again.
   `dam:2026-10-14:he07:r1`). One table per line:
   - `snapshot`: one row per model; revision = posting order within a logical package;
     DAM rows carry `interval_start_utc`.
-  - `node`: one row per node (one RAW record) per snapshot: `bus_key`, `substation`,
-    `kv`, `bus_group`, `is_tie_member`, attachments.
+  - `bus`: one row per bus per snapshot (DAM: one per RAW record, with `bus_number`; CRR: one
+    per tie group or lone node, with `n_nodes`): `bus_key`, `substation`, `kv`, `bus_type`,
+    attachments, `is_ambiguous`.
+  - `node`: one row per CRR node (one RAW record): `node_number`, `node_type`, `kv`,
+    `bus_key`, `is_tie_member`. Empty for DAM.
   - `branch`, `branch_rating`: stable `branch_id`, endpoints as bus keys, tie, service,
     monitored and secured flags; RAW rate A/B/C and CRR CSV ratings per TOU block side by side.
   - `contingency`, `contingency_outage`: each model's own vocabulary resolved to branch
@@ -82,7 +90,7 @@ Do not write "node" for the merged thing or "bus" for a CRR bus section again.
     workbook with `crr_gtc_id` from the manual crosswalk (`data/overrides/gtc_names.csv`), members empty.
   - `settlement_point`, `settlement_point_bus`: kind and bus weights summing to one
     (CRR participation factors; DAM `Sp`, `Hb` with the protocol's two-level hub average, `Ld`).
-  - `load`: one row per load: node, service status, MW; DAM zone, distribution factor and rollover flags.
+  - `load`: one row per load: its node (CRR) or bus (DAM), service status, MW; DAM zone, distribution factor and rollover flags.
   - `hourly_award` (from the 60-day disclosure, one package per operating day): every energy
     award as a signed MW at a settlement point; `session.injections(day)` sums it to `q`.
   - `match_branch`, `match_bus`, `match_contingency` per (CRR snapshot, DAM snapshot)
@@ -128,7 +136,7 @@ Do not write "node" for the merged thing or "bus" for a CRR bus section again.
   breaker ratings), DAM none below its own floor of 0.0005 pu, where the CRR ties it
   keeps sit. ERCOT's auction solves the CRR model with the ties; so does `out.network`
   by default (`checks/network.py` measures the cost of contracting instead).
-  `core.node` records the tie groups because matching needs them.
+  `core.node` records which bus each CRR node belongs to because matching needs it.
 - **Both RAWs already reflect outages** (DAM README; CRR measured against its Outages
   file). Status OUT is the outage; the CRR Outages file is informational.
 - **Name orientation**: CRR line names follow the RAW's from/to; CRR transformer names
@@ -185,7 +193,7 @@ existing key and file ⇒ skip, bumped version ⇒ rebuild. `build_raw` writes
 identity columns on every row (`emil_id`, `doc_id`, `blob_sha256`, `member_sha256`,
 `member_path`, CRR `auction/term/sequence/month/time_of_use`, DAM
 `operating_date/hour`). `build_core` writes `core/snapshot.parquet` and, per
-package, `core/<table>/emil_id=<EMIL>/<blob16>.parquet` for node, branch,
+package, `core/<table>/emil_id=<EMIL>/<blob16>.parquet` for bus, node, branch,
 branch_rating, contingency, contingency_outage, gtc, gtc_member, settlement_point,
 settlement_point_bus and load, and `hourly_award` per disclosure day; the matchers
 are computed per session and kept in memory (recomputing a pair costs tens of milliseconds). Read with `session.raw(table)` and
@@ -221,7 +229,7 @@ src/ercot_mis/
     build.py        parse packages in a process pool, write Parquet with identity columns, register artifacts
   core/             layer 2: tidy keyed tables shared by CRR and DAM
     snapshot.py     snapshot IDs and revisions
-    node.py         equipment-based bus keys; CRR tie contraction
+    bus.py          core.bus (both models) and core.node (CRR): equipment-based bus keys; CRR tie contraction
     branch.py       core.branch and core.branch_rating
     contingency.py  core.contingency and core.contingency_outage, resolved to branch and bus keys
     gtc.py          core.gtc and core.gtc_member

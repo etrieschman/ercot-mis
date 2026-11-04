@@ -43,11 +43,11 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     system = DcSystem(net)
     resolved = resolve(session, snapshot_id, net, system, shadow)
 
-    # Settlement point weights as a (points x nodes) matrix.
-    weights = net.settlement_point_nodes.select("settlement_point_id", "node_index", "weight")
+    # Settlement point weights as a (points x buses) matrix.
+    weights = net.settlement_point_buses.select("settlement_point_id", "bus_index", "weight")
     points_frame = weights.select("settlement_point_id").unique().sort("settlement_point_id").with_row_index("point_index")
     w = weights.join(points_frame, on="settlement_point_id")
-    W = sparse.csr_matrix((w["weight"].to_numpy(), (w["point_index"].to_numpy(), w["node_index"].to_numpy())), shape=(points_frame.height, net.n_nodes))
+    W = sparse.csr_matrix((w["weight"].to_numpy(), (w["point_index"].to_numpy(), w["bus_index"].to_numpy())), shape=(points_frame.height, net.n_buses))
     point_ids = points_frame["settlement_point_id"].to_list()
 
     # ERCOT's own list of the settlement points each contingency cuts off (SpCtg), to compare with ours (NAM-07).
@@ -59,7 +59,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
 
     congestion = np.zeros(points_frame.height)        # per-constraint weights (PRC-03)
     congestion_plain = np.zeros(points_frame.height)  # plain weights, cut-off buses at zero
-    cut_off_mu = np.zeros(net.n_nodes)                # per node: shadow price of rows whose contingency cuts it off
+    cut_off_mu = np.zeros(net.n_buses)                # per bus: shadow price of rows whose contingency cuts it off
     outcome: dict[str, int] = {}
     mu_by_outcome: dict[str, float] = {}
     by_flags: dict[str, int] = {}
@@ -82,7 +82,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
             congestion_plain += row.shadow_price * (W @ sf)
             continue
         islanding = row.outcome == "used_contingency_islanding"
-        connected = row.system.connected[:net.n_nodes] if islanding else None
+        connected = row.system.connected[:net.n_buses] if islanding else None
         sf = row.system.shift_factors([row.branch])[0]
         congestion += row.sign * row.shadow_price * (_renormalized(W, connected) @ sf)
         congestion_plain += row.sign * row.shadow_price * (W @ sf)
@@ -90,7 +90,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
             cut_off_mu += row.shadow_price * ~connected
         if row.contingency != BASE_CASE and row.outcome.startswith("used_contingency") and row.contingency not in compared:
             compared.add(row.contingency)
-            mask = connected if connected is not None else np.ones(net.n_nodes, bool)
+            mask = connected if connected is not None else np.ones(net.n_buses, bool)
             ours = {point_ids[i] for i in np.flatnonzero(np.asarray((W @ sparse.diags(mask.astype(float))).sum(axis=1)).ravel() <= 0)}
             theirs = ercot_cut.get(row.contingency)
             cut_lists["binding_contingencies_ercot_lists_none" if theirs is None else "binding_contingencies_compared"] += 1
@@ -136,7 +136,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
                                                                                                                     on_buses.filter(pl.col("n_buses") > 1)))}
 
     # Points with a bus some binding contingency cuts off, against the rest: under PRC-03 and under plain weights.
-    cut = weights.with_columns(pl.Series("cut", cut_off_mu[weights["node_index"].to_numpy()] > 0)).group_by("settlement_point_id").agg(pl.col("cut").any())
+    cut = weights.with_columns(pl.Series("cut", cut_off_mu[weights["bus_index"].to_numpy()] > 0)).group_by("settlement_point_id").agg(pl.col("cut").any())
     is_cut = points.join(cut, on="settlement_point_id", how="left")["cut"].fill_null(False).to_numpy()
     for label, mask in (("points_cut_off_by_a_binding_contingency", is_cut), ("other_points", ~is_cut)):
         result[label] = {"n": int(mask.sum()), "p50_abs": round(float(np.median(resid[mask])), 3) if mask.any() else None,
@@ -147,7 +147,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
 
     # Settlement points ERCOT de-energized in the base case (NP4-200-CD) against the points our network has no node for (NAM-07, TOP-05).
     dead = set(hour_rows(session, "dam_deenergized_settlement_points", start_utc)["settlement_point"])
-    ours_dead = set(net.settlement_points.filter(pl.col("n_nodes") == 0)["settlement_point_id"])
+    ours_dead = set(net.settlement_points.filter(pl.col("n_buses") == 0)["settlement_point_id"])
     in_points = points["settlement_point_id"].is_in(list(dead)).to_numpy()
     result["deenergized_in_base_case"] = {"published": len(dead), "among_points_compared": int(in_points.sum()), "ours_without_node": len(ours_dead),
                                           "agree": len(dead & ours_dead), "only_ours": len(ours_dead - dead), "only_ercot": len(dead - ours_dead),

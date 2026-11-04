@@ -208,7 +208,7 @@ class Session:
     def match_buses(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
         """``core.match_bus``: settlement points first, then the endpoints of matched branches."""
         def compute() -> pl.DataFrame:
-            return match.match_buses(self.core_rows("node", crr_snapshot_id), self.core_rows("node", dam_snapshot_id),
+            return match.match_buses(self.core_rows("bus", crr_snapshot_id), self.core_rows("bus", dam_snapshot_id),
                                      self.core_rows("branch", crr_snapshot_id), self.core_rows("branch", dam_snapshot_id),
                                      self.match_branches(crr_snapshot_id, dam_snapshot_id))
 
@@ -226,8 +226,8 @@ class Session:
         """``core.diff_branch``: matched branches' kind, reactance, voltages, service and ratings side by side, with ``same_*`` verdicts."""
         def compute() -> pl.DataFrame:
             crr, dam = crr_snapshot_id, dam_snapshot_id
-            return diff.diff_branches(self.match_branches(crr, dam), self.core_rows("branch", crr), self.core_rows("node", crr), self.core_rows("branch_rating", crr),
-                                      self.core_rows("branch", dam), self.core_rows("node", dam), self.core_rows("branch_rating", dam), time_of_use)
+            return diff.diff_branches(self.match_branches(crr, dam), self.core_rows("branch", crr), self.core_rows("bus", crr), self.core_rows("branch_rating", crr),
+                                      self.core_rows("branch", dam), self.core_rows("bus", dam), self.core_rows("branch_rating", dam), time_of_use)
 
         return self._pair("diff_branch", diff.VERSION, crr_snapshot_id, dam_snapshot_id, compute, suffix=f"__{time_of_use}")
 

@@ -10,7 +10,7 @@ One row per load per snapshot:
 - ``load_id``: the DAM's load name; for CRR, whose RAW names only the bus, the bus
   name and the PSS/E load id (``<bus name>:<id>``, with ``#<bus number>`` when two
   buses share a name);
-- ``psse_bus``, ``psse_load_id``, ``bus_key``: where it is attached;
+- ``node_number`` (CRR) or ``bus_number`` (DAM), ``psse_load_id`` and ``bus_key``: where it is attached;
 - ``is_in_service`` and ``mw`` from the RAW record (status and constant-power MW);
 - DAM only, from the ``Ld`` file: ``load_zone``, ``weather_zone``, ``is_ercot_load``,
   ``is_conforming``, ``mw_ldf`` (the distribution factor the zone price is weighted
@@ -27,9 +27,9 @@ import polars as pl
 
 from ..raw.table import flag
 
-VERSION = 2
+VERSION = 3
 
-COLUMNS = ("load_id", "node_number", "psse_load_id", "bus_key", "is_in_service", "mw", "load_zone", "weather_zone",
+COLUMNS = ("load_id", "node_number", "bus_number", "psse_load_id", "bus_key", "is_in_service", "mw", "load_zone", "weather_zone",
            "is_ercot_load", "is_conforming", "mw_ldf", "is_rollover_capable", "n_rollover_targets")
 _DAM_ONLY = {"load_zone": pl.String, "weather_zone": pl.String, "is_ercot_load": pl.Boolean, "is_conforming": pl.Boolean,
              "mw_ldf": pl.Float64, "is_rollover_capable": pl.Boolean, "n_rollover_targets": pl.Int64}
@@ -47,16 +47,16 @@ def crr_loads(nodes: pl.DataFrame, psse_load: pl.DataFrame) -> pl.DataFrame:
             # Two buses can share a name; those loads get the bus number as well.
             .with_columns(pl.when(pl.len().over("load_id") > 1).then(pl.col("load_id") + "#" + pl.col("node_number").cast(pl.String))
                           .otherwise(pl.col("load_id")).alias("load_id"))
-            .with_columns([pl.lit(None, dtype).alias(name) for name, dtype in _DAM_ONLY.items()])
+            .with_columns([pl.lit(None, dtype).alias(name) for name, dtype in _DAM_ONLY.items()] + [pl.lit(None, pl.Int64).alias("bus_number")])
             .select(COLUMNS).sort("load_id", "node_number"))
 
 
-def dam_loads(nodes: pl.DataFrame, psse_load: pl.DataFrame, loads: pl.DataFrame) -> pl.DataFrame:
-    """From one hour's ``psse_load`` and ``dam_loads`` (joined on bus and load id)."""
-    to_node = nodes.select("node_number", "bus_key")
-    raw = psse_load.select(pl.col("i").cast(pl.Int64).alias("node_number"), pl.col("id").cast(pl.String).str.strip_chars().alias("psse_load_id"),
+def dam_loads(buses: pl.DataFrame, psse_load: pl.DataFrame, loads: pl.DataFrame) -> pl.DataFrame:
+    """From one hour's ``psse_load`` and ``dam_loads`` (joined on bus and load id); ``buses`` is the hour's ``core.bus``."""
+    to_bus = buses.select("bus_number", "bus_key")
+    raw = psse_load.select(pl.col("i").cast(pl.Int64).alias("bus_number"), pl.col("id").cast(pl.String).str.strip_chars().alias("psse_load_id"),
                            (pl.col("status") == 1).alias("_raw_in_service"), pl.col("pl").cast(pl.Float64).alias("mw"))
-    return (loads.select(pl.col("load_name").cast(pl.String).alias("load_id"), pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"),
+    return (loads.select(pl.col("load_name").cast(pl.String).alias("load_id"), pl.col("psse_bus_number").cast(pl.Int64).alias("bus_number"),
                          pl.col("psse_load_id").cast(pl.String).str.strip_chars().alias("psse_load_id"),
                          flag(pl.col("load_status"), "IN").alias("_csv_in_service"),
                          pl.col("load_zone_name").cast(pl.String).alias("load_zone"), pl.col("weather_zone_name").cast(pl.String).alias("weather_zone"),
@@ -64,6 +64,6 @@ def dam_loads(nodes: pl.DataFrame, psse_load: pl.DataFrame, loads: pl.DataFrame)
                          flag(pl.col("conforming_or_non_conforming"), "C").alias("is_conforming"),
                          pl.col("raw_mw_ldf").cast(pl.Float64).alias("mw_ldf"), flag(pl.col("load_rollover_capable"), "Y").alias("is_rollover_capable"),
                          pl.col("number_of_target_loads").cast(pl.Int64, strict=False).alias("n_rollover_targets"))
-            .join(raw, on=["node_number", "psse_load_id"], how="left").join(to_node, on="node_number", how="left")
-            .with_columns(pl.coalesce(pl.col("_raw_in_service"), pl.col("_csv_in_service")).alias("is_in_service"))
-            .select(COLUMNS).sort("load_id", "node_number"))
+            .join(raw, on=["bus_number", "psse_load_id"], how="left").join(to_bus, on="bus_number", how="left")
+            .with_columns(pl.coalesce(pl.col("_raw_in_service"), pl.col("_csv_in_service")).alias("is_in_service"), pl.lit(None, pl.Int64).alias("node_number"))
+            .select(COLUMNS).sort("load_id", "bus_number"))

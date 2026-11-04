@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import polars as pl
 
-VERSION = 4
+VERSION = 5
 
 # The row of docs/assumptions.md behind every match_method (tests/test_register.py).
 REGISTER_ROWS = {
@@ -130,16 +130,16 @@ def match_branches(crr_branch: pl.DataFrame, mapping_lines: pl.DataFrame, mappin
 BUS_COLUMNS = ("crr_bus_key", "dam_bus_key", "match_method", "settlement_point", "n_votes", "n_candidates")
 
 
-def _settlement_points(nodes: pl.DataFrame) -> pl.DataFrame:
-    """(settlement_point, bus_key) pairs from the ``S:`` labels in ``attachments``."""
-    return (nodes.filter(pl.col("attachments") != "").select("bus_key", pl.col("attachments").str.split("|").alias("label")).explode("label", empty_as_null=False)
+def _settlement_points(buses: pl.DataFrame) -> pl.DataFrame:
+    """(settlement_point, bus_key) pairs from the ``S:`` labels in ``core.bus``'s ``attachments``."""
+    return (buses.filter(pl.col("attachments") != "").select("bus_key", pl.col("attachments").str.split("|").alias("label")).explode("label", empty_as_null=False)
             .filter(pl.col("label").str.starts_with("S:"))
             .select(pl.col("label").str.slice(2).alias("settlement_point"), "bus_key").unique())
 
 
-def match_buses(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl.DataFrame, dam_branch: pl.DataFrame,
+def match_buses(crr_buses: pl.DataFrame, dam_buses: pl.DataFrame, crr_branch: pl.DataFrame, dam_branch: pl.DataFrame,
                 branch_matches: pl.DataFrame) -> pl.DataFrame:
-    """One row per CRR bus with its DAM bus, plus unmatched DAM buses (a DAM node is a bus on its own).
+    """One row per CRR bus with its DAM bus, plus unmatched DAM buses; both sides are ``core.bus`` rows.
 
     Methods, first that succeeds wins:
 
@@ -154,11 +154,11 @@ def match_buses(crr_nodes: pl.DataFrame, dam_nodes: pl.DataFrame, crr_branch: pl
        have a single matched branch;
     3. ``unmatched``, with the number of competing candidates.
     """
-    crr_keys = crr_nodes.select(pl.col("bus_key").alias("crr_bus_key")).unique()
-    dam_keys = dam_nodes.select(pl.col("bus_key").alias("dam_bus_key")).unique()
+    crr_keys = crr_buses.select(pl.col("bus_key").alias("crr_bus_key")).unique()
+    dam_keys = dam_buses.select(pl.col("bus_key").alias("dam_bus_key")).unique()
 
-    crr_sp = _settlement_points(crr_nodes).group_by("settlement_point").agg(pl.col("bus_key").unique().alias("k")).filter(pl.col("k").list.len() == 1).with_columns(pl.col("k").list.first())
-    dam_sp = _settlement_points(dam_nodes).group_by("settlement_point").agg(pl.col("bus_key").unique().alias("k")).filter(pl.col("k").list.len() == 1).with_columns(pl.col("k").list.first())
+    crr_sp = _settlement_points(crr_buses).group_by("settlement_point").agg(pl.col("bus_key").unique().alias("k")).filter(pl.col("k").list.len() == 1).with_columns(pl.col("k").list.first())
+    dam_sp = _settlement_points(dam_buses).group_by("settlement_point").agg(pl.col("bus_key").unique().alias("k")).filter(pl.col("k").list.len() == 1).with_columns(pl.col("k").list.first())
     sp_pairs = (crr_sp.join(dam_sp, on="settlement_point", suffix="_dam")
                 .select(pl.col("k").alias("crr_bus_key"), pl.col("k_dam").alias("dam_bus_key"), "settlement_point"))
     agreed = (sp_pairs.group_by("crr_bus_key", "dam_bus_key").agg(pl.col("settlement_point").sort().first(), pl.len().alias("n_votes")))

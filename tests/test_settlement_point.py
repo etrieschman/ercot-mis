@@ -1,11 +1,11 @@
 import polars as pl
-import pytest
 
 from ercot_mis.core import settlement_point as spm
 
 
-def _nodes(buses, keys):
-    return pl.DataFrame({"node_number": buses, "bus_key": keys})
+def _nodes(numbers, keys):
+    """CRR nodes, or DAM buses: the builders read ``node_number`` or ``bus_number``."""
+    return pl.DataFrame({"node_number": numbers, "bus_number": numbers, "bus_key": keys})
 
 
 def test_crr_points_normalize_weights_merge_contracted_buses_and_flag_unknown_buses():

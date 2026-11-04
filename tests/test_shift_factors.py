@@ -3,8 +3,22 @@
 import numpy as np
 import polars as pl
 
+from ercot_mis.core.bus import NODE_SCHEMA
 from ercot_mis.out.network import CoreTables, build_network
 from ercot_mis.out.shift_factors import DcSystem
+
+
+def _core(bus_like: pl.DataFrame, branch: pl.DataFrame, rating: pl.DataFrame) -> CoreTables:
+    """A DAM hour's core tables from a bus list, branches between the bus numbers, and ratings; nothing else."""
+    bus = bus_like.select(pl.col("node_number").alias("bus_number"), "raw_name", "substation", "kv", pl.col("node_type").alias("bus_type"), "bus_key",
+                          pl.lit(None, pl.Int64).alias("n_nodes"), pl.lit("").alias("attachments"), pl.lit(0).alias("n_attachments"), pl.lit(False).alias("is_ambiguous"))
+    branch = branch.with_columns(pl.col("from_node").alias("from_bus_number"), pl.col("to_node").alias("to_bus_number"), pl.lit(False).alias("is_name_reversed"))
+    empty = lambda **schema: pl.DataFrame(schema=schema)
+    return CoreTables(bus, pl.DataFrame(schema=NODE_SCHEMA), branch, rating, empty(contingency_id=pl.String, has_split_bus=pl.Boolean),
+                      empty(contingency_id=pl.String, element_kind=pl.String, operation=pl.String, branch_id=pl.String, is_resolved=pl.Boolean, split_end=pl.String),
+                      empty(gtc_id=pl.String, source=pl.String, limit_mw=pl.Float64, crr_gtc_id=pl.String),
+                      empty(gtc_id=pl.String, branch_id=pl.String, factor=pl.Float64, flow_direction=pl.String, is_resolved=pl.Boolean),
+                      empty(settlement_point_id=pl.String, kind=pl.String), empty(settlement_point_id=pl.String, bus_key=pl.String, weight=pl.Float64, is_resolved=pl.Boolean))
 
 # Triangle 1-2-3 (equal reactances) with node 4 hanging off node 3; bus 1 is the slack.
 # Branch order after sorting by id: A (1-2), B (2-3), C (1-3), D (3-4).
@@ -18,7 +32,7 @@ def _system() -> tuple[DcSystem, dict[str, int]]:
                            "is_monitored": [True] * 4, "is_secured": [True] * 4}, schema_overrides={"tap_ratio": pl.Float64})
     rating = pl.DataFrame({"branch_id": ["A"], "rating_source": ["psse_raw"], "time_of_use": [None], "base_mw": [100.0], "emergency_mw": [110.0]},
                           schema_overrides={"time_of_use": pl.String})
-    net = build_network("dam:2030-01-01:he01:r1", CoreTables(node, branch, rating))
+    net = build_network("dam:2030-01-01:he01:r1", _core(node, branch, rating))
     return DcSystem(net), dict(net.branches.select("branch_id", "index").rows())
 
 
@@ -61,7 +75,7 @@ def test_a_transformer_tap_scales_its_susceptance():
                           schema_overrides={"tap_ratio": pl.Float64})
     rating = pl.DataFrame({"branch_id": ["L"], "rating_source": ["psse_raw"], "time_of_use": [None], "base_mw": [100.0], "emergency_mw": [110.0]},
                           schema_overrides={"time_of_use": pl.String})
-    net = build_network("dam:2030-01-01:he01:r1", CoreTables(node, branch, rating))
+    net = build_network("dam:2030-01-01:he01:r1", _core(node, branch, rating))
     system = DcSystem(net)
     j = dict(net.branches.select("branch_id", "index").rows())
     rows = system.shift_factors([j["L"], j["T"]])

@@ -4,7 +4,7 @@ from ercot_mis.core import contingency, gtc
 
 
 def _branches(ids, keys):
-    return pl.DataFrame({"branch_id": ids, "from_node": [1, 2, 1], "to_node": [3, 3, 2], "ckt": ["1", "1", "T1"],
+    return pl.DataFrame({"branch_id": ids, "from_node": [1, 2, 1], "to_node": [3, 3, 2], "from_bus_number": [1, 2, 1], "to_bus_number": [3, 3, 2], "ckt": ["1", "1", "T1"],
                          "from_bus_key": [k[0] for k in keys], "to_bus_key": [k[1] for k in keys]})
 
 
@@ -22,7 +22,7 @@ def test_crr_contingencies_resolve_devices_by_branch_id_and_keep_unresolved():
 
 def test_dam_contingencies_resolve_branches_by_key_and_equipment_by_bus():
     branches = _branches(["L1", "L2", "X1"], [("a", "b"), ("c", "b"), ("a", "c")])
-    nodes = pl.DataFrame({"node_number": [1, 2, 3], "bus_key": ["a", "c", "b"]})
+    buses = pl.DataFrame({"bus_number": [1, 2, 3], "bus_key": ["a", "c", "b"]})
     raw = pl.DataFrame({
         "contingency_name": ["D1", "D1", "D2", "D3", "D4", "D5", "D5"],
         "equipment_type": ["Branch", "Generator", "Load", "SettlementPoint", "Branch", "Branch", "Branch"],
@@ -35,7 +35,7 @@ def test_dam_contingencies_resolve_branches_by_key_and_equipment_by_bus():
         "split_bus_psse_bus_number": [None, None, None, "99", None, "3", "new section"],
         "split_bus_psse_to_bus_number": [None, None, None, None, None, "new section", "3"],
     })
-    ctg, out = contingency.dam_contingencies(branches, nodes, raw)
+    ctg, out = contingency.dam_contingencies(branches, buses, raw)
     by = {r["contingency_id"]: r for r in ctg.to_dicts()}
     assert by["D1"] == {"contingency_id": "D1", "n_outages": 2, "n_unresolved": 0, "has_split_bus": False}
     assert by["D3"]["has_split_bus"] and by["D3"]["n_unresolved"] == 1  # bus 99 is not in the model

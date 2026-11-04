@@ -1,7 +1,7 @@
 """The flow check: do the DAM's own awards, pushed through our network, give the flows ERCOT reports?
 
 For one DAM hour: the net injection per settlement point from the 60-Day DAM Disclosure
-(``session.injections``, INJ-01) is spread onto nodes by the network's settlement point
+(``session.injections``, INJ-01) is spread onto buses by the network's settlement point
 weights and solved as DC flows, in the base case and under each binding contingency. Then:
 
 - **binding rows** (FLW-02): our flow at each constraint of NP4-191-CD, in the row's
@@ -34,9 +34,9 @@ def check_hour(session, snapshot_id: str, q_day: pl.DataFrame) -> dict | None:
         return None
     net = session.network(snapshot_id)
     system = DcSystem(net)
-    x, placement = node_injections(net, q)
+    x, placement = bus_injections(net, q)
     base = system.flows(x)
-    result = {"snapshot_id": snapshot_id, "injections": placement, "nodes": net.n_nodes, "branches": net.n_branches}
+    result = {"snapshot_id": snapshot_id, "injections": placement, "buses": net.n_buses, "branches": net.n_branches}
 
     limited = net.branches.filter(pl.col("is_limited") & (pl.col("base_limit_mw") > 0))
     j, limit = limited["index"].to_numpy(), limited["base_limit_mw"].to_numpy()
@@ -83,16 +83,16 @@ def check_hour(session, snapshot_id: str, q_day: pl.DataFrame) -> dict | None:
     return result
 
 
-def node_injections(net: Network, q: pl.DataFrame) -> tuple[np.ndarray, dict]:
-    """``q`` per settlement point spread onto the network's nodes, and a summary of what could not be placed (FLW-01)."""
+def bus_injections(net: Network, q: pl.DataFrame) -> tuple[np.ndarray, dict]:
+    """``q`` per settlement point spread onto the network's buses, and a summary of what could not be placed (FLW-01)."""
     kinds = [c for c in q.columns if c not in ("interval_start_utc", "delivery_date", "hour_ending", "settlement_point", "net_mw")]
-    rows = (q.join(net.settlement_points.select(pl.col("settlement_point_id").alias("settlement_point"), "kind", "n_nodes"), on="settlement_point", how="left")
-            .with_columns(pl.col("kind").fill_null("not_in_model"), pl.col("n_nodes").fill_null(0)))
-    placed, unplaced = rows.filter(pl.col("n_nodes") > 0), rows.filter(pl.col("n_nodes") == 0)
+    rows = (q.join(net.settlement_points.select(pl.col("settlement_point_id").alias("settlement_point"), "kind", "n_buses"), on="settlement_point", how="left")
+            .with_columns(pl.col("kind").fill_null("not_in_model"), pl.col("n_buses").fill_null(0)))
+    placed, unplaced = rows.filter(pl.col("n_buses") > 0), rows.filter(pl.col("n_buses") == 0)
     spread = placed.select("settlement_point",
-                           "net_mw").join(net.settlement_point_nodes.rename({"settlement_point_id": "settlement_point"}), on="settlement_point")
-    x = np.zeros(net.n_nodes)
-    np.add.at(x, spread["node_index"].to_numpy(), (spread["net_mw"] * spread["weight"]).to_numpy())
+                           "net_mw").join(net.settlement_point_buses.rename({"settlement_point_id": "settlement_point"}), on="settlement_point")
+    x = np.zeros(net.n_buses)
+    np.add.at(x, spread["bus_index"].to_numpy(), (spread["net_mw"] * spread["weight"]).to_numpy())
     by_kind = unplaced.group_by("kind").agg(pl.len().alias("points"), pl.col("net_mw").sum().round(1).alias("net_mw"),
                                             pl.col("net_mw").abs().sum().round(1).alias("abs_mw")).sort("kind")
     return x, {

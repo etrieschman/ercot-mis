@@ -1,7 +1,7 @@
 # PSS/E v30 RAW files (shared by CRR and DAM)
 
 ## What it is and why we use it
-The network topology and impedances behind both markets: nodes (PSS/E's "buses"), loads, generators,
+The network topology and impedances behind both markets: the points PSS/E calls "buses" (CRR nodes, DAM buses), loads, generators,
 branches, transformers, switched shunts. CRR packages ship one RAW per month; DAM
 packages ship one per operating hour.
 

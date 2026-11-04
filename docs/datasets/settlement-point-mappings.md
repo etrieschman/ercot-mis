@@ -3,7 +3,7 @@
 ## What it is and why we use it
 
 ERCOT's own statement of where each settlement point sits, in the vocabulary of its
-price files: electrical buses. NP4-160-SG maps every electrical bus to its node name,
+price files: electrical buses. NP4-160-SG maps every electrical bus to its RAW name,
 PSS/E name and number, voltage level, substation, load zone, resource node and hub;
 NP3-220-SG lists the electrical buses that make up each hub and their kV. The DAM
 model package carries the same facts in its own files (`Sp`, `Hb`, `Ld`); these two
@@ -48,5 +48,5 @@ None beyond the header check.
 
 ## Open questions
 
-- Electrical bus to DAM node: by name and voltage within a substation, to be measured.
+- Electrical bus to DAM bus: by name and voltage within a substation, to be measured.
 - The hub list against the DAM `Hb` file per hour (hub buses present, energized).

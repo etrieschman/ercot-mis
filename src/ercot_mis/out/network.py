@@ -1,67 +1,31 @@
 """``out.network``: one snapshot's network in one vocabulary, ready for a DC model.
 
-A :class:`Network` is what ``ftr_align`` builds its incidence matrix and constraint
-rows from: nodes with a dense index, branches with reactance, tap ratio and the two
-limits (base case and post-contingency), contingencies as sets of branch indexes,
-and GTCs as factor-weighted member sets. It is assembled from the core tables of one
-snapshot; core stores facts, this module applies the judgment calls, each of them a
-named option in :class:`Options` defaulting to ERCOT practice.
+A :class:`Network` is what ``ftr_align`` builds its incidence matrix and constraint rows
+from: buses with a dense index, branches with reactance, tap ratio and the two limits
+(base case and post-contingency), contingencies as sets of branch indexes, GTCs as
+factor-weighted member sets, and settlement point weights over the buses. Core stores
+facts; this module assembles them in six steps, every rule ERCOT's practice (named in
+docs/assumptions.md) except the two in :class:`Options`.
 
-What the assembly does, in order:
-
-1. **Nodes, or buses.** By default one row per model node (one RAW record), as ERCOT's
-   engines solve it: the CRR auction keeps its bus ties (closed breakers at the minimum
-   reactance) as branches and enforces the ones it monitors. With ``contract_ties`` the
-   rows are buses instead (each CRR bus is its nodes joined by in-service ties;
-   ``core.node`` carries the grouping); that is an analysis choice, measured to move
-   shift factors by small amounts and to drop the monitored ties' limits. DAM RAWs have
-   no ties, so the option does nothing there. The frames are named for the default
-   (``nodes``, ``node_id``); under contraction ``n_members`` says how many nodes a bus holds.
-2. **Branches.** Out-of-service branches are dropped. A branch whose two ends are the
-   same node (a contracted tie, or a real branch in parallel with a tie group) carries
-   no flow in a DC model and is dropped. Nodes with no branch left, and any component
-   smaller than the largest one, are dropped with the branches inside them. Every
-   drop is listed in ``dropped_branches`` / ``dropped_nodes`` with its reason.
-   The slack is ERCOT's: the swing bus (type 3) the RAW marks inside the kept
-   network. The CRR RAW marks one per island, so after the islands are dropped one
-   remains; if several remained the busiest would be taken, and if none, the busiest
-   node, with ``slack_source`` saying which case applied. Negative reactances (series
-   capacitors) are kept as written.
-3. **Limits.** ``base_limit_mw`` applies in the base case, ``contingency_limit_mw``
-   under every contingency; both are ``+inf`` where the model does not enforce the
-   branch (``limits``). CRR limits come from the monitored-element CSV for one
-   time-of-use block, DAM limits from the RAW rates (``rating_source``); a PSS/E rate
-   of zero means no limit and becomes ``+inf`` too.
-4. **Contingencies.** Every contingency of the model, as the indexes of the branches
-   it removes that are in the network. Outages of dropped branches (a breaker in a
-   contracted CRR node), unresolved device names, and DAM's load, generator,
-   settlement-point and split-bus rows are counted, not applied. A contingency whose
-   set comes out empty (every element it removes is already out of service, a
-   contracted tie, or unknown to the RAW) constrains nothing beyond the base case; it
-   is dropped and listed in ``dropped_contingencies`` (``drop_empty_contingencies``).
-5. **GTCs.** Each member's factor is signed with the branch's from-to orientation as
-   the RAW lists it. The CSV's flow direction refers to the member's *name*, and CRR
-   transformer names run the other way for a large minority (``is_name_reversed`` on
-   ``core.branch``), so the sign is flipped for those.
-   DAM GTCs carry limits and the CRR id from the manual crosswalk but no members
-   (see docs/datasets/generic-transmission-limits.md).
-6. **Settlement points.** Each settlement point's node weights (``core.
-   settlement_point_bus``) restricted to the kept nodes and renormalized; the weight
-   that fell on dropped nodes is recorded per point as ``weight_dropped``.
-
-Nothing here decides which contingencies island the network: that depends on the
-consumer's connectivity check, as in ``ftr_align``. ``Session.network`` assembles the
-network from core on every call; assembly is faster than reading a saved copy.
+A network handed to a solver is a bus-branch model: the solver sees branches and the
+points they join, never a breaker as a breaker. So the rows are **buses**. For the DAM
+they are the model's buses. For the CRR model ERCOT's auction keeps the closed breakers
+(ties) as branches, so by default each CRR node is a bus of one node (``n_nodes`` = 1)
+and ``bus_key`` repeats across the nodes of one tie group; with ``contract_ties`` the rows
+are ``core.bus`` (TOP-01). The steps: buses (1); branches, the main component and the
+slack (2); limits (3); contingencies (4); GTCs (5); settlement point weights (6). Every
+element left out is listed in ``dropped_branches``, ``dropped_buses`` and
+``dropped_contingencies`` with its reason; docs/out-network.md has the conventions.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 
 import polars as pl
 
-from ..core.node import components
+from ..core.bus import components
 from ..core.snapshot import is_dam
 from ..raw.table import flag
 
@@ -72,7 +36,7 @@ INF = math.inf
 REGISTER_ROWS = {
     "option": {"contract_ties": "TOP-01", "time_of_use": "RAT-06"},
     "dropped_branches": {"out_of_service": "TOP-03", "contracted_tie": "TOP-01", "loop": "TOP-01", "island": "TOP-05"},
-    "dropped_nodes": {"isolated": "TOP-05", "island": "TOP-05"},
+    "dropped_buses": {"isolated": "TOP-05", "island": "TOP-05"},
     "dropped_contingencies": {"empty": "RAT-10"},
 }
 
@@ -96,42 +60,22 @@ class Network:
 
     snapshot_id: str
     options: Options
-    slack_node_id: str | None
-    slack_source: str
-    """``"ercot"`` when the slack is a swing bus the RAW marks, ``"fallback"`` when none
-    survived and the busiest node stands in."""
-    nodes: pl.DataFrame
-    """One row per node, or per bus when ``contract_ties`` is set. ``index, node_id, raw_name, substation, kv,
-    n_members, node_number, is_slack`` (``substation`` is null for CRR models, whose RAW names nodes);
-    ``n_members`` is how many nodes the row holds (more than one only for a bus under contraction)."""
-    branches: pl.DataFrame
-    """``index, branch_id, kind, from_node_id, to_node_id, from_index, to_index, x_pu,
-    tap_ratio, base_limit_mw, contingency_limit_mw, is_limited, is_monitored, is_secured``."""
-    contingencies: pl.DataFrame
-    """``contingency_id, branch_ids, branch_indexes, n_outages, n_dropped, n_unresolved,
-    n_other_rows, has_split_bus, split_branch_indexes, split_ends, n_split_unapplied, is_empty``.
-    ``split_branch_indexes`` and ``split_ends`` (``from``/``to``) are the branch ends a
-    split-bus row moves to a new bus section (NAM-09); ``n_split_unapplied`` counts split
-    rows on loads, generators and settlement points, which a DC topology does not carry."""
-    gtcs: pl.DataFrame
-    """``gtc_id, source, limit_mw, n_members, n_unresolved, crr_gtc_id``."""
-    gtc_members: pl.DataFrame
-    """``gtc_id, branch_id, branch_index, factor`` (signed with the branch orientation)."""
-    settlement_points: pl.DataFrame
-    """``settlement_point_id, kind, n_nodes, weight_dropped``."""
-    settlement_point_nodes: pl.DataFrame
-    """``settlement_point_id, node_id, node_index, weight`` (weights sum to one per point)."""
-    dropped_branches: pl.DataFrame
-    """``branch_id, reason, is_monitored``; reasons ``out_of_service``, ``contracted_tie``,
-    ``loop``, ``island``."""
-    dropped_nodes: pl.DataFrame
-    """``node_id, reason``; reasons ``isolated`` (no branch) and ``island``."""
-    dropped_contingencies: pl.DataFrame
-    """``contingency_id, reason, n_dropped, n_unresolved, n_other_rows``; reason ``empty``."""
+    slack_bus_id: str | None
+    slack_source: str  # "ercot": a swing bus the RAW marks; "fallback": none survived and the busiest bus stands in
+    buses: pl.DataFrame  # index, bus_id, bus_key, raw_name, substation, kv, n_nodes, node_number, bus_number, is_slack
+    branches: pl.DataFrame  # index, branch_id, kind, from_bus_id, to_bus_id, from_index, to_index, x_pu, tap_ratio, base_limit_mw, contingency_limit_mw, is_limited, is_monitored, is_secured
+    contingencies: pl.DataFrame  # contingency_id, branch_ids, branch_indexes, n_outages, n_dropped, n_unresolved, n_other_rows, has_split_bus, split_branch_indexes, split_ends, n_split_unapplied, is_empty
+    gtcs: pl.DataFrame  # gtc_id, source, limit_mw, n_members, n_unresolved, crr_gtc_id
+    gtc_members: pl.DataFrame  # gtc_id, branch_id, branch_index, factor (signed with the branch orientation)
+    settlement_points: pl.DataFrame  # settlement_point_id, kind, n_buses, weight_dropped
+    settlement_point_buses: pl.DataFrame  # settlement_point_id, bus_id, bus_index, weight (summing to one per point)
+    dropped_branches: pl.DataFrame  # branch_id, reason (out_of_service, contracted_tie, loop, island), is_monitored
+    dropped_buses: pl.DataFrame  # bus_id, reason (isolated, island)
+    dropped_contingencies: pl.DataFrame  # contingency_id, reason (empty), n_dropped, n_unresolved, n_other_rows
 
     @property
-    def n_nodes(self) -> int:
-        return self.nodes.height
+    def n_buses(self) -> int:
+        return self.buses.height
 
     @property
     def n_branches(self) -> int:
@@ -140,16 +84,16 @@ class Network:
     def summary(self) -> dict:
         """Counts only; safe to print."""
         return {
-            "snapshot_id": self.snapshot_id, "nodes": self.n_nodes, "branches": self.n_branches,
+            "snapshot_id": self.snapshot_id, "buses": self.n_buses, "branches": self.n_branches,
             "limited_branches": int(self.branches["is_limited"].sum()),
             "contingencies": self.contingencies.height, "empty_contingencies": int(self.contingencies["is_empty"].sum()),
             "dropped_contingencies": {r: n for r, n in self.dropped_contingencies.group_by("reason").len().sort("reason").rows()},
-            "slack": {"node_id": self.slack_node_id, "source": self.slack_source},
+            "slack": {"bus_id": self.slack_bus_id, "source": self.slack_source},
             "gtcs": self.gtcs.height, "gtc_members": self.gtc_members.height,
             "settlement_points": self.settlement_points.height,
-            "settlement_points_without_node": int((self.settlement_points["n_nodes"] == 0).sum()),
+            "settlement_points_without_bus": int((self.settlement_points["n_buses"] == 0).sum()),
             "dropped_branches": {r: n for r, n in self.dropped_branches.group_by("reason").len().sort("reason").rows()},
-            "dropped_nodes": {r: n for r, n in self.dropped_nodes.group_by("reason").len().sort("reason").rows()},
+            "dropped_buses": {r: n for r, n in self.dropped_buses.group_by("reason").len().sort("reason").rows()},
             "options": asdict(self.options),
         }
 
@@ -159,31 +103,37 @@ class Network:
 
 @dataclass(frozen=True)
 class CoreTables:
-    """The core rows of one snapshot (``snapshot_id`` column already filtered away or present)."""
+    """The core rows of one snapshot (``snapshot_id`` column already filtered away or present). ``node`` is empty for a DAM hour."""
 
+    bus: pl.DataFrame
     node: pl.DataFrame
     branch: pl.DataFrame
     branch_rating: pl.DataFrame
-    contingency: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(schema={"contingency_id": pl.String, "has_split_bus": pl.Boolean}))
-    contingency_outage: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(
-        schema={"contingency_id": pl.String, "element_kind": pl.String, "operation": pl.String, "branch_id": pl.String, "is_resolved": pl.Boolean}))
-    gtc: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(
-        schema={"gtc_id": pl.String, "source": pl.String, "limit_mw": pl.Float64, "crr_gtc_id": pl.String}))
-    gtc_member: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(
-        schema={"gtc_id": pl.String, "branch_id": pl.String, "factor": pl.Float64, "flow_direction": pl.String, "is_resolved": pl.Boolean}))
-    settlement_point: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(schema={"settlement_point_id": pl.String, "kind": pl.String}))
-    settlement_point_bus: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(
-        schema={"settlement_point_id": pl.String, "bus_key": pl.String, "weight": pl.Float64, "is_resolved": pl.Boolean}))
+    contingency: pl.DataFrame
+    contingency_outage: pl.DataFrame
+    gtc: pl.DataFrame
+    gtc_member: pl.DataFrame
+    settlement_point: pl.DataFrame
+    settlement_point_bus: pl.DataFrame
 
 
-def _node_ids(node: pl.DataFrame, contract_ties: bool) -> pl.DataFrame:
-    """One row per model node with the ``node_id`` it is listed under: its own, or its bus's when ties are contracted."""
-    if contract_ties:
-        return node.with_columns(pl.col("bus_key").alias("node_id"))
-    # Tie members keep their own bus as a node; the key still says which group they are in.
-    return node.with_columns(
-        pl.when(pl.col("is_tie_member")).then(pl.col("bus_key") + "@" + pl.col("node_number").cast(pl.String))
-        .otherwise(pl.col("bus_key")).alias("node_id"))
+def _bus_rows(core: CoreTables, dam: bool, contract_ties: bool) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Step 1: one row per bus of the model handed to the solver, and the map from the PSS/E numbers its branches carry to ``bus_id``.
+
+    DAM, and CRR with ties contracted: the rows of ``core.bus``. CRR with ties kept (ERCOT's auction topology):
+    one bus per node, ``<bus_key>@<node_number>`` for the nodes of a tie group, the bus key alone otherwise.
+    DAM branches carry bus numbers; CRR branches carry node numbers, which ``core.node`` maps to their bus.
+    """
+    buses = core.bus.select(pl.col("bus_key").alias("bus_id"), "bus_key", "raw_name", "substation", "kv", pl.col("bus_type").alias("_type"),
+                            "n_nodes", pl.lit(None, pl.Int64).alias("node_number"), "bus_number")
+    if dam:
+        return buses, core.bus.select(pl.col("bus_number").alias("_number"), pl.col("bus_key").alias("bus_id"))
+    one_per_node = pl.when(pl.col("is_tie_member")).then(pl.col("bus_key") + "@" + pl.col("node_number").cast(pl.String)).otherwise(pl.col("bus_key"))
+    nodes = core.node.with_columns((pl.col("bus_key") if contract_ties else one_per_node).alias("bus_id"))
+    if not contract_ties:
+        buses = nodes.select("bus_id", "bus_key", "raw_name", pl.lit(None, pl.String).alias("substation"), "kv", pl.col("node_type").alias("_type"),
+                             pl.lit(1, pl.Int64).alias("n_nodes"), "node_number", pl.lit(None, pl.Int64).alias("bus_number"))
+    return buses, nodes.select(pl.col("node_number").alias("_number"), "bus_id")
 
 
 def _limits(branch: pl.DataFrame, ratings: pl.DataFrame, options: Options, dam: bool) -> pl.DataFrame:
@@ -210,84 +160,80 @@ def _limits(branch: pl.DataFrame, ratings: pl.DataFrame, options: Options, dam: 
 def build_network(snapshot_id: str, core: CoreTables, options: Options | None = None) -> Network:
     """Assemble one snapshot's :class:`Network` from its core tables, in the steps the module docstring lists."""
     options = options or Options()
-    node_rows = _node_ids(core.node, options.contract_ties)
-    kept, dropped_branches, dropped_nodes = _main_component(core.branch, node_rows)
-    nodes, slack, slack_source = _nodes(node_rows, kept, dropped_nodes)
-    branches = _branches(kept, core.branch_rating, nodes, options, dam=is_dam(snapshot_id))
+    dam = is_dam(snapshot_id)
+    bus_rows, bus_of = _bus_rows(core, dam, options.contract_ties)
+    ends = ("from_bus_number", "to_bus_number") if dam else ("from_node", "to_node")  # the PSS/E numbers the model's branches carry
+    kept, dropped_branches, dropped_buses = _main_component(core.branch, bus_rows, bus_of, ends)
+    buses, slack, slack_source = _buses(bus_rows, kept, dropped_buses)
+    branches = _branches(kept, core.branch_rating, buses, options, dam)
     contingencies, dropped_contingencies = _contingencies(core, branches)
     gtcs, gtc_members = _gtcs(core, kept, branches)
-    settlement_points, settlement_point_nodes = _settlement_points(core, node_rows, nodes, options)
-    for name, frame in (("dropped_branches", dropped_branches), ("dropped_nodes", dropped_nodes), ("dropped_contingencies", dropped_contingencies)):
+    settlement_points, settlement_point_buses = _settlement_points(core, bus_rows, buses)
+    for name, frame in (("dropped_branches", dropped_branches), ("dropped_buses", dropped_buses), ("dropped_contingencies", dropped_contingencies)):
         unknown = set(frame["reason"].unique()) - set(REGISTER_ROWS[name])
         if unknown:
             raise ValueError(f"{name} reason(s) {sorted(unknown)} have no row in docs/assumptions.md")
-    return Network(snapshot_id, options, slack, slack_source, nodes, branches, contingencies, gtcs, gtc_members,
-                   settlement_points, settlement_point_nodes, dropped_branches, dropped_nodes, dropped_contingencies)
+    return Network(snapshot_id, options, slack, slack_source, buses, branches, contingencies, gtcs, gtc_members,
+                   settlement_points, settlement_point_buses, dropped_branches, dropped_buses, dropped_contingencies)
 
 
-def _main_component(branch: pl.DataFrame, node_rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Step 2: the branches kept, the branches dropped and the nodes dropped, each with its reason."""
-    node_of = node_rows.select("node_number", "node_id")
-    branch = (branch.join(node_of.rename({"node_number": "from_node", "node_id": "from_node_id"}), on="from_node", how="left")
-              .join(node_of.rename({"node_number": "to_node", "node_id": "to_node_id"}), on="to_node", how="left"))
+def _main_component(branch: pl.DataFrame, bus_rows: pl.DataFrame, bus_of: pl.DataFrame, ends: tuple[str, str]) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Step 2: the branches kept, the branches dropped and the buses dropped, each with its reason; ``ends`` names the branch's PSS/E number columns."""
+    branch = (branch.join(bus_of.rename({"_number": ends[0], "bus_id": "from_bus_id"}), on=ends[0], how="left")
+              .join(bus_of.rename({"_number": ends[1], "bus_id": "to_bus_id"}), on=ends[1], how="left"))
     branch = branch.with_columns(pl.when(~pl.col("is_in_service")).then(pl.lit("out_of_service"))  # TOP-03
-                                 .when((pl.col("from_node_id") == pl.col("to_node_id")) & pl.col("is_tie")).then(pl.lit("contracted_tie"))
-                                 .when(pl.col("from_node_id") == pl.col("to_node_id")).then(pl.lit("loop"))
+                                 .when((pl.col("from_bus_id") == pl.col("to_bus_id")) & pl.col("is_tie")).then(pl.lit("contracted_tie"))
+                                 .when(pl.col("from_bus_id") == pl.col("to_bus_id")).then(pl.lit("loop"))
                                  .otherwise(None).alias("reason"))
     kept = branch.filter(pl.col("reason").is_null())
     # The largest connected component over the kept branches; everything else is dropped.
-    node_ids = sorted(node_rows["node_id"].unique())
-    component = components(node_ids, kept.select("from_node_id", "to_node_id").rows())
+    bus_ids = sorted(bus_rows["bus_id"].unique())
+    component = components(bus_ids, kept.select("from_bus_id", "to_bus_id").rows())
     sizes: dict[str, int] = {}
     for rep in component.values():
         sizes[rep] = sizes.get(rep, 0) + 1
     main = max(sizes, key=lambda r: (sizes[r], r)) if sizes else None
-    touched = set(kept["from_node_id"]) | set(kept["to_node_id"])
-    dropped_nodes = pl.DataFrame({"node_id": node_ids}, schema={"node_id": pl.String}).with_columns(
-        pl.when(~pl.col("node_id").is_in(list(touched))).then(pl.lit("isolated"))
-        .when(pl.col("node_id").replace_strict(component, return_dtype=pl.String) != main).then(pl.lit("island"))
-        .otherwise(None).alias("reason")).filter(pl.col("reason").is_not_null()).sort("node_id")
-    gone = dropped_nodes["node_id"].implode()
-    branch = branch.with_columns(pl.when(pl.col("reason").is_null() & (pl.col("from_node_id").is_in(gone) | pl.col("to_node_id").is_in(gone)))
+    touched = set(kept["from_bus_id"]) | set(kept["to_bus_id"])
+    dropped_buses = pl.DataFrame({"bus_id": bus_ids}, schema={"bus_id": pl.String}).with_columns(
+        pl.when(~pl.col("bus_id").is_in(list(touched))).then(pl.lit("isolated"))
+        .when(pl.col("bus_id").replace_strict(component, return_dtype=pl.String) != main).then(pl.lit("island"))
+        .otherwise(None).alias("reason")).filter(pl.col("reason").is_not_null()).sort("bus_id")
+    gone = dropped_buses["bus_id"].implode()
+    branch = branch.with_columns(pl.when(pl.col("reason").is_null() & (pl.col("from_bus_id").is_in(gone) | pl.col("to_bus_id").is_in(gone)))
                                  .then(pl.lit("island")).otherwise(pl.col("reason")).alias("reason"))
     dropped_branches = branch.filter(pl.col("reason").is_not_null()).select("branch_id", "reason", pl.col("is_monitored").fill_null(False)).sort("branch_id")
-    return branch.filter(pl.col("reason").is_null()), dropped_branches, dropped_nodes
+    return branch.filter(pl.col("reason").is_null()), dropped_branches, dropped_buses
 
 
-def _nodes(node_rows: pl.DataFrame, kept: pl.DataFrame, dropped_nodes: pl.DataFrame) -> tuple[pl.DataFrame, str | None, str]:
-    """Step 2: one row per node (or bus) of the main component, its dense index, and ERCOT's slack."""
-    nodes = (node_rows.filter(~pl.col("node_id").is_in(dropped_nodes["node_id"].implode()))
-             .group_by("node_id").agg(pl.col("raw_name").first(), pl.col("substation").first(), pl.col("kv").min(), pl.len().alias("n_members"),
-                                      pl.col("node_number").min(), (pl.col("node_type") == 3).any().alias("_slack"))
-             .sort("node_id").with_row_index("index"))
-    degree = pl.concat([kept.select(pl.col("from_node_id").alias("node_id")), kept.select(pl.col("to_node_id").alias("node_id"))]).group_by("node_id").len()
-    nodes = nodes.join(degree, on="node_id", how="left").with_columns(pl.col("len").fill_null(0))
-    # ERCOT's swing bus; if several survive, the busiest; if none, the busiest node (slack_source says which).
-    marked = nodes.filter(pl.col("_slack"))
-    candidates = marked if marked.height else nodes
-    slack = candidates.sort("len", "kv", "node_id", descending=[True, True, False])["node_id"][0] if candidates.height else None
-    nodes = nodes.with_columns((pl.col("node_id") == slack).alias("is_slack")).select(
-        "index", "node_id", "raw_name", "substation", "kv", "n_members", "node_number", "is_slack")
-    return nodes, slack, "ercot" if marked.height else "fallback"
+def _buses(bus_rows: pl.DataFrame, kept: pl.DataFrame, dropped_buses: pl.DataFrame) -> tuple[pl.DataFrame, str | None, str]:
+    """Step 2: the buses of the main component with a dense index, and ERCOT's slack."""
+    buses = bus_rows.filter(~pl.col("bus_id").is_in(dropped_buses["bus_id"].implode())).sort("bus_id").with_row_index("index")
+    degree = pl.concat([kept.select(pl.col("from_bus_id").alias("bus_id")), kept.select(pl.col("to_bus_id").alias("bus_id"))]).group_by("bus_id").len()
+    buses = buses.join(degree, on="bus_id", how="left").with_columns(pl.col("len").fill_null(0))
+    # ERCOT's swing bus (type 3); if several survive, the busiest; if none, the busiest bus (slack_source says which). TOP-06.
+    marked = buses.filter(pl.col("_type") == 3)
+    candidates = marked if marked.height else buses
+    slack = candidates.sort("len", "kv", "bus_id", descending=[True, True, False])["bus_id"][0] if candidates.height else None
+    buses = buses.with_columns((pl.col("bus_id") == slack).alias("is_slack")).select(
+        "index", "bus_id", "bus_key", "raw_name", "substation", "kv", "n_nodes", "node_number", "bus_number", "is_slack")
+    return buses, slack, "ercot" if marked.height else "fallback"
 
 
-def _branches(kept: pl.DataFrame, ratings: pl.DataFrame, nodes: pl.DataFrame, options: Options, dam: bool) -> pl.DataFrame:
-    """Step 3: the kept branches with their limits and their ends' node indexes."""
-    index_of = nodes.select("node_id", "index")
+def _branches(kept: pl.DataFrame, ratings: pl.DataFrame, buses: pl.DataFrame, options: Options, dam: bool) -> pl.DataFrame:
+    """Step 3: the kept branches with their limits and their ends' bus indexes."""
+    index_of = buses.select("bus_id", "index")
     return (_limits(kept, ratings, options, dam)
-            .join(index_of.rename({"node_id": "from_node_id", "index": "from_index"}), on="from_node_id")
-            .join(index_of.rename({"node_id": "to_node_id", "index": "to_index"}), on="to_node_id")
+            .join(index_of.rename({"bus_id": "from_bus_id", "index": "from_index"}), on="from_bus_id")
+            .join(index_of.rename({"bus_id": "to_bus_id", "index": "to_index"}), on="to_bus_id")
             .sort("branch_id").with_row_index("index")
             .with_columns(pl.col("tap_ratio").fill_null(1.0), pl.col("is_monitored").fill_null(False), pl.col("is_secured").fill_null(False))
-            .select("index", "branch_id", "kind", "from_node_id", "to_node_id", "from_index", "to_index", "x_pu", "tap_ratio",
+            .select("index", "branch_id", "kind", "from_bus_id", "to_bus_id", "from_index", "to_index", "x_pu", "tap_ratio",
                     "base_limit_mw", "contingency_limit_mw", "is_limited", "is_monitored", "is_secured"))
 
 
 def _contingencies(core: CoreTables, branches: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Step 4: every contingency as the indexes of the branches it removes, plus the branch ends its split-bus rows move (NAM-09)."""
     outages = core.contingency_outage.join(branches.select("branch_id", pl.col("index").alias("branch_index")), on="branch_id", how="left")
-    if "split_end" not in outages.columns:
-        outages = outages.with_columns(pl.lit(None, pl.String).alias("split_end"))
     is_branch = pl.col("element_kind").is_in(["line", "transformer", "branch"]) & (pl.col("operation") == "outage")
     is_split = (pl.col("operation") == "split_bus") & pl.col("branch_index").is_not_null() & pl.col("split_end").is_not_null()
     per = (outages.group_by("contingency_id").agg(
@@ -322,8 +268,7 @@ def _gtcs(core: CoreTables, kept: pl.DataFrame, branches: pl.DataFrame) -> tuple
     The CSV's flow direction refers to the member's name, which runs the other way for some
     CRR transformers (``is_name_reversed``).
     """
-    reversed_names = (kept.select("branch_id", pl.col("is_name_reversed").fill_null(False)) if "is_name_reversed" in kept.columns
-                      else kept.select("branch_id", pl.lit(False).alias("is_name_reversed")))
+    reversed_names = kept.select("branch_id", pl.col("is_name_reversed").fill_null(False))
     sign = (pl.when(flag(pl.col("flow_direction"), "TO")).then(-1.0).otherwise(1.0)
             * pl.when(pl.col("is_name_reversed")).then(-1.0).otherwise(1.0))
     members = (core.gtc_member.join(branches.select("branch_id", pl.col("index").alias("branch_index")), on="branch_id", how="left")
@@ -338,29 +283,26 @@ def _gtcs(core: CoreTables, kept: pl.DataFrame, branches: pl.DataFrame) -> tuple
     return gtcs, members.filter(pl.col("_in")).select("gtc_id", "branch_id", "branch_index", "factor").sort("gtc_id", "branch_id")
 
 
-def _settlement_points(core: CoreTables, node_rows: pl.DataFrame, nodes: pl.DataFrame, options: Options) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Step 6: each settlement point's weights on the kept nodes, summing to one; the weight that fell on dropped nodes is recorded.
+def _settlement_points(core: CoreTables, bus_rows: pl.DataFrame, buses: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Step 6: each settlement point's weights on the kept buses, summing to one; the weight that fell on dropped buses is recorded.
 
-    Without contraction a CRR point's ``bus_key`` names a bus of several nodes; its weight is spread equally over them (SP-06).
+    A weight is given per ``bus_key``; when the key names several rows (a CRR tie group with ties kept) it is spread equally over them (SP-06).
     """
-    rows = core.settlement_point_bus.filter(pl.col("is_resolved")).select("settlement_point_id", "bus_key", "weight")
-    if options.contract_ties:
-        rows = rows.with_columns(pl.col("bus_key").alias("node_id"))
-    else:
-        members = node_rows.group_by("bus_key").agg(pl.col("node_id"))
-        rows = (rows.join(members, on="bus_key", how="left").explode("node_id", empty_as_null=True)
-                .with_columns((pl.col("weight") / pl.col("node_id").count().over("settlement_point_id", "bus_key")).alias("weight")))
-    rows = rows.join(nodes.select("node_id", pl.col("index").alias("node_index")), on="node_id", how="left")
-    kept_weight = rows.group_by("settlement_point_id").agg(pl.col("weight").filter(pl.col("node_index").is_not_null()).sum().alias("_kept"),
-                                                           pl.col("weight").filter(pl.col("node_index").is_null()).sum().alias("weight_dropped"))
-    point_nodes = (rows.filter(pl.col("node_index").is_not_null()).join(kept_weight, on="settlement_point_id")
+    members = bus_rows.group_by("bus_key").agg(pl.col("bus_id"))
+    rows = (core.settlement_point_bus.filter(pl.col("is_resolved")).select("settlement_point_id", "bus_key", "weight")
+            .join(members, on="bus_key", how="left").explode("bus_id", empty_as_null=True)
+            .with_columns((pl.col("weight") / pl.col("bus_id").count().over("settlement_point_id", "bus_key")).alias("weight"))
+            .join(buses.select("bus_id", pl.col("index").alias("bus_index")), on="bus_id", how="left"))
+    kept_weight = rows.group_by("settlement_point_id").agg(pl.col("weight").filter(pl.col("bus_index").is_not_null()).sum().alias("_kept"),
+                                                           pl.col("weight").filter(pl.col("bus_index").is_null()).sum().alias("weight_dropped"))
+    point_buses = (rows.filter(pl.col("bus_index").is_not_null()).join(kept_weight, on="settlement_point_id")
                    .with_columns((pl.col("weight") / pl.col("_kept")).alias("weight"))
-                   .select("settlement_point_id", "node_id", "node_index", "weight").sort("settlement_point_id", "node_id"))
+                   .select("settlement_point_id", "bus_id", "bus_index", "weight").sort("settlement_point_id", "bus_id"))
     points = (core.settlement_point.select("settlement_point_id", "kind").join(kept_weight, on="settlement_point_id", how="left")
-              .join(point_nodes.group_by("settlement_point_id").len().rename({"len": "n_nodes"}), on="settlement_point_id", how="left")
-              .with_columns(pl.col("n_nodes").fill_null(0).cast(pl.UInt32), pl.col("weight_dropped").fill_null(0.0))
-              .select("settlement_point_id", "kind", "n_nodes", "weight_dropped").sort("settlement_point_id"))
-    return points, point_nodes
+              .join(point_buses.group_by("settlement_point_id").len().rename({"len": "n_buses"}), on="settlement_point_id", how="left")
+              .with_columns(pl.col("n_buses").fill_null(0).cast(pl.UInt32), pl.col("weight_dropped").fill_null(0.0))
+              .select("settlement_point_id", "kind", "n_buses", "weight_dropped").sort("settlement_point_id"))
+    return points, point_buses
 
 
 def core_tables(session, snapshot_id: str) -> CoreTables:
@@ -368,8 +310,8 @@ def core_tables(session, snapshot_id: str) -> CoreTables:
     def rows(table: str) -> pl.DataFrame:
         return session.core_rows(table, snapshot_id).drop("snapshot_id")
 
-    node = rows("node")
-    if node.is_empty():
+    bus = rows("bus")
+    if bus.is_empty():
         raise KeyError(f"no core rows for {snapshot_id!r}; run build_core()")
-    return CoreTables(node, rows("branch"), rows("branch_rating"), rows("contingency"), rows("contingency_outage"), rows("gtc"), rows("gtc_member"),
+    return CoreTables(bus, rows("node"), rows("branch"), rows("branch_rating"), rows("contingency"), rows("contingency_outage"), rows("gtc"), rows("gtc_member"),
                       rows("settlement_point"), rows("settlement_point_bus"))

@@ -20,7 +20,7 @@ import re
 
 import polars as pl
 
-from ..core import coverage, match, node
+from ..core import bus, coverage, match
 from ..core.snapshot import is_dam
 from . import write_report
 
@@ -136,8 +136,8 @@ def stability(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
         r.show(f"CRR bus numbers, {crr['month']:%Y-%m} vs {other_month:%Y-%m}", **_compare_numbers(bus_identity(C), bus_identity(other)))
 
 
-def node_identity(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
-    """How stable the equipment-based bus keys are (core/node.py)."""
+def bus_keys(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
+    """How stable the equipment-based bus keys are (core/bus.py)."""
     r.section("Bus identity (equipment-based keys)")
     snaps = session.core("snapshot").collect()
     dam, crr_snap = session.snapshot(dam_id), session.snapshot(crr_id)
@@ -145,8 +145,8 @@ def node_identity(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
     names = ("psse_bus", "dam_lines", "dam_transformers", "dam_generators", "dam_loads", "dam_settlement_points")
 
     def dam_keys(tables) -> pl.DataFrame:
-        return node.dam_nodes(tables["psse_bus"], tables["dam_lines"], tables["dam_transformers"], tables["dam_generators"],
-                                  tables["dam_loads"], tables["dam_settlement_points"])
+        return bus.dam_buses(tables["psse_bus"], tables["dam_lines"], tables["dam_transformers"], tables["dam_generators"],
+                             tables["dam_loads"], tables["dam_settlement_points"])
 
     def compare(label: str, a: pl.DataFrame, b: pl.DataFrame) -> None:
         ka, kb = set(a["bus_key"]), set(b["bus_key"])
@@ -159,27 +159,27 @@ def node_identity(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
     oldest_day = snaps.filter(pl.col("model_kind") == "dam")["operating_date"].min()
     if oldest_day != dam["operating_date"]:
         compare("DAM vs the oldest archived day", here, dam_keys(tables(session, latest(snaps, operating_date=oldest_day, hour=hour), names)))
-    r.show("DAM attachments per node", quantiles=[int(here["n_attachments"].quantile(q)) for q in (0, 0.25, 0.5, 0.75, 1)],
-         nodes_with_settlement_point=int(here["attachments"].str.contains("S:").sum()))
+    r.show("DAM attachments per bus", quantiles=[int(here["n_attachments"].quantile(q)) for q in (0, 0.25, 0.5, 0.75, 1)],
+         buses_with_settlement_point=int(here["attachments"].str.contains("S:").sum()))
 
-    crr = node.crr_nodes(C["psse_bus"], C["psse_branch"], C["psse_transformer"], C["crr_mapping_autos"], C["crr_sources_and_sinks"])
-    groups = crr.filter(pl.col("is_tie_member")).group_by("bus_group").len()
-    ties = C["psse_branch"].filter(pl.col("x").abs() <= node.TIE_REACTANCE)
+    crr_nodes, crr = bus.crr_buses(C["psse_bus"], C["psse_branch"], C["psse_transformer"], C["crr_mapping_autos"], C["crr_sources_and_sinks"])
+    groups = crr.filter(pl.col("n_nodes") > 1)
+    ties = C["psse_branch"].filter(pl.col("x").abs() <= bus.TIE_REACTANCE)
     kv = dict(zip(C["psse_bus"]["i"].to_list(), C["psse_bus"]["basekv"].to_list()))
     r.show("CRR bus ties (|x| <= TIE_REACTANCE)", n=ties.height, same_kv_both_ends=sum(1 for i, j in zip(ties["i"], ties["j"]) if kv.get(i) == kv.get(j)),
          r_zero=int((ties["r"] == 0).sum()), in_service=int((ties["st"] == 1).sum()), ratea_9999_or_more=int((ties["ratea"] >= 9999).sum()),
          x_patterns=patterns(ties["x"].to_list(), 3))
-    r.show("CRR contraction", nodes=crr.height, buses=crr["bus_group"].n_unique(), tie_groups=groups.height,
-         nodes_in_tie_groups=int(groups["len"].sum()), largest_group=int(groups["len"].max()) if groups.height else 0,
+    r.show("CRR contraction", nodes=crr_nodes.height, buses=crr.height, tie_groups=groups.height,
+         nodes_in_tie_groups=int(groups["n_nodes"].sum()), largest_group=int(groups["n_nodes"].max()) if groups.height else 0,
          ambiguous=int(crr["is_ambiguous"].sum()), no_attachments=int((crr["n_attachments"] == 0).sum()))
     months = snaps.filter((pl.col("model_kind") == "crr_monthly") & (pl.col("month") != crr_snap["month"]))["month"]
     if months.len():
         other = tables(session, latest(snaps, model_kind="crr_monthly", month=months.max()), ("psse_bus", "psse_branch", "psse_transformer",
                                                                                               "crr_mapping_autos", "crr_sources_and_sinks"))
-        other_nodes = node.crr_nodes(other["psse_bus"], other["psse_branch"], other["psse_transformer"], other["crr_mapping_autos"],
-                                     other["crr_sources_and_sinks"])
-        ka, kb = set(crr["bus_key"]), set(other_nodes["bus_key"])
-        r.show("CRR buses vs another month", buses_a=crr["bus_group"].n_unique(), buses_b=other_nodes["bus_group"].n_unique(), keys_shared=len(ka & kb))
+        _, other_buses = bus.crr_buses(other["psse_bus"], other["psse_branch"], other["psse_transformer"], other["crr_mapping_autos"],
+                                       other["crr_sources_and_sinks"])
+        ka, kb = set(crr["bus_key"]), set(other_buses["bus_key"])
+        r.show("CRR buses vs another month", buses_a=crr.height, buses_b=other_buses.height, keys_shared=len(ka & kb))
 
 
 def matching(session, crr_id: str, dam_id: str, r: Report) -> None:
@@ -212,8 +212,8 @@ def matching(session, crr_id: str, dam_id: str, r: Report) -> None:
                           .otherwise(pl.lit("matched_branch_but_dam_contingency_omits_it")).alias("why")))
     r.show("name-matched contingency rows by outcome", **{why: n for why, n in rows.group_by("why").len().sort("len", descending=True).rows()})
     buses = session.match_buses(crr_id, dam_id).filter(pl.col("match_method") != "unmatched")
-    kv = (buses.join(session.core_rows("node", crr_id).select("bus_key", "kv").unique(subset=["bus_key"]), left_on="crr_bus_key", right_on="bus_key")
-          .join(session.core_rows("node", dam_id).select("bus_key", pl.col("kv").alias("dam_kv")), left_on="dam_bus_key", right_on="bus_key"))
+    kv = (buses.join(session.core_rows("bus", crr_id).select("bus_key", "kv"), left_on="crr_bus_key", right_on="bus_key")
+          .join(session.core_rows("bus", dam_id).select("bus_key", pl.col("kv").alias("dam_kv")), left_on="dam_bus_key", right_on="bus_key"))
     r.show("matched buses", n=buses.height, same_kv=int((kv["kv"] == kv["dam_kv"]).sum()),
          same_kv_ignoring_tenths=int((kv["kv"].floor() == kv["dam_kv"].floor()).sum()))
     # Do matched branches describe the same element? core.diff_branch puts both sides next to each other.
@@ -235,7 +235,7 @@ def matching(session, crr_id: str, dam_id: str, r: Report) -> None:
     ratio = both["crr_base_mw"] / both["dam_base_mw"]
     r.show("  enforced on both sides: CRR base over DAM rate A", n=both.height, quantiles=[round(ratio.quantile(q), 3) for q in (0.05, 0.25, 0.5, 0.75, 0.95)],
          within_1pct=int(((ratio - 1).abs() <= 0.01).sum()))
-    # Settlement points: where each model puts them, and whether the two agree through the node match.
+    # Settlement points: where each model puts them, and whether the two agree through the bus match.
     for sid, label in ((crr_id, "CRR"), (dam_id, "DAM")):
         pts = session.core_rows("settlement_point", sid)
         r.show(f"settlement points {label}", n=pts.height, **{f"{k}": n for k, n in pts.group_by("kind").len().sort("kind").rows()},
@@ -254,9 +254,9 @@ def coverage_section(session, crr_id: str, dam_id: str, r: Report) -> None:
     """What each model carries (core.coverage), and the matched and unmatched counts of the pair."""
     r.section("coverage")
     for label, sid in (("crr", crr_id), ("dam", dam_id)):
-        rows = {t: session.core_rows(t, sid) for t in ("node", "branch", "branch_rating", "load", "settlement_point",
+        rows = {t: session.core_rows(t, sid) for t in ("bus", "node", "branch", "branch_rating", "load", "settlement_point",
                                                        "settlement_point_bus", "contingency_outage")}
-        counts = coverage.snapshot_coverage(rows["node"], rows["branch"], rows["branch_rating"], rows["load"], rows["settlement_point"],
+        counts = coverage.snapshot_coverage(rows["bus"], rows["node"], rows["branch"], rows["branch_rating"], rows["load"], rows["settlement_point"],
                                             rows["settlement_point_bus"], rows["contingency_outage"], session.network(sid).branches)
         r.show(label, snapshot_id=sid, **counts)
     r.show("pair", **coverage.pair_coverage(session.match_branches(crr_id, dam_id), session.match_buses(crr_id, dam_id),
@@ -271,7 +271,7 @@ def run(session, crr_id: str | None = None, dam_id: str | None = None) -> dict:
     r = Report()
     C, D = tables(session, crr_id), tables(session, dam_id)
     stability(session, dam_id, crr_id, D, C, r)
-    node_identity(session, dam_id, crr_id, D, C, r)
+    bus_keys(session, dam_id, crr_id, D, C, r)
     matching(session, crr_id, dam_id, r)
     coverage_section(session, crr_id, dam_id, r)
     result = {"crr": crr_id, "dam": dam_id, "crr_month": f"{crr['month']:%Y-%m}", "dam_day": str(dam["operating_date"]),

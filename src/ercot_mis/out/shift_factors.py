@@ -5,7 +5,7 @@ and answers flows and shift-factor rows from that factorization. ``DcSystem.outa
 gives the same network under a contingency, by removing branches and moving split-bus
 ends and factorizing again, which is exact for any number of outaged branches and
 needs no special case when the contingency cuts part of the network off: what stays
-connected to the slack is solved, and nodes cut off get a shift factor of zero.
+connected to the slack is solved, and buses cut off get a shift factor of zero.
 
 Every check that needs a shift factor goes through this module. It needs ``numpy``
 and ``scipy``, which the rest of the package does not: install the ``shift-factors`` extra.
@@ -29,11 +29,11 @@ class DcSystem:
 
     def __init__(self, net: Network):
         b = net.branches
-        self.n, self.m = net.n_nodes, net.n_branches
+        self.n, self.m = net.n_buses, net.n_branches
         self.n_all = self.n
         self.f, self.t = b["from_index"].to_numpy(), b["to_index"].to_numpy()
         self.y = 1.0 / (b["x_pu"].to_numpy() * b["tap_ratio"].to_numpy())
-        self.slack = int(net.nodes.filter(pl.col("is_slack"))["index"][0])
+        self.slack = int(net.buses.filter(pl.col("is_slack"))["index"][0])
         self.connected = np.ones(self.n, dtype=bool)
         self.n_islanded = 0
         self._factorize()
@@ -56,7 +56,7 @@ class DcSystem:
         return self.y * (theta[self.f] - theta[self.t])
 
     def shift_factors(self, branch_idx) -> np.ndarray:
-        """One row per branch in ``branch_idx``: the flow on it per unit injected at each node (withdrawn at the slack)."""
+        """One row per branch in ``branch_idx``: the flow on it per unit injected at each bus (withdrawn at the slack)."""
         branch_idx = list(branch_idx)
         if not branch_idx:
             return np.zeros((0, self.n))
@@ -72,7 +72,7 @@ class DcSystem:
         ``branch_idx`` are removed. ``splits`` lists ``(branch index, "from" or "to")``: a
         split-bus row moves that end of the branch from its bus to a new bus section, and
         the branches a contingency moves off the same bus stay joined to each other there.
-        ``n_islanded`` counts the nodes the contingency cuts off from the slack.
+        ``n_islanded`` counts the buses the contingency cuts off from the slack.
         """
         other = object.__new__(DcSystem)
         other.n, other.m, other.slack = self.n, self.m, self.slack

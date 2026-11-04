@@ -64,8 +64,8 @@ def hour_rows(session, table: str, start_utc: datetime) -> pl.DataFrame:
 
 def resolve(session, snapshot_id: str, net: Network, system: DcSystem, shadow: pl.DataFrame) -> Resolved:
     """Every row of ``shadow`` (one hour of NP4-191-CD) resolved onto ``net``."""
-    substation = dict(net.nodes.select("index", name_key(pl.col("substation"))).rows())
-    kv = dict(net.nodes.select("index", "kv").rows())
+    substation = dict(net.buses.select("index", name_key(pl.col("substation"))).rows())
+    kv = dict(net.buses.select("index", "kv").rows())
     branch_of = {k: (j, f, t) for k, j, f, t in net.branches.select(name_key(pl.col("branch_id")), "index", "from_index", "to_index").rows()}
     ctg = net.contingencies.select(name_key(pl.col("contingency_id")).alias("k"), "branch_indexes", "split_branch_indexes", "split_ends",
                                    "n_unresolved", "n_dropped")
@@ -150,9 +150,9 @@ def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[li
     pairs = session.match_branches(crr_id, snapshot_id).drop_nulls(["crr_branch_id", "dam_branch_id"]).select("crr_branch_id", "dam_branch_id")
     bus_of = dict(session.match_buses(crr_id, snapshot_id).drop_nulls(["crr_bus_key", "dam_bus_key"]).select("crr_bus_key", "dam_bus_key").rows())
     bus = lambda e: e.str.split("@").list.first().replace_strict(bus_of, default=None, return_dtype=pl.String)
-    rows = (crr.gtc_members.join(crr.branches.select("branch_id", bus(pl.col("from_node_id")).alias("cf"), bus(pl.col("to_node_id")).alias("ct")), on="branch_id", how="left")
+    rows = (crr.gtc_members.join(crr.branches.select("branch_id", bus(pl.col("from_bus_id")).alias("cf"), bus(pl.col("to_bus_id")).alias("ct")), on="branch_id", how="left")
             .join(pairs, left_on="branch_id", right_on="crr_branch_id", how="left")
-            .join(net.branches.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("index").alias("j"), pl.col("from_node_id").alias("df"), pl.col("to_node_id").alias("dt")),
+            .join(net.branches.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("index").alias("j"), pl.col("from_bus_id").alias("df"), pl.col("to_bus_id").alias("dt")),
                   on="dam_branch_id", how="left"))
     declared = dict(crr.gtcs.select(name_key(pl.col("gtc_id")), pl.col("n_members") + pl.col("n_unresolved")).rows())
     out: dict[str, list[tuple[int, float]]] = {}

@@ -23,14 +23,14 @@ import polars as pl
 
 from ..catalog import posting_order
 from ..raw import build as raw_build
-from . import award, branch, contingency, gtc, load, node, settlement_point, snapshot
+from . import award, branch, bus, contingency, gtc, load, settlement_point, snapshot
 
 LAYER = "core"
 GTL_PRODUCT = "NP3-766-M"
 
 # Bump when the set of tables or how they are assembled changes.
-VERSION = 10
-TABLES = ("node", "branch", "branch_rating", "contingency", "contingency_outage", "gtc", "gtc_member",
+VERSION = 11
+TABLES = ("bus", "node", "branch", "branch_rating", "contingency", "contingency_outage", "gtc", "gtc_member",
           "settlement_point", "settlement_point_bus", "load")
 DAM_TABLES = ("psse_bus", "psse_branch", "psse_transformer", "psse_load", "dam_lines", "dam_transformers", "dam_generators", "dam_loads",
               "dam_settlement_points", "dam_hub_buses", "dam_contingencies")
@@ -45,7 +45,7 @@ def core_id() -> str:
     """Identity of the code that builds core tables: package and layer versions."""
     from .. import __version__
 
-    parts = [f"core={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (node, branch, contingency, gtc, settlement_point, load)]
+    parts = [f"core={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (bus, branch, contingency, gtc, settlement_point, load)]
     return f"ercot-mis={__version__}|" + "|".join(parts)
 
 
@@ -156,23 +156,24 @@ def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame,
 
 def _dam_snapshot(r: dict[str, pl.DataFrame], gtl: pl.DataFrame, crosswalk: pl.DataFrame) -> dict[str, pl.DataFrame]:
     """One DAM hour's core tables from its raw tables."""
-    nodes = node.dam_nodes(r["psse_bus"], r["dam_lines"], r["dam_transformers"], r["dam_generators"], r["dam_loads"], r["dam_settlement_points"])
-    branches, ratings = branch.dam_branches(nodes, r["psse_branch"], r["psse_transformer"], r["dam_lines"], r["dam_transformers"])
-    contingencies, outages = contingency.dam_contingencies(branches, nodes, r["dam_contingencies"])
+    buses = bus.dam_buses(r["psse_bus"], r["dam_lines"], r["dam_transformers"], r["dam_generators"], r["dam_loads"], r["dam_settlement_points"])
+    nodes = pl.DataFrame(schema=bus.NODE_SCHEMA)  # a bus-branch model has no nodes
+    branches, ratings = branch.dam_branches(buses, r["psse_branch"], r["psse_transformer"], r["dam_lines"], r["dam_transformers"])
+    contingencies, outages = contingency.dam_contingencies(branches, buses, r["dam_contingencies"])
     gtcs, members = gtc.dam_gtcs(gtl, crosswalk)
-    points, point_buses = settlement_point.dam_settlement_points(nodes, r["dam_settlement_points"], r["dam_hub_buses"], r["dam_loads"], r["dam_generators"])
-    return dict(zip(TABLES, (nodes, branches, ratings, contingencies, outages, gtcs, members, points, point_buses, load.dam_loads(nodes, r["psse_load"], r["dam_loads"]))))
+    points, point_buses = settlement_point.dam_settlement_points(buses, r["dam_settlement_points"], r["dam_hub_buses"], r["dam_loads"], r["dam_generators"])
+    return dict(zip(TABLES, (buses, nodes, branches, ratings, contingencies, outages, gtcs, members, points, point_buses, load.dam_loads(buses, r["psse_load"], r["dam_loads"]))))
 
 
 def _crr_snapshot(r: dict[str, pl.DataFrame]) -> dict[str, pl.DataFrame]:
     """One CRR month's core tables from its raw tables."""
-    nodes = node.crr_nodes(r["psse_bus"], r["psse_branch"], r["psse_transformer"], r["crr_mapping_autos"], r["crr_sources_and_sinks"])
+    nodes, buses = bus.crr_buses(r["psse_bus"], r["psse_branch"], r["psse_transformer"], r["crr_mapping_autos"], r["crr_sources_and_sinks"])
     branches, ratings = branch.crr_branches(nodes, r["psse_branch"], r["psse_transformer"], r["crr_mapping_autos"],
                                             r["crr_monitored_lines_and_transformers"], r["crr_mapping_lines"])
     contingencies, outages = contingency.crr_contingencies(branches, r["crr_contingencies"])
     gtcs, members = gtc.crr_gtcs(branches, r["crr_non_thermal_constraints"])
     points, point_buses = settlement_point.crr_settlement_points(nodes, r["crr_sources_and_sinks"])
-    return dict(zip(TABLES, (nodes, branches, ratings, contingencies, outages, gtcs, members, points, point_buses, load.crr_loads(nodes, r["psse_load"]))))
+    return dict(zip(TABLES, (buses, nodes, branches, ratings, contingencies, outages, gtcs, members, points, point_buses, load.crr_loads(nodes, r["psse_load"]))))
 
 
 def build_awards(session, existing: set[str], tmp_dir: Path, run_id: str) -> list[dict]:

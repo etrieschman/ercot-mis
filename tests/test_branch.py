@@ -1,6 +1,6 @@
 import polars as pl
 
-from ercot_mis.core import branch, node
+from ercot_mis.core import branch, bus as buses_
 
 
 def _bus(numbers, names):
@@ -29,7 +29,7 @@ def test_crr_branches_name_lines_by_comment_transformers_by_autos_and_keep_both_
     monitored = pl.DataFrame({"device_name": ["2 A2 3 B 1", "2 A2 3 B 1", "AUTO_A"], "device_type": ["Line", "Line", "XFMR"],
                               "base_case_rating": [180.0, 170.0, 270.0], "emergency_rating": [220.0, 200.0, 330.0],
                               "time_of_use": ["PeakWD", "Off-peak", "PeakWD"]})
-    nodes = node.crr_nodes(bus, raw_branch, raw_xf, autos, sources)
+    nodes, _ = buses_.crr_buses(bus, raw_branch, raw_xf, autos, sources)
     branches, ratings = branch.crr_branches(nodes, raw_branch, raw_xf, autos, monitored)
 
     by = {r["branch_id"]: r for r in branches.to_dicts()}
@@ -40,6 +40,7 @@ def test_crr_branches_name_lines_by_comment_transformers_by_autos_and_keep_both_
     assert {r["branch_id"] for r in marked.to_dicts() if r["is_temporary"]} == {"3 B 4 C 1"}
     tie = by["1 A1 2 A2 1"]
     assert tie["is_tie"] and tie["from_bus_key"] == tie["to_bus_key"] and not tie["is_monitored"]
+    assert (tie["from_node"], tie["to_node"], tie["from_bus_number"]) == (1, 2, None)
     line = by["2 A2 3 B 1"]
     assert line["is_monitored"] and line["is_secured"] and line["from_bus_key"] != line["to_bus_key"] and line["kind"] == "line"
     assert not by["3 B 4 C 1"]["is_in_service"]
@@ -63,14 +64,15 @@ def test_dam_branches_take_names_and_flags_from_the_csvs():
     xf = pl.DataFrame({"psse_from_bus_number": [1], "psse_to_bus_number": [2], "psse_ckt_id": ["1 "], "branch_name": ["X1"],
                        "monitored": ["No"], "monitored_and_secured": ["Yes"]})
     empty = lambda cols: pl.DataFrame({c: [] for c in cols}, schema={c: (pl.Int64 if "number" in c else pl.String) for c in cols})
-    nodes = node.dam_nodes(bus, lines, xf, empty(["psse_bus_number", "generator_name"]), empty(["psse_bus_number", "load_name"]),
-                           empty(["psse_bus_number", "settlement_point_name"]))
-    branches, ratings = branch.dam_branches(nodes, raw_branch, raw_xf, lines, xf)
+    dam_buses = buses_.dam_buses(bus, lines, xf, empty(["psse_bus_number", "generator_name"]), empty(["psse_bus_number", "load_name"]),
+                                 empty(["psse_bus_number", "settlement_point_name"]))
+    branches, ratings = branch.dam_branches(dam_buses, raw_branch, raw_xf, lines, xf)
     by = {r["branch_id"]: r for r in branches.to_dicts()}
     assert set(by) == {"L1", "L2", "X1"}
     assert not by["L1"]["is_monitored"] and by["L1"]["is_secured"]
     assert by["L2"]["is_monitored"] and not by["L2"]["is_secured"]
     assert by["X1"]["kind"] == "transformer" and by["X1"]["from_bus_key"] != by["X1"]["to_bus_key"]
+    assert (by["X1"]["from_bus_number"], by["X1"]["to_bus_number"], by["X1"]["from_node"]) == (1, 2, None)
     assert not branches["is_tie"].any()
     assert ratings["rating_source"].unique().to_list() == ["psse_raw"] and ratings.height == 3
 

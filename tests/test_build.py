@@ -174,12 +174,12 @@ def test_build_core_snapshots_and_nodes(tmp_path):
         assert ctg_matched.filter(pl.col("crr_contingency_id") == "CTG_1").height == 1
         both = mis.raw("psse_bus").collect()  # CRR and DAM packages in one scan
         assert set(both["emil_id"]) == {"NP7-800-M", "NP4-500-SG"} and {"month", "operating_date"} <= set(both.columns)
-        nodes = mis.core("node").collect()
-        assert set(nodes["snapshot_id"]) == set(snaps["snapshot_id"])
-        dam_nodes = nodes.filter(pl.col("snapshot_id").str.starts_with("dam"))
-        assert dam_nodes.filter(pl.col("hour") == 1)["bus_key"].to_list() == dam_nodes.filter(pl.col("hour") == 2)["bus_key"].to_list() if "hour" in dam_nodes.columns else True
-        h1 = set(dam_nodes.filter(pl.col("snapshot_id").str.contains("he01"))["bus_key"])
-        h2 = set(dam_nodes.filter(pl.col("snapshot_id").str.contains("he02"))["bus_key"])
+        buses = mis.core("bus").collect()
+        assert set(buses["snapshot_id"]) == set(snaps["snapshot_id"])
+        assert set(mis.core("node").collect()["snapshot_id"]) == {"crr:monthly:2026-09:r1"}  # only the node-breaker model has nodes
+        dam_buses = buses.filter(pl.col("snapshot_id").str.starts_with("dam"))
+        h1 = set(dam_buses.filter(pl.col("snapshot_id").str.contains("he01"))["bus_key"])
+        h2 = set(dam_buses.filter(pl.col("snapshot_id").str.contains("he02"))["bus_key"])
         assert h1 == h2 and len(h1) == 2
         assert mis.build_core()["status"].to_list() == ["skipped", "skipped"]
         assert mis.core("snapshot").collect().height == 3

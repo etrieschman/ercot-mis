@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 
 import polars as pl
 import pytest
@@ -55,7 +56,22 @@ def _core():
     points = pl.DataFrame({"settlement_point_id": ["RN_1", "HB_X", "RN_ISLAND"], "kind": ["resource_node", "hub", "resource_node"]})
     point_nodes = pl.DataFrame({"settlement_point_id": ["RN_1", "HB_X", "HB_X", "HB_X", "RN_ISLAND"], "bus_key": ["A", "A", "C", "E", "E"],
                                 "weight": [1.0, 0.5, 0.25, 0.25, 1.0], "is_resolved": [True] * 5})
-    return CoreTables(node, branch, rating, contingency, outage, gtc, member, points, point_nodes)
+    bus = (node.group_by("bus_key").agg(pl.lit(None, pl.String).alias("substation"), pl.col("kv").min(), pl.col("node_type").max().alias("bus_type"),
+                                        pl.len().cast(pl.Int64).alias("n_nodes"), pl.lit(None, pl.Int64).alias("bus_number"), pl.col("raw_name").sort().str.join("+"))
+           .with_columns(pl.lit("").alias("attachments"), pl.lit(0).alias("n_attachments"), pl.lit(False).alias("is_ambiguous")).sort("bus_key"))
+    node = node.select("node_number", "raw_name", "kv", "node_type", "bus_key", "is_tie_member")
+    branch = branch.with_columns(pl.lit(None, pl.Int64).alias("from_bus_number"), pl.lit(None, pl.Int64).alias("to_bus_number"))
+    return CoreTables(bus, node, branch, rating, contingency, outage, gtc, member, points, point_nodes)
+
+
+def _dam_core():
+    """The same equipment read as a DAM hour: every RAW record is a bus, and branches carry bus numbers."""
+    c = _core()
+    bus = c.node.select(("N" + pl.col("node_number").cast(pl.String)).alias("bus_key"), pl.col("raw_name").alias("substation"), "kv", pl.col("node_type").alias("bus_type"),
+                        pl.lit(None, pl.Int64).alias("n_nodes"), pl.col("node_number").alias("bus_number"), "raw_name", pl.lit("").alias("attachments"),
+                        pl.lit(0).alias("n_attachments"), pl.lit(False).alias("is_ambiguous"))
+    branch = c.branch.with_columns(pl.col("from_node").alias("from_bus_number"), pl.col("to_node").alias("to_bus_number"))
+    return CoreTables(bus, c.node.clear(), branch, c.branch_rating, c.contingency, c.contingency_outage, c.gtc, c.gtc_member, c.settlement_point, c.settlement_point_bus)
 
 
 CONTRACT = Options(contract_ties=True)
@@ -63,13 +79,13 @@ CONTRACT = Options(contract_ties=True)
 
 def test_contracted_network_drops_ties_loops_islands_and_out_of_service():
     net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
-    assert net.nodes["node_id"].to_list() == ["A", "B", "C"]
-    assert net.nodes.filter(pl.col("node_id") == "A")["n_members"][0] == 2
+    assert net.buses["bus_id"].to_list() == ["A", "B", "C"]
+    assert net.buses.filter(pl.col("bus_id") == "A")["n_nodes"][0] == 2
     assert net.branches["branch_id"].to_list() == ["L1", "L2", "L3"]
     dropped = dict(net.dropped_branches.select("branch_id", "reason").rows())
     assert dropped == {"T": "contracted_tie", "P": "loop", "X": "out_of_service", "I": "island"}
-    assert dict(net.dropped_nodes.rows()) == {"D": "isolated", "E": "island", "F": "island"}
-    assert net.slack_node_id == "B" and net.slack_source == "ercot" and net.nodes.filter(pl.col("is_slack"))["node_id"].to_list() == ["B"]
+    assert dict(net.dropped_buses.rows()) == {"D": "isolated", "E": "island", "F": "island"}
+    assert net.slack_bus_id == "B" and net.slack_source == "ercot" and net.buses.filter(pl.col("is_slack"))["bus_id"].to_list() == ["B"]
     # endpoints as dense indexes
     l1 = net.branches.filter(pl.col("branch_id") == "L1").row(0, named=True)
     assert (l1["from_index"], l1["to_index"]) == (0, 1) and l1["tap_ratio"] == 1.0
@@ -88,7 +104,7 @@ def test_crr_limits_come_from_the_monitored_csv_block_and_unmonitored_is_unlimit
 
 
 def test_raw_ratings_limit_secured_branches_and_treat_zero_as_unlimited():
-    net = build_network("dam:2026-09-25:he12:r1", _core())
+    net = build_network("dam:2026-09-25:he12:r1", _dam_core())
     lim = {r["branch_id"]: (r["base_limit_mw"], r["contingency_limit_mw"], r["is_limited"]) for r in net.branches.to_dicts()}
     assert lim["L1"] == (100.0, 110.0, True)  # secured: rate A, then rate B under a contingency
     assert lim["L2"] == (math.inf, math.inf, False)  # not secured
@@ -115,9 +131,9 @@ def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons
 
 def test_slack_falls_back_to_the_busiest_node_when_no_swing_bus_survives():
     core = _core()
-    node = core.node.with_columns(pl.when(pl.col("node_number") == 3).then(1).otherwise(pl.col("node_type")).alias("node_type"))
-    net = build_network("crr:monthly:2026-10:r1", CoreTables(node, core.branch, core.branch_rating, core.contingency, core.contingency_outage, core.gtc, core.gtc_member), CONTRACT)
-    assert net.slack_source == "fallback" and net.slack_node_id == "B"  # B still has the most branches
+    bus = core.bus.with_columns(pl.when(pl.col("bus_key") == "B").then(1).otherwise(pl.col("bus_type")).alias("bus_type"))
+    net = build_network("crr:monthly:2026-10:r1", replace(core, bus=bus), CONTRACT)
+    assert net.slack_source == "fallback" and net.slack_bus_id == "B"  # B still has the most branches
 
 
 def test_gtc_members_are_signed_and_counted():
@@ -127,26 +143,26 @@ def test_gtc_members_are_signed_and_counted():
     # X is out of service above; put it in service: its name is reversed, so "From-To" means RAW to-from.
     core = _core()
     branch = core.branch.with_columns(pl.when(pl.col("branch_id") == "X").then(True).otherwise(pl.col("is_in_service")).alias("is_in_service"))
-    net = build_network("crr:monthly:2026-10:r1", CoreTables(branch=branch, **{k: v for k, v in core.__dict__.items() if k != "branch"}), CONTRACT)
+    net = build_network("crr:monthly:2026-10:r1", replace(core, branch=branch), CONTRACT)
     assert {r["branch_id"]: r["factor"] for r in net.gtc_members.to_dicts()} == {"L1": 1.0, "L3": -0.5, "X": -1.0}
 
 
 def test_settlement_points_are_renormalized_over_kept_nodes():
     net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
     by = {r["settlement_point_id"]: r for r in net.settlement_points.to_dicts()}
-    assert (by["RN_1"]["n_nodes"], by["RN_1"]["weight_dropped"]) == (1, 0.0)
-    assert (by["HB_X"]["n_nodes"], by["HB_X"]["weight_dropped"]) == (2, 0.25)  # node E is in a dropped island
-    assert (by["RN_ISLAND"]["n_nodes"], by["RN_ISLAND"]["weight_dropped"]) == (0, 1.0)
-    hub = {r["node_id"]: (r["node_index"], round(r["weight"], 4)) for r in net.settlement_point_nodes.filter(pl.col("settlement_point_id") == "HB_X").to_dicts()}
+    assert (by["RN_1"]["n_buses"], by["RN_1"]["weight_dropped"]) == (1, 0.0)
+    assert (by["HB_X"]["n_buses"], by["HB_X"]["weight_dropped"]) == (2, 0.25)  # node E is in a dropped island
+    assert (by["RN_ISLAND"]["n_buses"], by["RN_ISLAND"]["weight_dropped"]) == (0, 1.0)
+    hub = {r["bus_id"]: (r["bus_index"], round(r["weight"], 4)) for r in net.settlement_point_buses.filter(pl.col("settlement_point_id") == "HB_X").to_dicts()}
     assert hub == {"A": (0, round(2 / 3, 4)), "C": (2, round(1 / 3, 4))}
     loose = build_network("crr:monthly:2026-10:r1", _core())  # the default keeps every bus
-    rn = {r["node_id"]: r["weight"] for r in loose.settlement_point_nodes.filter(pl.col("settlement_point_id") == "RN_1").to_dicts()}
+    rn = {r["bus_id"]: r["weight"] for r in loose.settlement_point_buses.filter(pl.col("settlement_point_id") == "RN_1").to_dicts()}
     assert rn == {"A@1": 0.5, "A@2": 0.5}  # spread over the group's buses
 
 
 def test_by_default_ties_are_branches_between_their_own_buses_as_ercot_solves_them():
     net = build_network("crr:monthly:2026-10:r1", _core())
-    assert net.nodes["node_id"].to_list() == ["A@1", "A@2", "B", "C"]
+    assert net.buses["bus_id"].to_list() == ["A@1", "A@2", "B", "C"]
     assert "T" in net.branches["branch_id"].to_list() and "P" in net.branches["branch_id"].to_list()
     assert net.summary()["dropped_branches"] == {"island": 1, "out_of_service": 1}
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from ercot_mis import viewer
+from ercot_mis.core.bus import NODE_SCHEMA
 
 FIXTURE = Path(__file__).parent / "fixtures" / "synthetic" / "viewer_data.json"
 SID = "dam:2030-01-15:he12:r1"
@@ -16,9 +17,10 @@ class FakeSession:
     def __init__(self, data_dir):
         self.data_dir = data_dir
         self.tables = {
-            "node": pl.DataFrame({"snapshot_id": [SID] * 3, "node_number": [1, 2, 3], "kv": [345.0, 138.0, 138.0], "raw_name": ["ALPHA", "ALPHA", "BRAVO"], "substation": ["ALPHA", "ALPHA", "BRAVO"],
-                                  "node_type": [3, 1, 1], "bus_key": ["a", "b", "c"], "attachments": ["B:XF1|G:ALPHA_G1", "B:XF1|B:L1|S:RN_ALPHA", "B:L1|D:BRAVO_L1"]}),
-            "branch": pl.DataFrame({"snapshot_id": [SID] * 2, "branch_id": ["XF1", "L1"], "kind": ["transformer", "line"], "from_node": [1, 2], "to_node": [2, 3],
+            "bus": pl.DataFrame({"snapshot_id": [SID] * 3, "bus_number": [1, 2, 3], "kv": [345.0, 138.0, 138.0], "raw_name": ["ALPHA", "ALPHA", "BRAVO"], "substation": ["ALPHA", "ALPHA", "BRAVO"],
+                                 "bus_type": [3, 1, 1], "bus_key": ["a", "b", "c"], "attachments": ["B:XF1|G:ALPHA_G1", "B:XF1|B:L1|S:RN_ALPHA", "B:L1|D:BRAVO_L1"]}),
+            "node": pl.DataFrame(schema={"snapshot_id": pl.String, **NODE_SCHEMA}),
+            "branch": pl.DataFrame({"snapshot_id": [SID] * 2, "branch_id": ["XF1", "L1"], "kind": ["transformer", "line"], "from_bus_number": [1, 2], "to_bus_number": [2, 3],
                                     "ckt": ["1", "1"], "x_pu": [0.02, 0.01], "is_in_service": [True, False], "is_tie": [False, False],
                                     "is_monitored": [False, False], "is_secured": [True, True], "is_temporary": [False, False]}),
             "branch_rating": pl.DataFrame({"snapshot_id": [SID] * 2, "branch_id": ["XF1", "L1"], "rating_source": ["psse_raw"] * 2, "time_of_use": [None, None],
@@ -26,7 +28,7 @@ class FakeSession:
             "contingency_outage": pl.DataFrame({"snapshot_id": [SID] * 2, "contingency_id": ["C1", "C2"], "branch_id": ["L1", "L1"]}),
             "settlement_point": pl.DataFrame({"snapshot_id": [SID] * 2, "settlement_point_id": ["RN_ALPHA", "LZ_X"], "kind": ["resource_node", "load_zone"]}),
             "settlement_point_bus": pl.DataFrame({"snapshot_id": [SID] * 2, "settlement_point_id": ["RN_ALPHA", "LZ_X"], "bus_key": ["b", "c"], "is_resolved": [True, True]}),
-            "load": pl.DataFrame({"snapshot_id": [SID], "load_id": ["BRAVO_L1"], "node_number": [3], "is_in_service": [True], "mw": [12.5], "mw_ldf": [0.001], "load_zone": ["LZ_X"]}),
+            "load": pl.DataFrame({"snapshot_id": [SID], "load_id": ["BRAVO_L1"], "bus_number": [3], "is_in_service": [True], "mw": [12.5], "mw_ldf": [0.001], "load_zone": ["LZ_X"]}),
         }
 
     def core(self, table):
@@ -56,7 +58,7 @@ def test_build_writes_an_owner_only_page_with_the_model_embedded(tmp_path):
     assert (line["k"], line["on"], line["base"], line["lim"], line["ctg"]) == ("L", False, 200.0, None, ["C1", "C2"])
     assert next(b for b in model["branches"] if b["id"] == "XF1")["lim"] == 400.0  # the network's enforced limit, not a rule of the page
     cov = model["coverage"]
-    assert (cov["nodes"], cov["branches"], cov["branches_in_service"], cov["branches_with_enforced_limit"], cov["loads_with_mw"]) == (3, 2, 1, 1, 1)
+    assert (cov["buses"], cov["nodes"], cov["branches"], cov["branches_in_service"], cov["branches_with_enforced_limit"], cov["loads_with_mw"]) == (3, 0, 2, 1, 1, 1)
     assert data["pair_coverage"] is None
     assert model["loads"] == [{"id": "BRAVO_L1", "bus": 3, "on": True, "mw": 12.5, "ldf": 0.001, "zone": "LZ_X"}]
     # The synthetic page data used to look at the template by hand has the same shape.

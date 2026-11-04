@@ -45,9 +45,10 @@ def key_stability(session, dam: str, crr: str) -> dict:
                         ("crr_previous_month", months[-2] if months.len() > 1 else None, crr)):
         if a is None or b is None:
             continue
-        x, y = session.core_rows("node", a), session.core_rows("node", b)
-        out[label] = {"bus_keys": x["bus_key"].n_unique(), "bus_keys_in_both": len(set(x["bus_key"]) & set(y["bus_key"])),
-                      "node_numbers_in_both_with_same_key": x.join(y, on=["node_number", "bus_key"]).height}
+        x, y = session.core_rows("bus", a), session.core_rows("bus", b)
+        numbers = (x.join(y, on=["bus_number", "bus_key"]).height if label == "dam_next_hour"
+                   else session.core_rows("node", a).join(session.core_rows("node", b), on=["node_number", "bus_key"]).height)
+        out[label] = {"bus_keys": x["bus_key"].n_unique(), "bus_keys_in_both": len(set(x["bus_key"]) & set(y["bus_key"])), "psse_numbers_in_both_with_same_key": numbers}
     return out
 
 
@@ -62,8 +63,8 @@ def outages_already_out(session, dam: str, crr: str) -> dict:
 
 def dropped_by_reason(session, dam: str, crr: str) -> dict:
     """What the largest-component rule drops, by reason, against what it keeps."""
-    return {label: {"nodes_kept": net.n_nodes, "branches_kept": net.n_branches,
-                    "dropped_nodes": dict(net.dropped_nodes.group_by("reason").len().sort("reason").rows()),
+    return {label: {"buses_kept": net.n_buses, "branches_kept": net.n_branches,
+                    "dropped_buses": dict(net.dropped_buses.group_by("reason").len().sort("reason").rows()),
                     "dropped_branches": dict(net.dropped_branches.group_by("reason").len().sort("reason").rows())}
             for label, net in (("dam", session.network(dam)), ("crr", session.network(crr)))}
 
@@ -71,21 +72,20 @@ def dropped_by_reason(session, dam: str, crr: str) -> dict:
 def slack(session, dam: str, crr: str) -> dict:
     """The slack is the RAW's swing record: how many swing records survive, and which rule chose the slack."""
     out = {}
-    for label, sid in (("dam", dam), ("crr", crr)):
-        net, nodes = session.network(sid), session.core_rows("node", sid)
-        swing = nodes.filter(pl.col("node_type") == 3)
-        out[label] = {"swing_records": swing.height, "swing_records_in_network": int(net.nodes["node_number"].is_in(swing["node_number"].implode()).sum()),
+    for label, sid, table, number, kind in (("dam", dam, "bus", "bus_number", "bus_type"), ("crr", crr, "node", "node_number", "node_type")):
+        net, swing = session.network(sid), session.core_rows(table, sid).filter(pl.col(kind) == 3)
+        out[label] = {"swing_records": swing.height, "swing_records_in_network": int(net.buses[number].is_in(swing[number].implode()).sum()),
                       "slack_source": net.slack_source}
     return out
 
 
 def ambiguous_keys(session, dam: str, crr: str) -> dict:
-    """Bus keys made unique by an ordinal suffix, and how many reach the network as nodes."""
+    """Bus keys made unique by an ordinal suffix, and how many reach the network."""
     out = {}
     for label, sid in (("dam", dam), ("crr", crr)):
-        nodes = session.core_rows("node", sid).filter(pl.col("is_ambiguous"))
-        ids = set(session.network(sid).nodes["node_id"].str.split("@").list.first())
-        out[label] = {"ambiguous_nodes": nodes.height, "in_network": int(nodes["bus_key"].is_in(list(ids)).sum())}
+        buses = session.core_rows("bus", sid).filter(pl.col("is_ambiguous"))
+        keys = set(session.network(sid).buses["bus_key"])
+        out[label] = {"ambiguous_buses": buses.height, "in_network": int(buses["bus_key"].is_in(list(keys)).sum())}
     return out
 
 

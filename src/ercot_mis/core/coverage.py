@@ -16,16 +16,16 @@ def _n(frame: pl.DataFrame, expr: pl.Expr) -> int:
     return int(frame.select(expr.fill_null(False).sum()).item()) if frame.height else 0
 
 
-def snapshot_coverage(node: pl.DataFrame, branch: pl.DataFrame, rating: pl.DataFrame, load: pl.DataFrame,
+def snapshot_coverage(bus: pl.DataFrame, node: pl.DataFrame, branch: pl.DataFrame, rating: pl.DataFrame, load: pl.DataFrame,
                       points: pl.DataFrame, point_bus: pl.DataFrame, outages: pl.DataFrame,
                       enforced: pl.DataFrame | None = None) -> dict[str, int]:
-    """Counts for one snapshot. ``enforced`` is ``out.network``'s ``branches`` frame when a network was assembled."""
+    """Counts for one snapshot. ``node`` is empty for DAM; ``enforced`` is ``out.network``'s ``branches`` frame when a network was assembled."""
     raw = rating.filter(pl.col("rating_source") == "psse_raw") if rating.height else rating
     csv = rating.filter(pl.col("rating_source") == "crr_monitored") if rating.height else rating
     out: dict[str, int] = {
+        "buses": bus.height,
+        "buses_with_substation": _n(bus, pl.col("substation").is_not_null()),
         "nodes": node.height,
-        "nodes_with_substation": _n(node, pl.col("substation").is_not_null()) if "substation" in node.columns else 0,
-        "buses": int(node["bus_key"].n_unique()) if node.height else 0,
         "branches": branch.height,
         "branches_in_service": _n(branch, pl.col("is_in_service")),
         "branches_tie": _n(branch, pl.col("is_tie")) if "is_tie" in branch.columns else 0,

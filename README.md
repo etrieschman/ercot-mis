@@ -17,7 +17,7 @@ next, and `demo/tour.ipynb` for a walkthrough of every call.
   **Public API**.
 - Keeping the original documents immutable and content-addressed, so every
   derived table records exactly which ERCOT file and which code produced it.
-- Standardizing CRR and DAM network models (nodes, buses, branches, ratings,
+- Standardizing CRR and DAM network models (buses, CRR nodes, branches, ratings,
   contingencies, generic transmission constraints) and DAM prices and cleared
   quantities into tidy Parquet tables you query from Python.
 
@@ -40,17 +40,18 @@ zip member, how each arrived, and every table built from them.
 ```python
 with em.open() as session:
     session.build_raw("NP4-500-SG")                  # parsed rows, one Parquet per package and table
-    session.build_core()                             # snapshots, nodes, branches, ratings, contingencies, GTCs
-    raw_nodes = session.raw("psse_bus").filter(pl.col("operating_date") == "2026-09-15").collect()
-    nodes = session.core("node").filter(pl.col("snapshot_id") == "dam:2026-09-15:he12:r1").collect()
+    session.build_core()                             # snapshots, buses, nodes, branches, ratings, contingencies, GTCs
+    raw_buses = session.raw("psse_bus").filter(pl.col("operating_date") == "2026-09-15").collect()
+    buses = session.core("bus").filter(pl.col("snapshot_id") == "dam:2026-09-15:he12:r1").collect()
     net = session.network("dam:2026-09-15:he12:r1")  # one snapshot as a DC model reads it
     branches = session.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he12:r1")
 ```
 
 A few words are used strictly throughout (`docs/datasets/identity-and-matching.md`):
-a **node** is the finest connection point a model gives (one RAW record, which PSS/E
-calls a bus), a **bus** is the nodes joined by closed breakers, and a **substation** is
-the yard holding buses at several voltages.
+a **node** is a point of a node-breaker model (one record of the CRR RAW), a **bus** is a
+point of a bus-branch model (one record of the DAM RAW, or the CRR nodes that closed
+breakers join into one electrical point), and a **substation** is the yard holding buses
+at several voltages. PSS/E calls every record a bus; only the raw layer keeps that word.
 
 ```python
 with em.open() as session:

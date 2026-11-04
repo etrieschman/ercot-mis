@@ -66,7 +66,7 @@ The header picks the table (`raw/prices.py`): `dam_shadow_prices`, `dam_lmps`,
 - The published flow is unsigned and equals the limit. Direction is in
   `from_station` / `to_station`, which may run against the model's from-to. Inside one
   substation the two voltages tell the ends apart, and only to the tenth of a kV: a line
-  between two nodes of one level differs in the tenths digit alone.
+  between two buses of one level differs in the tenths digit alone.
 - Shadow prices are non-negative; they enter the price with a minus sign in the
   model's own orientation (PRC-01, a fixed convention).
 - Hours are matched to DAM models on `interval_start_utc` built from (delivery date, hour
@@ -82,7 +82,7 @@ The header picks the table (`raw/prices.py`): `dam_shadow_prices`, `dam_lmps`,
 Beside the residual, each hourly report compares ERCOT's own cut-off lists with ours:
 the `SpCtg` file's settlement points per binding contingency against the points our
 solve leaves without a connected bus, and the base-case de-energized list (NP4-200-CD)
-against the points our network has no node for (NAM-07).
+against the points our network has no bus for (NAM-07).
 
 `checks/prices.py` writes `data/reports/prices/<snapshot>.json` per DAM hour:
 how many binding rows resolve to a branch, a contingency or a GTC, and the residual of
@@ -92,11 +92,11 @@ the price check at the settlement points.
 
 - The de-energized list (NP4-200-CD) names points the check never prices, because their
   buses are dropped from the network; pricing them needs the heuristic mapping
-  (NP4-231-CD) resolved from electrical bus names to nodes through NP4-160-SG.
+  (NP4-231-CD) resolved from electrical bus names to DAM buses through NP4-160-SG.
 - Settled 2026-10-06 (`checks/ldf.py`): the published load distribution factors
   agree with the `Ld` file's substation shares to a fraction of a percent; the public
   report lists more substations and about nine percent more MW than the model's loads,
   under load identifiers that are not the model's load names.
 - Electrical bus names in the LMP file (ERCOT's term for its finest pricing points) are not
-  the RAW's node names; the mapping (NP4-160-SG) is parsed (`sp_electrical_bus_mapping`)
-  but not yet joined to DAM nodes, so the check prices settlement points only.
+  the RAW's bus names; the mapping (NP4-160-SG) is parsed (`sp_electrical_bus_mapping`)
+  but not yet joined to DAM buses, so the check prices settlement points only.

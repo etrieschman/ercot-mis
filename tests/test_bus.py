@@ -1,6 +1,6 @@
 import polars as pl
 
-from ercot_mis.core import node as identity
+from ercot_mis.core import bus as identity
 
 
 def _bus(numbers, names, kv=138.0):
@@ -15,28 +15,28 @@ def _dam(renumber: dict[int, int]):
     gens = pl.DataFrame({"psse_bus_number": [r(1)], "generator_name": ["G1"]})
     loads = pl.DataFrame({"psse_bus_number": [r(2)], "load_name": ["D1"]})
     sps = pl.DataFrame({"psse_bus_number": [r(1)], "settlement_point_name": ["SP_A"]})
-    return identity.dam_nodes(bus, lines, xf, gens, loads, sps)
+    return identity.dam_buses(bus, lines, xf, gens, loads, sps)
 
 
 def test_dam_bus_keys_survive_renumbering_and_split_station_names():
     a = _dam({})
     b = _dam({1: 7, 2: 9, 3: 8})
     assert a["bus_key"].n_unique() == 3 and not a["is_ambiguous"].any()
-    assert a.columns == list(identity.COLUMNS) and not a["is_tie_member"].any()
+    assert a.columns == list(identity.BUS_COLUMNS) and a["n_nodes"].is_null().all() and a["substation"].to_list() == ["ALPHA", "ALPHA", "BRAVO"]
     assert sorted(a["bus_key"]) == sorted(b["bus_key"])
-    key_of = dict(zip(a["node_number"], a["bus_key"]))
-    key_of_b = dict(zip(b["node_number"], b["bus_key"]))
+    key_of = dict(zip(a["bus_number"], a["bus_key"]))
+    key_of_b = dict(zip(b["bus_number"], b["bus_key"]))
     assert key_of[1] == key_of_b[7] and key_of[2] == key_of_b[9]
-    assert a.filter(pl.col("node_number") == 1)["attachments"][0] == "B:L1|G:G1|S:SP_A"
+    assert a.filter(pl.col("bus_number") == 1)["attachments"][0] == "B:L1|G:G1|S:SP_A"
 
 
 def test_isolated_buses_at_one_station_get_distinct_keys():
     bus = _bus([1, 2], ["ALPHA", "ALPHA"])
     empty = pl.DataFrame({"psse_from_bus_number": [], "psse_to_bus_number": [], "branch_name": []}, schema={"psse_from_bus_number": pl.Int64, "psse_to_bus_number": pl.Int64, "branch_name": pl.String})
-    nodes = identity.dam_nodes(bus, empty, empty, pl.DataFrame({"psse_bus_number": [], "generator_name": []}, schema={"psse_bus_number": pl.Int64, "generator_name": pl.String}),
+    buses = identity.dam_buses(bus, empty, empty, pl.DataFrame({"psse_bus_number": [], "generator_name": []}, schema={"psse_bus_number": pl.Int64, "generator_name": pl.String}),
                                pl.DataFrame({"psse_bus_number": [], "load_name": []}, schema={"psse_bus_number": pl.Int64, "load_name": pl.String}),
                                pl.DataFrame({"psse_bus_number": [], "settlement_point_name": []}, schema={"psse_bus_number": pl.Int64, "settlement_point_name": pl.String}))
-    assert nodes["is_ambiguous"].all() and nodes["bus_key"].n_unique() == 2 and nodes["bus_key"][0].endswith("#1")
+    assert buses["is_ambiguous"].all() and buses["bus_key"].n_unique() == 2 and buses["bus_key"][0].endswith("#1")
 
 
 def test_crr_nodes_contract_bus_ties_and_name_transformers_from_autos():
@@ -48,14 +48,16 @@ def test_crr_nodes_contract_bus_ties_and_name_transformers_from_autos():
     transformer = pl.DataFrame({"i": [1], "j": [4], "ckt": ["T1"]})
     autos = pl.DataFrame({"from_number": ["1"], "to_number": ["4"], "id": ["T1"], "crr_name": ["AUTO_A"]})
     sources = pl.DataFrame({"name": ["SP_A"], "bus_name": ["2 A_BUS2"]})
-    nodes = identity.crr_nodes(bus, branch, transformer, autos, sources)
+    nodes, buses = identity.crr_buses(bus, branch, transformer, autos, sources)
     by = {r["node_number"]: r for r in nodes.to_dicts()}
-    assert by[1]["bus_group"] == 1 and by[2]["bus_group"] == 1 and by[1]["bus_key"] == by[2]["bus_key"]
+    assert by[1]["bus_key"] == by[2]["bus_key"] and by[3]["bus_key"] != by[1]["bus_key"]
     assert by[1]["is_tie_member"] and by[2]["is_tie_member"] and not by[3]["is_tie_member"]
-    assert by[3]["bus_group"] == 3 and nodes["bus_key"].n_unique() == 3
-    assert nodes.columns == list(identity.COLUMNS)
-    assert by[1]["attachments"] == "B:2 A_BUS2 3 B_BUS 1|B:AUTO_A|S:SP_A"  # the tie itself is not an attachment
-    assert by[4]["attachments"] == "B:3 B_BUS 4 C_BUS 1|B:AUTO_A"
+    assert nodes["bus_key"].n_unique() == 3 and buses.height == 3 and nodes.columns == list(identity.NODE_COLUMNS) and buses.columns == list(identity.BUS_COLUMNS)
+    at = {r["bus_key"]: r for r in buses.to_dicts()}
+    joined = at[by[1]["bus_key"]]
+    assert joined["n_nodes"] == 2 and joined["raw_name"] == "A_BUS1+A_BUS2" and joined["bus_number"] is None and joined["substation"] is None
+    assert joined["attachments"] == "B:2 A_BUS2 3 B_BUS 1|B:AUTO_A|S:SP_A"  # the tie itself is not an attachment
+    assert at[by[4]["bus_key"]]["attachments"] == "B:3 B_BUS 4 C_BUS 1|B:AUTO_A"
 
     open_tie = branch.with_columns(pl.when(pl.col("i") == 1).then(0).otherwise(pl.col("st")).alias("st"))
-    assert identity.crr_nodes(bus, open_tie, transformer, autos, sources)["bus_key"].n_unique() == 4
+    assert identity.crr_buses(bus, open_tie, transformer, autos, sources)[1].height == 4

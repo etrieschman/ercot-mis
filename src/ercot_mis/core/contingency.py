@@ -6,14 +6,14 @@ row per element it acts on, in the model's own vocabulary resolved to core keys:
 - CRR rows name a LINE or XFMR by the same name ``core.branch`` uses for
   ``branch_id`` (RAW comment, ``Autos`` name), with one action code.
 - DAM rows are Branch (resolved to ``branch_id`` by (from, to, ckt) in the same
-  hour), Load, Generator and SettlementPoint (resolved to a ``bus_key`` by bus
-  number), and split-bus operations, which change topology rather than remove an
+  hour), Load, Generator and SettlementPoint (resolved to a ``bus_key`` by the DAM
+  bus number, kept as ``bus_number``), and split-bus operations, which change topology rather than remove an
   element and are kept as their own ``operation``. A split-bus row on a branch moves
   one of its ends to a new bus section: the file holds the number of the end that
   stays and a note for the one that moves, and ``split_end`` (``from`` or ``to``) says
   which end moves (null for other rows, and when the file names both or neither).
 
-Unresolved references (a name or key with no branch or node in the snapshot) keep
+Unresolved references (a name or number with no branch or bus in the snapshot) keep
 null keys and set ``is_resolved`` false; nothing is dropped.
 """
 
@@ -23,11 +23,11 @@ import polars as pl
 
 from .branch import resolved
 
-VERSION = 3
+VERSION = 4
 
 CONTINGENCY_COLUMNS = ("contingency_id", "n_outages", "n_unresolved", "has_split_bus")
 OUTAGE_COLUMNS = ("contingency_id", "element_kind", "operation", "action", "branch_id", "bus_key",
-                  "node_number", "psse_id", "element_name", "is_resolved", "split_end")
+                  "bus_number", "psse_id", "element_name", "is_resolved", "split_end")
 
 _CRR_KINDS = {"LINE": "line", "XFMR": "transformer", "TRANSFORMER": "transformer"}
 _DAM_KINDS = {"BRANCH": "branch", "LOAD": "load", "GENERATOR": "generator", "SETTLEMENTPOINT": "settlement_point"}
@@ -46,35 +46,35 @@ def crr_contingencies(branches: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.Dat
                           pl.col("device_type").str.to_uppercase().replace_strict(_CRR_KINDS, default="unknown").alias("element_kind"),
                           pl.lit("outage").alias("operation"), pl.col("action"),
                           pl.col("device_name").alias("branch_id"), pl.lit(None, pl.String).alias("bus_key"),
-                          pl.lit(None, pl.Int64).alias("node_number"), pl.lit(None, pl.String).alias("psse_id"),
+                          pl.lit(None, pl.Int64).alias("bus_number"), pl.lit(None, pl.String).alias("psse_id"),
                           pl.col("device_name").alias("element_name"), pl.lit(None, pl.String).alias("split_end"))
                .pipe(resolved, branches).select(OUTAGE_COLUMNS))
     return _summarize(outages), outages
 
 
-def dam_contingencies(branches: pl.DataFrame, nodes: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """From one hour's ``dam_contingencies`` CSV."""
+def dam_contingencies(branches: pl.DataFrame, buses: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """From one hour's ``dam_contingencies`` CSV; ``buses`` is the hour's ``core.bus``."""
     # A row may name a branch in either direction; ``_reversed`` marks a row written against the RAW's from-to.
-    keyed = branches.select(pl.col("from_node").alias("psse_from_bus_number"), pl.col("to_node").alias("psse_to_bus_number"),
+    keyed = branches.select(pl.col("from_bus_number").alias("psse_from_bus_number"), pl.col("to_bus_number").alias("psse_to_bus_number"),
                             pl.col("ckt").alias("_ckt"), "branch_id", pl.lit(False).alias("_reversed"))
     keyed = pl.concat([keyed, keyed.select(pl.col("psse_to_bus_number").alias("psse_from_bus_number"),
                                           pl.col("psse_from_bus_number").alias("psse_to_bus_number"), "_ckt", "branch_id",
                                           pl.lit(True).alias("_reversed"))]).unique(subset=["psse_from_bus_number", "psse_to_bus_number", "_ckt", "branch_id"], keep="first")
-    bus_keys = nodes.select("node_number", "bus_key")
+    bus_keys = buses.select("bus_number", "bus_key")
     number = lambda c: pl.col(c).cast(pl.String).str.strip_chars().cast(pl.Int64, strict=False)
     moves_from, moves_to = number("split_bus_psse_bus_number").is_null(), number("split_bus_psse_to_bus_number").is_null()
     frame = (raw.with_columns(pl.col("equipment_type").str.to_uppercase().str.replace_all(r"[^A-Z]", "").replace_strict(_DAM_KINDS, default="unknown").alias("element_kind"),
                               pl.when(pl.col("contingency_operation").str.to_uppercase().str.contains("SPLIT")).then(pl.lit("split_bus")).otherwise(pl.lit("outage")).alias("operation"),
                               pl.col("psse_ckt_id").str.strip_chars().alias("_ckt"),
-                              pl.col("psse_gen_or_load_or_sp_bus_number").alias("node_number"),
+                              pl.col("psse_gen_or_load_or_sp_bus_number").alias("bus_number"),
                               pl.col("psse_gen_or_load_id").str.strip_chars().alias("psse_id"))
              .join(keyed, on=["psse_from_bus_number", "psse_to_bus_number", "_ckt"], how="left")
-             .join(bus_keys, on="node_number", how="left"))
+             .join(bus_keys, on="bus_number", how="left"))
     outages = frame.select(
         pl.col("contingency_name").alias("contingency_id"), "element_kind", "operation", pl.lit(None, pl.String).alias("action"),
         pl.when(pl.col("element_kind") == "branch").then(pl.col("branch_id")).otherwise(None).alias("branch_id"),
         pl.when(pl.col("element_kind") != "branch").then(pl.col("bus_key")).otherwise(None).alias("bus_key"),
-        "node_number", "psse_id",
+        "bus_number", "psse_id",
         pl.when(pl.col("element_kind") == "branch").then(pl.col("branch_id"))
           .otherwise(pl.coalesce(pl.col("station_name_psse_bus_name"), pl.col("psse_id"))).alias("element_name"),
         pl.when(pl.col("element_kind") == "branch").then(pl.col("branch_id").is_not_null())

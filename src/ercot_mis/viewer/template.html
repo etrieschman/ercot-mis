@@ -191,9 +191,11 @@ function drawPane(m, name, svg) {
   const lastRow = rowY[rowY.length - 1], botY = lastRow + 44 + outBot.length * lane + 26, H = botY + boxH + 24;
   fit(svg, W, H);
   const nNodes = st.buses.filter(b => !b.star).length, nBuses = new Set(st.buses.filter(b => !b.star).map(b => b.key)).size;
-  svg.previousElementSibling.textContent = collapse
+  svg.previousElementSibling.textContent = m.kind === "dam"
+    ? `Each bar is a bus: ${nBuses} bus${nBuses === 1 ? "" : "es"} here. The DAM model is bus-branch, so it has no nodes or breakers to show.`
+    : collapse
     ? `Bus view: each bar is a bus. ${nBuses} bus${nBuses === 1 ? "" : "es"} here, made of ${nNodes} node${nNodes === 1 ? "" : "s"}${nNodes > nBuses ? " (bars marked \u00D7N hold N nodes joined by closed breakers)" : ""}.`
-    : `Node view: each bar is a node. ${nNodes} node${nNodes === 1 ? "" : "s"} here, forming ${nBuses} bus${nBuses === 1 ? "" : "es"}${m.kind === "dam" ? "; a DAM model has no breakers, so its nodes are its buses" : ""}.`;
+    : `Node view: each bar is a node. ${nNodes} node${nNodes === 1 ? "" : "s"} here, forming ${nBuses} bus${nBuses === 1 ? "" : "es"}.`;
   bars.forEach(b => b.y = rowY[b.row]);
   // Neighbour boxes, ordered by where their branches come from.
   const where = new Map();
@@ -272,7 +274,7 @@ function count(m, name) {
   if (!st) return null;
   const ins = st.branches.filter(r => r.sa === r.sb), out = st.branches.filter(r => r.sa !== r.sb), loads = st.buses.flatMap(b => b.loads);
   return {
-    "Nodes": st.buses.filter(b => !b.star).length, "Buses": new Set(st.buses.filter(b => !b.star).map(b => b.key)).size, "Lines to other substations (in / out of service)": `${out.filter(r => r.on).length} / ${out.filter(r => !r.on).length}`,
+    ...(m.kind === "dam" ? {} : {"Nodes": st.buses.filter(b => !b.star).length}), "Buses": new Set(st.buses.filter(b => !b.star).map(b => b.key)).size, "Lines to other substations (in / out of service)": `${out.filter(r => r.on).length} / ${out.filter(r => !r.on).length}`,
     "Breakers (closed / open)": `${ins.filter(r => r.tie && r.on).length} / ${ins.filter(r => r.tie && !r.on).length}`,
     "Transformers (in / out)": `${ins.filter(r => r.k === "T" && r.on).length} / ${ins.filter(r => r.k === "T" && !r.on).length}`,
     "Branches with an enforced limit": st.branches.filter(r => limited(m, r)).length,
@@ -319,18 +321,20 @@ function detail(m, kind, item) {
     const uniq = f => [...new Set(buses.flatMap(f))];
     const lrows = loads.map(l => `<tr><td>${esc(l.id)}</td><td class="num">${l.n}</td><td>${l.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${fmt(l.mw)}</td><td class="num">${fmt(l.ldf, 4)}</td><td>${esc(l.zone)}</td></tr>`);
     const list = (title, xs) => xs.length ? `<h3>${title}</h3><p>${xs.map(esc).join(", ")}</p>` : "";
-    return `<h3>${showBreakers ? "Node" : buses.length > 1 ? "Bus made of " + buses.length + " nodes joined by closed breakers" : "Bus (a single node)"}, ${esc(m.id)}</h3>` + table(["node number", "base kV", "name in the model file", "type"], rows)
-      + `<p class="muted">Bus key: ${esc(buses[0].key)}</p>` + (lrows.length ? "<h3>Loads</h3>" + table(["load", "node", "service", "MW", "LDF", "zone"], lrows) : "")
+    const pt = m.kind === "dam" ? "bus" : "node";
+    return `<h3>${m.kind === "dam" ? "Bus" : showBreakers ? "Node" : buses.length > 1 ? "Bus made of " + buses.length + " nodes joined by closed breakers" : "Bus (a single node)"}, ${esc(m.id)}</h3>` + table([`${pt} number`, "base kV", "name in the model file", "type"], rows)
+      + `<p class="muted">Bus key: ${esc(buses[0].key)}</p>` + (lrows.length ? "<h3>Loads</h3>" + table(["load", pt, "service", "MW", "LDF", "zone"], lrows) : "")
       + list("Generators", uniq(b => b.gen)) + list("Settlement points located on this bus (resource nodes, DC ties)", uniq(b => b.sp)) + list("Hubs and load zones this bus belongs to", uniq(b => b.agg));
   }
   if (kind === "bus") {
     const rows = [["PSS/E number", item.n], ["Base kV", item.kv], ["Name in RAW", item.name], ["Type", item.type === 4 ? "4 (isolated)" : item.type], ["Bus key", item.key],
                   ["Generators", item.gen.join(", ")], ["Settlement points located here", item.sp.join(", ")], ["Hubs and load zones", item.agg.join(", ")], ["Note", item.star ? "fictitious star point of a three-winding transformer" : ""]].map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`);
     const loads = item.loads.map(l => `<tr><td>${esc(l.id)}</td><td>${l.on ? "in" : '<span class="diff">out</span>'}</td><td class="num">${fmt(l.mw)}</td><td class="num">${fmt(l.ldf, 4)}</td><td>${esc(l.zone)}</td></tr>`);
-    return `<h3>Node, ${esc(m.id)}</h3>` + table(["", ""], rows) + (loads.length ? `<h3>Loads on this node</h3>` + table(["load", "service", "MW", "LDF", "zone"], loads) : "");
+    const pt = m.kind === "dam" ? "bus" : "node";
+    return `<h3>${pt[0].toUpperCase() + pt.slice(1)}, ${esc(m.id)}</h3>` + table(["", ""], rows) + (loads.length ? `<h3>Loads on this ${pt}</h3>` + table(["load", "service", "MW", "LDF", "zone"], loads) : "");
   }
   const other = m.cmp && m.cmp[item.id] ? models[1 - models.indexOf(m)] : null, o = other ? other.byId.get(m.cmp[item.id].other) : null;
-  const fields = [["Id", r => r.id], ["Kind", r => r.k === "T" ? "transformer" : r.tie ? "bus tie" : "line"], ["From node (PSS/E number)", r => r.f], ["To node (PSS/E number)", r => r.t], ["Circuit", r => r.ckt],
+  const fields = [["Id", r => r.id], ["Kind", r => r.k === "T" ? "transformer" : r.tie ? "bus tie" : "line"], [`From ${m.kind === "dam" ? "bus" : "node"} (PSS/E number)`, r => r.f], [`To ${m.kind === "dam" ? "bus" : "node"} (PSS/E number)`, r => r.t], ["Circuit", r => r.ckt],
                   ["In service", r => r.on ? "yes" : "no"], ["Reactance pu", r => fmt(r.x, 5)], ["Monitored", r => r.mon ? "yes" : "no"], ["Secured", r => r.sec ? "yes" : "no"],
                   ["Base limit MW", r => fmt(r.base, 0)], ["Emergency limit MW", r => fmt(r.emer, 0)], ["RAW rate A", r => fmt(r.ra, 0)], ["RAW rate B", r => fmt(r.rb, 0)],
                   ["Temporary (added for an outage)", r => r.temp ? "yes" : "no"], ["Contingencies that remove it", r => r.ctg.length]];
