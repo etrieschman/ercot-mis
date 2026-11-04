@@ -66,7 +66,7 @@ belongs to `~/dev/ftr_align`, which reads what this repo writes.
 | network | `out.network` keeps CRR ties as branches and enforces the monitored ones, as ERCOT's auction does; contraction is `Options(contract_ties=True)` and `checks/network.py` measures its cost |
 | ratings | both kept: the CRR monitored-element CSV per time-of-use block, and the RAW's rate A, B and C. Each model's network enforces its own |
 | PSS/E parser | our own v30 parser (`raw/psse.py`), one tokenizer for both ERCOT dialects, Arrow for types |
-| CRR scope | annual auctions (every sequence and update) and monthly |
+| CRR scope | annual auctions (every sequence and update) and monthly, with each auction's posted results |
 | DAM scope | network models for every day, prices, shadow prices, the system price, the pricing inputs and the 60-day disclosure's awards |
 | shift factors | `SYS-608-CD` is listed, not fetched |
 | schedule | a daily launchd job (`scripts/daily_pull.py`), because EWS keeps nothing past a product's display window |
@@ -190,6 +190,12 @@ Builds run from a script file with a `__main__` guard, one build per data folder
   models. Manual overrides live in `data/overrides/`.
 - An annual auction sells six consecutive six-month terms over three years, sequence six
   the furthest out. The monthly model is the closest to the DAM.
+- The auction results post a shadow price per binding constraint and per settlement point
+  for each time-of-use block. The constraint's is for one MW over the block's hours; the
+  settlement point's is per MWh and is the marginal cost of injecting there, so a PTP
+  Obligation clears at the source's price minus the sink's, and a linked three-block bid at
+  the blocks' hour-weighted mean. The blocks are hours ending 7 to 22 on non-holiday
+  weekdays, the same hours on weekends and NERC holidays, and the rest (Protocols 7.3(5)).
 - EWS keeps nothing older than a product's display window: an unbounded listing returns
   exactly the window and an explicit older window returns "No reports found". History
   cannot be backfilled; a document not captured in time is gone. The Public API keeps
@@ -214,7 +220,7 @@ Each layer owns its `build`; `Session` strings them together and is the only wri
 
 ```
 src/ercot_mis/
-  products.py, config.py, clock.py   EMIL product specs; data folder, identity, secrets; ERCOT's hours as UTC instants
+  products.py, config.py, clock.py   EMIL product specs; data folder, identity, secrets; ERCOT's hours as UTC instants and the CRR time-of-use blocks
   ews.py            EWS client: build_request, sign, parse_reports, EwsClient; retrying() for stalled calls; probe
   public_api.py     Public API client: ID token, paged archive listing, paced calls
   store.py          the archive: content-addressed files, read-only, atomic; zip member hashing
@@ -224,6 +230,7 @@ src/ercot_mis/
     table.py        Column specs, Member, read_delimited, read_sheet, flag; ParseError
     psse.py         PSS/E v30 RAW -> psse_* tables, both dialects
     crr.py, dam.py  package members classified and parsed -> crr_* / dam_* tables
+    crr_auction.py  CRR auction results (NP7-802-M, NP7-803-M) -> crr_auction_* tables
     gtl.py          the GTL workbook (NP3-766-M) -> gtl_hourly
     prices.py       DAM prices and pricing inputs (Public API)
     mappings.py     settlement point and hub mappings (NP4-160-SG, NP3-220-SG)
@@ -249,6 +256,7 @@ src/ercot_mis/
   checks/           layer 4: the layers against ERCOT's results; each writes data/reports/<check>/
     binding.py      the DAM's binding rows of one hour resolved onto our network
     prices.py       the price identity per DAM hour
+    crr_prices.py   the CRR auction's shadow prices per time-of-use block on the monthly CRR model
     flows.py        the awards through the network against ERCOT's flows
     injections.py   the awards balance per hour
     ldf.py          ERCOT's load distribution factors against the Ld file
@@ -260,8 +268,8 @@ src/ercot_mis/
                     network, injections, match_*, diff_*, viewer, newest, hour_ids
   pull.py           the daily pull's bookkeeping: fetch_products, build_layers, at_risk
 demo/tour.ipynb              the walkthrough of every call; pulls into demo/data/
-scripts/check.py             runs one check: prices, flows, injections, ldf, network, identity, register
-scripts/daily_pull.py        fetch, build, the price and flow checks, the at-risk line; launchd template in scripts/launchd/
+scripts/check.py             runs one check: prices, flows, crr_prices, injections, ldf, network, identity, register
+scripts/daily_pull.py        fetch, build, the price, flow and CRR price checks, the at-risk line; launchd template in scripts/launchd/
 scripts/urgent_pull.py       EWS products only; run when the daily pull's notification says data is at risk
 scripts/probe.py             what EWS offers for each product
 scripts/validate_parsers.py  parse every archived package and check counts
@@ -302,10 +310,12 @@ the DAM cleared, and comparing the two network models.
    the unmatched buses that sit in the solved networks. `core.coverage.pair_coverage` and
    `checks/identity.py` measure them; the workbook's placeholder operations names are the
    first place to look.
-4. **CRR auction results.** The repo archives no CRR auction results or CRR shadow prices,
-   so nothing checks the CRR model against what the auction cleared. Find the EWS report
-   type ids, archive the products, then write the CRR counterpart of the price and flow
-   checks.
+4. **CRR auction results.** The monthly and long-term auction results (NP7-803-M, NP7-802-M)
+   are archived and parsed, and `checks/crr_prices.py` rebuilds the monthly auction's settlement
+   point shadow prices from its binding constraints on the monthly CRR model (CRA-01 to CRA-04).
+   Most points land within a dollar per MWh; a minority of resource nodes miss by dollars, and
+   the binding rows they sit on are the next thing to find. The long-term auctions clear six
+   months at once on the annual models and are not checked yet.
 5. **The awards lag.** The 60-day disclosure arrives two months after the models, so the
    flow check runs on the newest day with both. Nothing to do but keep capturing.
 

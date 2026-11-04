@@ -21,6 +21,7 @@ write under `data/reports/`.
 | [settlement-point-mappings.md](settlement-point-mappings.md) | NP4-160-SG, NP3-220-SG | parsed; not read by core |
 | [dam-prices.md](dam-prices.md) | NP4-191-CD, NP4-183-CD, NP4-190-CD, NP4-523-CD, NP4-200-CD, NP4-158-SG, NP4-231-CD, NP4-159-CD | parsed; tested by `checks/prices.py` |
 | [dam-disclosure.md](dam-disclosure.md) | NP3-966-ER | parsed; tested by `checks/flows.py` |
+| [crr-auction-results.md](crr-auction-results.md) | NP7-803-M (monthly), NP7-802-M (long-term) | parsed; tested by `checks/crr_prices.py` |
 | [planning-inputs.md](planning-inputs.md) | outages, offers, load, wind and solar | listed in `products.py`, not fetched |
 | not written | NP5-615-SG Standard Contingency List | archived, not parsed |
 

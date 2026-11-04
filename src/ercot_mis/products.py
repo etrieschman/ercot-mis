@@ -30,6 +30,8 @@ PRODUCTS: dict[str, Product] = {
     for p in (
         Product("NP7-801-M", "CRR Network Model (Long-Term)", "ECEII", "ews", True, 11204, 365),
         Product("NP7-800-M", "CRR Network Model (Monthly)", "ECEII", "ews", True, 11205, 365),
+        Product("NP7-803-M", "CRR Monthly Auction Results", "Public", "ews", True, 11201, 365),
+        Product("NP7-802-M", "CRR Long-Term Auction Results", "Public", "ews", True, 11203, 1095),
         Product(
             "NP4-500-SG",
             "Day-Ahead PSS/E Network Operations Model and Supporting Files",

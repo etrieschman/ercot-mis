@@ -18,7 +18,7 @@ from scipy import sparse
 
 from ..core.match import name_key
 from ..out.shift_factors import DcSystem
-from . import delivery_days, histogram, modelled_days, quantiles, write_report
+from . import delivery_days, histogram, modelled_days, quantiles, weight_matrix, write_report
 from .binding import BASE_CASE, hour_rows, resolve
 
 RESIDUAL_BINS = [-1e9, -20, -10, -5, -2, -1, -0.1, 0.1, 1, 2, 5, 10, 20, 1e9]
@@ -52,7 +52,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     net = session.network(snapshot_id)
     system = DcSystem(net)
     resolved = resolve(session, snapshot_id, net, system, shadow)
-    W, points_frame = _weight_matrix(net)
+    W, points_frame = weight_matrix(net)
     c = _congestion(resolved, system, net, W, points_frame, _ercot_cut_lists(session, snapshot_id))
 
     points = (prices.select(pl.col("settlement_point").alias("settlement_point_id"), pl.col("settlement_point_price").alias("price"))
@@ -86,15 +86,6 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     result["deenergized_in_base_case"] = _deenergized(session, start_utc, net, points, resid)
     result["electrically_similar_groups"] = _similar_groups(session, start_utc, prices)
     return result
-
-
-def _weight_matrix(net) -> tuple[sparse.csr_matrix, pl.DataFrame]:
-    """Settlement point weights as a (points x buses) matrix, and the points in row order."""
-    weights = net.settlement_point_buses.select("settlement_point_id", "bus_index", "weight")
-    points_frame = weights.select("settlement_point_id").unique().sort("settlement_point_id").with_row_index("point_index")
-    w = weights.join(points_frame, on="settlement_point_id")
-    W = sparse.csr_matrix((w["weight"].to_numpy(), (w["point_index"].to_numpy(), w["bus_index"].to_numpy())), shape=(points_frame.height, net.n_buses))
-    return W, points_frame
 
 
 def _ercot_cut_lists(session, snapshot_id: str) -> dict[str, set[str]]:

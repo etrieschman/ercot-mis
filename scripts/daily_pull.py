@@ -24,13 +24,16 @@ from pathlib import Path
 
 import ercot_mis as em
 from ercot_mis import pull
-from ercot_mis.checks import flows, prices
+from ercot_mis.checks import crr_prices, flows, prices
 
 # The price check runs for this many of the newest days with prices and a model.
 PRICE_CHECK_DAYS = 2
 
 # The flow check runs for this many of the newest days with awards and a model.
 FLOW_CHECK_DAYS = 1
+
+# The CRR price check runs for this many of the newest auction months with results and a monthly model.
+CRR_PRICE_CHECK_MONTHS = 1
 
 # No finished run for this long is a missed pull.
 MISSED_AFTER_HOURS = 36
@@ -55,9 +58,10 @@ def alert_urgent(risk: dict) -> None:
 
 
 def run_checks(mis: em.Session) -> int:
-    """Run the price check on the newest days with prices and the flow check on the newest day with awards, one log line each; the number of failures."""
+    """Run the price check on the newest days with prices, the flow check on the newest day with awards and the CRR price check on the newest auction month, one log line each; the number of failures."""
     failed = 0
-    for module, available, days in ((prices, prices.days_with_prices(mis), PRICE_CHECK_DAYS), (flows, flows.days_with_flows(mis), FLOW_CHECK_DAYS)):
+    for module, available, days in ((prices, prices.days_with_prices(mis), PRICE_CHECK_DAYS), (flows, flows.days_with_flows(mis), FLOW_CHECK_DAYS),
+                                    (crr_prices, crr_prices.months_with_results(mis), CRR_PRICE_CHECK_MONTHS)):
         for day in available[-days:]:
             began = time.monotonic()
             try:

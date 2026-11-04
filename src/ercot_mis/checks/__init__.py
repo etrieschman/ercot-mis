@@ -21,6 +21,7 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
+from scipy import sparse
 
 
 def write_report(session, check: str, name: str, result: dict) -> Path:
@@ -57,3 +58,12 @@ def histogram(values: np.ndarray, bins: list[float]) -> dict:
     """Counts per bin, keyed by each bin's upper edge."""
     counts, _ = np.histogram(values, bins=bins)
     return {f"<{e:g}": int(n) for n, e in zip(counts, bins[1:])}
+
+
+def weight_matrix(net) -> tuple[sparse.csr_matrix, pl.DataFrame]:
+    """A network's settlement point weights as a (points x buses) matrix, and the points in row order."""
+    weights = net.settlement_point_buses.select("settlement_point_id", "bus_index", "weight")
+    points = weights.select("settlement_point_id").unique().sort("settlement_point_id").with_row_index("point_index")
+    w = weights.join(points, on="settlement_point_id")
+    W = sparse.csr_matrix((w["weight"].to_numpy(), (w["point_index"].to_numpy(), w["bus_index"].to_numpy())), shape=(points.height, net.n_buses))
+    return W, points

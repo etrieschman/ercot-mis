@@ -40,3 +40,16 @@ def test_workbook_timestamps_take_the_second_duplicate_as_the_repeated_hour():
     out = pl.DataFrame({"t": naive}).select(clock.local_timestamps_expr(pl.col("t")).alias("u"))["u"].to_list()
     assert out == [datetime(2026, 11, 1, 5, tzinfo=UTC), datetime(2026, 11, 1, 6, tzinfo=UTC), datetime(2026, 11, 1, 7, tzinfo=UTC), datetime(2026, 11, 1, 8, tzinfo=UTC),
                    datetime(2026, 3, 8, 7, tzinfo=UTC), datetime(2026, 3, 8, 8, tzinfo=UTC)]
+
+
+def test_nerc_holidays_observe_a_sunday_holiday_on_monday():
+    assert clock.nerc_holidays(2026) == {date(2026, 1, 1), date(2026, 5, 25), date(2026, 7, 4), date(2026, 9, 7), date(2026, 11, 26), date(2026, 12, 25)}
+    assert date(2027, 7, 5) in clock.nerc_holidays(2027) and date(2027, 7, 4) not in clock.nerc_holidays(2027)  # the fourth is a Sunday
+    assert date(2021, 5, 31) in clock.nerc_holidays(2021)  # a May with five Mondays
+
+
+def test_block_hours_sum_to_the_month_and_move_a_weekday_holiday_to_the_weekend_block():
+    november = clock.block_hours(date(2026, 11, 1))  # 30 days, Thanksgiving on a Thursday: 20 weekdays
+    assert november == {"PeakWD": 320, "PeakWE": 160, "Off-peak": 240} and sum(november.values()) == 30 * 24
+    march = clock.block_hours(date(2026, 3, 15))  # no holiday, 22 weekdays, 31 days; hours are counted on the clock, so the short day still has 24
+    assert march == {"PeakWD": 352, "PeakWE": 144, "Off-peak": 248}

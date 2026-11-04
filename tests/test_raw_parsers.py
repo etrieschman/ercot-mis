@@ -199,3 +199,25 @@ def test_disclosure_members_are_dated_by_name_and_told_apart_by_header():
     assert list(disclosure.parse_member(esr, header)) == ["dam_60d_esr_data"]
     gen = disclosure.classify_member("60d_DAM_Gen_Resource_Data-06-OCT-26.csv")
     assert list(disclosure.parse_member(gen, header)) == ["dam_60d_gen_resource_data"]
+
+
+def test_auction_result_members_carry_the_auction_and_month_in_their_name():
+    from datetime import date
+
+    from ercot_mis.raw import crr_auction
+
+    monthly = crr_auction.classify_member("Common_BindingConstraint_2030.NOV.Monthly.Auction_AUCTION.csv")
+    assert monthly.kind == "crr_auction_binding_constraints" and monthly.is_parsed
+    assert monthly.identity == {"auction": "monthly", "term": None, "sequence": None, "month": date(2030, 11, 1)}
+    assert not crr_auction.classify_member("Common_BindingConstraint_2030.NOV.Monthly.Auction_AUCTION.xml").is_parsed
+    annual = crr_auction.classify_member("Common_BaseLoading_2031.1st6.AnnualAuction.Seq5_AUCTION_FEB_2031.csv")
+    assert annual.identity == {"auction": "annual", "term": "2031.1st6", "sequence": 5, "month": date(2031, 2, 1)}
+    assert crr_auction.classify_member("Common_SourceAndSinkShadowPrices_2031.1st6.AnnualAuction.Seq5_AUCTION.csv").identity["month"] is None
+    assert crr_auction.classify_member("README.txt").kind == "unknown" and crr_auction.classify_member("folder/") is None
+    rows = crr_auction.parse_member(monthly, b"DeviceName,DeviceType,Direction,Flow,Limit,Description,Contingency,CalendarPeriod,TimeOfUse,ShadowPrice\n"
+                                              b"LINE_A,Line,From - To,100.5,100.5,Base Case,,NOV_2030,PeakWD,3.25\n")["crr_auction_binding_constraints"]
+    row = rows.to_pylist()[0]
+    assert (row["device_name"], row["direction"], row["flow"], row["contingency"], row["shadow_price"]) == ("LINE_A", "From - To", 100.5, None, 3.25)
+    prices = crr_auction.parse_member(crr_auction.classify_member("Common_SourceAndSinkShadowPrices_2030.NOV.Monthly.Auction_AUCTION.csv"),
+                                      b"SourceSink,CalendarPeriod,TimeOfUse,ShadowPricePerMWH\nRN_A,NOV_2030,Off-peak,-1.5\n")
+    assert prices["crr_auction_source_sink_shadow_prices"].column_names == ["source_sink", "calendar_period", "time_of_use", "shadow_price_per_mwh"]

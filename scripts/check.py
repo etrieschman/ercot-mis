@@ -8,6 +8,8 @@
     uv run python scripts/check.py network                      # latest monthly CRR model, latest DAM noon
     uv run python scripts/check.py register                     # one measurement per row of docs/assumptions.md
     uv run python scripts/check.py identity                     # how CRR and DAM keys line up (latest month, latest DAM noon)
+    uv run python scripts/check.py crr_prices --month 2026-11-01  # the CRR auction's shadow prices on the monthly model
+    uv run python scripts/check.py crr_prices --all             # every auction month with results and a model
 
 The lines carry counts and quantiles, never names.
 """
@@ -18,15 +20,16 @@ import argparse
 from datetime import date
 
 import ercot_mis as em
-from ercot_mis.checks import flows, identity, injections, ldf, network, prices, register
+from ercot_mis.checks import crr_prices, flows, identity, injections, ldf, network, prices, register
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("check", choices=("prices", "flows", "injections", "ldf", "network", "register", "identity"))
+    parser.add_argument("check", choices=("prices", "flows", "injections", "ldf", "network", "register", "identity", "crr_prices"))
     parser.add_argument("--day", type=date.fromisoformat, help="operating date (default: the newest day the check can run)")
     parser.add_argument("--hour", type=int, default=12, help="ldf: hour ending")
-    parser.add_argument("--all", action="store_true", help="prices, flows: every day the check can run")
+    parser.add_argument("--month", type=date.fromisoformat, help="crr_prices: the auction month, as its first day (default: the newest with results and a model)")
+    parser.add_argument("--all", action="store_true", help="prices, flows, crr_prices: every day or month the check can run")
     parser.add_argument("--crr", help="network, identity: CRR snapshot id")
     parser.add_argument("--dam", help="network, identity: DAM snapshot id")
     args = parser.parse_args()
@@ -36,6 +39,10 @@ def main() -> None:
             available = prices.days_with_prices(session) if args.check == "prices" else flows.days_with_flows(session)
             for day in ([args.day] if args.day else available if args.all else available[-1:]):
                 print(module.summary_line(day, module.run(session, day)), flush=True)
+        elif args.check == "crr_prices":
+            available = crr_prices.months_with_results(session)
+            for month in ([args.month] if args.month else available if args.all else available[-1:]):
+                print(crr_prices.summary_line(month, crr_prices.run(session, month)), flush=True)
         elif args.check == "injections":
             for day in [args.day] if args.day else injections.days(session):
                 result = injections.run(session, day)

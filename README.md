@@ -4,7 +4,7 @@ ercot-mis fetches ERCOT Market Information System (MIS) data, keeps the original
 and standardizes them into tables that record which ERCOT file and which code produced
 every row. A daily pull archives the CRR and DAM network models, the generic transmission
 limits, ERCOT's settlement point mappings, the day-ahead prices and pricing inputs and the
-60-day disclosure, builds the raw and core tables, and checks the DAM's prices and flows
+60-day disclosure, builds the raw and core tables, and checks the DAM's prices and flows and the CRR auction's prices
 against what ERCOT published. `CLAUDE.md` holds the design and the open work;
 `demo/tour.ipynb` walks through every call.
 
@@ -65,8 +65,9 @@ writes a report under `data/reports/<check>/`:
 uv run python scripts/check.py prices --day 2026-09-30
 ```
 
-`prices` rebuilds every settlement point price from the binding constraints; `flows` pushes
-the DAM's own awards through the network; `register` measures every row of
+`prices` rebuilds every DAM settlement point price from the binding constraints; `flows` pushes
+the DAM's own awards through the network; `crr_prices` rebuilds the CRR auction's settlement
+point shadow prices on the monthly CRR model; `register` measures every row of
 `docs/assumptions.md` that no other check covers. The script's docstring lists the rest.
 
 `docs/out-network.md` states the conventions behind `network()`; `docs/assumptions.md`

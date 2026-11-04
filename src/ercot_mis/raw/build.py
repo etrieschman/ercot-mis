@@ -24,13 +24,13 @@ import pyarrow.parquet as pq
 from polars.exceptions import PanicException
 
 from ..products import Product, get_product
-from . import crr, dam, disclosure, gtl, mappings, prices, psse, table
+from . import crr, crr_auction, dam, disclosure, gtl, mappings, prices, psse, table
 
 LAYER = "raw"
 COMPRESSION = "zstd"
 NONE = "<none>"  # the artifact row of a package that yields no table (a document shape the parser archives but does not read)
 # The parser of each product, in build order; each module has VERSION, classify_member and parse_member.
-PARSERS = {"NP7-801-M": crr, "NP7-800-M": crr, "NP4-500-SG": dam, "NP3-766-M": gtl,
+PARSERS = {"NP7-801-M": crr, "NP7-800-M": crr, "NP7-803-M": crr_auction, "NP7-802-M": crr_auction, "NP4-500-SG": dam, "NP3-766-M": gtl,
            "NP4-191-CD": prices, "NP4-183-CD": prices, "NP4-190-CD": prices, "NP4-523-CD": prices, "NP4-200-CD": prices, "NP4-158-SG": prices,
            "NP4-231-CD": prices, "NP4-159-CD": prices, "NP4-160-SG": mappings, "NP3-220-SG": mappings, "NP3-966-ER": disclosure}
 
