@@ -287,7 +287,7 @@ and every artifact it produced is rebuilt. `numpy` and `scipy` belong to the
 Health comes first. `data/logs/last_run.json` says `ok`, `missed` (its flags say why) or
 `urgent` (EWS data within a week of rolling off; run `scripts/urgent_pull.py`).
 `data/logs/daily_pull.log` ends each run with `failed 0`, the at-risk line, a `price check`
-line and a `flow check` line. The job is scheduled for 07:00, but the Mac is asleep then and
+line, a `flow check` line and a `crr price check` line. The job is scheduled for 07:00, but the Mac is asleep then and
 launchd runs it on wake; the start times in the log show when.
 
 The first four items are what stands between the repo and its two aims: reproducing what
@@ -310,12 +310,17 @@ the DAM cleared, and comparing the two network models.
    the unmatched buses that sit in the solved networks. `core.coverage.pair_coverage` and
    `checks/identity.py` measure them; the workbook's placeholder operations names are the
    first place to look.
-4. **CRR auction results.** The monthly and long-term auction results (NP7-803-M, NP7-802-M)
-   are archived and parsed, and `checks/crr_prices.py` rebuilds the monthly auction's settlement
-   point shadow prices from its binding constraints on the monthly CRR model (CRA-01 to CRA-04).
-   Most points land within a dollar per MWh; a minority of resource nodes miss by dollars, and
-   the binding rows they sit on are the next thing to find. The long-term auctions clear six
-   months at once on the annual models and are not checked yet.
+4. **CRR auction results** (CRA-01 to CRA-04). The monthly auction's settlement point shadow
+   prices are rebuilt from its binding constraints on the monthly CRR model, and the check
+   runs on every month with results and a model. Most points land within a dollar per MWh. Two
+   steps remain, in this order:
+   a. The points that miss by dollars. For the worst points in one block, list the binding
+      rows whose shift factor at that point is largest, and see what those rows share: a
+      contingency outcome, a transformer with `is_name_reversed`, a GTC, a settlement point
+      spread over several buses. The rows' `rows_by_outcome` is already in the report.
+   b. The long-term auctions (NP7-802-M). They clear six months at once on the annual models,
+      so the check needs the annual snapshot for each calendar period of the file. The daily
+      pull is still archiving the older documents.
 5. **The awards lag.** The 60-day disclosure arrives two months after the models, so the
    flow check runs on the newest day with both. Nothing to do but keep capturing.
 
