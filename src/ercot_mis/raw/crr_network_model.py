@@ -15,8 +15,8 @@ from datetime import date
 
 import pyarrow as pa
 
-from . import psse
-from .table import F, Column, Member, extension, read_delimited, read_sheet
+from . import psse_raw
+from .columns import F, Column, Member, extension, read_delimited, read_sheet
 
 MONTHS = {m: n for n, m in enumerate(
     ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"), start=1)}
@@ -106,7 +106,7 @@ def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
     label = f"CRR {member.kind}.{member.format}"
     match (member.kind, member.format):
         case ("network_model", "raw"):
-            return psse.parse_raw(data, label).tables
+            return psse_raw.parse_raw(data, label).tables
         case ("contingencies", "csv"):
             return {"crr_contingencies": read_delimited(data, CONTINGENCIES, label)}
         case ("monitored_lines_and_transformers", "csv"):

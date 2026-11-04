@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import pyarrow as pa
 
-from .table import F, I, S, ParseError, cast_column
+from .columns import F, I, S, ParseError, cast_column
 
 _LINE = re.compile(r"^((?:[^'/]|'[^']*')*)(?:/(.*))?$")
 _TOKEN = re.compile(r"'([^']*)'|([^\s,']+)")

@@ -16,7 +16,7 @@ import polars as pl
 import pyarrow as pa
 
 from ..clock import local_timestamps_expr
-from .table import Member, ParseError, extension
+from .columns import Member, ParseError, extension
 
 VERSION = 3
 

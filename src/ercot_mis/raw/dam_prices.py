@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pyarrow as pa
 
-from .table import Column, F, I, Member, classify_csv, parse_csv
+from .columns import Column, F, I, Member, classify_csv, parse_csv
 
 VERSION = 2
 

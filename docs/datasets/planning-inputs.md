@@ -3,7 +3,7 @@
 Datasets beyond the network models that describe what was known, offered and outaged
 around an auction or a DAM run. The Public API's product catalogue
 (`GET /api/public-reports`) lists every public product with its EMIL id, report type,
-posting frequency and archive depth. The products below are in `products.py` with
+posting frequency and archive depth. The products below are in `archive/products.py` with
 `is_fetched=False`: listed, so the catalog records what ERCOT offers, and not downloaded.
 Fetching one means setting `is_fetched=True`, adding it to the daily pull, and writing
 its parser and note.

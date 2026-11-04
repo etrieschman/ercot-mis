@@ -16,8 +16,8 @@ from datetime import date
 
 import pyarrow as pa
 
-from . import psse
-from .table import F, I, Column, Member, extension, read_delimited
+from . import psse_raw
+from .columns import F, I, Column, Member, extension, read_delimited
 
 _HOURLY = re.compile(r"^DAM(\d{8})_(?:([A-Za-z]+)_)?(\d{3})\.(raw|csv)$", re.IGNORECASE)
 _DAILY = re.compile(r"^DAM(\d{8})_(SpCtg|SpNb)\.csv$", re.IGNORECASE)
@@ -147,7 +147,7 @@ def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
     hour = member.identity["hour"]
     label = f"DAM {member.kind} hour {hour}" if hour else f"DAM {member.kind}"
     if member.kind == "network_model":
-        return psse.parse_raw(data, label).tables
+        return psse_raw.parse_raw(data, label).tables
     if member.kind in _CSV_COLUMNS:
         return {f"dam_{member.kind}": read_delimited(data, _CSV_COLUMNS[member.kind], label)}
     return {}

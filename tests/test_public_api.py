@@ -4,9 +4,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ercot_mis.products import get_product
-from ercot_mis import ews, public_api
-from ercot_mis.public_api import ARCHIVE_URL, TOKEN_URL, PublicApiClient, PublicApiError
+from ercot_mis.archive.products import get_product
+from ercot_mis.archive import ews, public_api
+from ercot_mis.archive.public_api import ARCHIVE_URL, TOKEN_URL, PublicApiClient, PublicApiError
 
 PRODUCT = get_product("NP4-191-CD")
 SECRETS = ("user@example.org", "pass-" + "w" * 8, "key-" + "k" * 8)

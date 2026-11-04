@@ -6,10 +6,10 @@ The run does not keep the Mac awake; it writes its level to ``data/logs/last_run
 sends a notification when the level is not ``ok``:
 
 - ``missed``: no run finished for ``MISSED_AFTER_HOURS``, the Mac slept during the run, or a step failed;
-- ``urgent``: an EWS product is within ``URGENT_DAYS`` of losing a document (``ercot_mis.pull.at_risk``);
+- ``urgent``: an EWS product is within ``URGENT_DAYS`` of losing a document (``ercot_mis.daily.at_risk``);
   the notification's text is the command to run, ``scripts/urgent_pull.py``.
 
-To capture only some DAM days, set ``DAM_OPERATING_DATES`` in ``ercot_mis/pull.py``.
+To capture only some DAM days, set ``DAM_OPERATING_DATES`` in ``ercot_mis/daily.py``.
 
     uv run python scripts/daily_pull.py
 """
@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import ercot_mis as em
-from ercot_mis import pull
+from ercot_mis import daily
 from ercot_mis.checks import crr_prices, flows, prices
 
 # The price check runs for this many of the newest days with prices and a model.
@@ -54,7 +54,7 @@ def notify(title: str, text: str, subtitle: str | None = None) -> None:
 
 
 def alert_urgent(risk: dict) -> None:
-    notify("ercot-mis: EWS data at risk", URGENT_COMMAND, subtitle=pull.risk_line(risk))
+    notify("ercot-mis: EWS data at risk", URGENT_COMMAND, subtitle=daily.risk_line(risk))
 
 
 def run_checks(mis: em.Session) -> int:
@@ -66,7 +66,7 @@ def run_checks(mis: em.Session) -> int:
             began = time.monotonic()
             try:
                 print(f"  {module.summary_line(day, module.run(mis, day))}, {time.monotonic() - began:.0f}s", flush=True)
-            except pull.FAILURES as error:
+            except daily.FAILURES as error:
                 failed += 1
                 print(f"  {module.__name__.rsplit('.', 1)[-1]} check {day}: FAILED {type(error).__name__}: {error}", flush=True)
     return failed
@@ -85,22 +85,22 @@ def main() -> int:
             print(f"  previous run finished {previous['finished_utc'][:16]} UTC, {gap:.1f} days ago", flush=True)
             if gap * 24 > MISSED_AFTER_HOURS:
                 flags.append(f"no pull for {gap:.1f} days")
-        captured = pull.load_captured(mis)
-        risk = pull.at_risk(mis, captured)
-        urgent_at_start = pull.is_urgent(risk)
-        print(f"  before the fetch: {pull.risk_line(risk)}", flush=True)
+        captured = daily.load_captured(mis)
+        risk = daily.at_risk(mis, captured)
+        urgent_at_start = daily.is_urgent(risk)
+        print(f"  before the fetch: {daily.risk_line(risk)}", flush=True)
         if urgent_at_start:
             alert_urgent(risk)  # before the fetch, in case this run stalls
         try:
-            failed += pull.fetch_products(mis, em.PRODUCTS.values(), captured)
-            pull.save_captured(mis, captured)
+            failed += daily.fetch_products(mis, em.PRODUCTS.values(), captured)
+            daily.save_captured(mis, captured)
             try:
-                risk = pull.at_risk(mis, captured)
-                print(f"  at risk: {pull.risk_line(risk)}", flush=True)
-            except pull.FAILURES as error:
+                risk = daily.at_risk(mis, captured)
+                print(f"  at risk: {daily.risk_line(risk)}", flush=True)
+            except daily.FAILURES as error:
                 failed += 1
                 print(f"  at risk: FAILED {type(error).__name__}: {error}", flush=True)
-            failed += pull.build_layers(mis)
+            failed += daily.build_layers(mis)
             failed += run_checks(mis)
         finally:  # the status file and the notification are written whatever failed above
             slept = ((time.time() - wall) - (time.monotonic() - awake)) / 60
@@ -108,7 +108,7 @@ def main() -> int:
                 flags.append(f"asleep {slept:.0f} min during the run")
             if failed:
                 flags.append(f"{failed} failure(s)")
-            level = "urgent" if pull.is_urgent(risk) else "missed" if flags else "ok"
+            level = "urgent" if daily.is_urgent(risk) else "missed" if flags else "ok"
             print(f"  level {level}" + (f": {'; '.join(flags)}" if flags else ""), flush=True)
             status_path.parent.mkdir(mode=0o700, exist_ok=True)
             status_path.write_text(json.dumps({"started_utc": started.isoformat(), "finished_utc": datetime.now(timezone.utc).isoformat(), "failed": failed,
@@ -117,9 +117,9 @@ def main() -> int:
             if level == "urgent":
                 alert_urgent(risk)
             elif level == "missed":
-                notify("ercot-mis: pull incomplete", f"{'; '.join(flags)}. Nothing urgent: {pull.risk_line(risk)}.")
+                notify("ercot-mis: pull incomplete", f"{'; '.join(flags)}. Nothing urgent: {daily.risk_line(risk)}.")
             elif urgent_at_start:
-                notify("ercot-mis: caught up", pull.risk_line(risk))
+                notify("ercot-mis: caught up", daily.risk_line(risk))
     return 1 if failed else 0
 
 

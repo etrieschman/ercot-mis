@@ -12,7 +12,7 @@ Details: docs/datasets/settlement-point-mappings.md and docs/datasets/dam-networ
 from __future__ import annotations
 
 import polars as pl
-from ..raw.table import flag
+from ..raw.columns import flag
 
 VERSION = 7
 

@@ -65,7 +65,7 @@ belongs to `~/dev/ftr_align`, which reads what this repo writes.
 | bus identity | an equipment-based `bus_key`, never a PSS/E number or name (DAM numbers change every hour; DAM names are substations). CRR nodes joined by in-service ties share one key (`core/bus.py`, `docs/datasets/identity-and-matching.md`, measured by `checks/identity.py`) |
 | network | `out.network` keeps CRR ties as branches and enforces the monitored ones, as ERCOT's auction does; contraction is `Options(contract_ties=True)` and `checks/network.py` measures its cost |
 | ratings | both kept: the CRR monitored-element CSV per time-of-use block, and the RAW's rate A, B and C. Each model's network enforces its own |
-| PSS/E parser | our own v30 parser (`raw/psse.py`), one tokenizer for both ERCOT dialects, Arrow for types |
+| PSS/E parser | our own v30 parser (`raw/psse_raw.py`), one tokenizer for both ERCOT dialects, Arrow for types |
 | CRR scope | annual auctions (every sequence and update) and monthly, with each auction's posted results |
 | DAM scope | network models for every day, prices, shadow prices, the system price, the pricing inputs and the 60-day disclosure's awards |
 | shift factors | `SYS-608-CD` is listed, not fetched |
@@ -220,21 +220,28 @@ Each layer owns its `build`; `Session` strings them together and is the only wri
 
 ```
 src/ercot_mis/
-  products.py, config.py, clock.py   EMIL product specs; data folder, identity, secrets; ERCOT's hours as UTC instants and the CRR time-of-use blocks
-  ews.py            EWS client: build_request, sign, parse_reports, EwsClient; retrying() for stalled calls; probe
-  public_api.py     Public API client: ID token, paged archive listing, paced calls
-  store.py          the archive: content-addressed files, read-only, atomic; zip member hashing
-  catalog.py        the DuckDB catalog; posting_order (TOP-11); writing(), ReadOnlyCatalog
-  fetch.py          list_documents (a listing into the catalog), fetch (a document into the store), ingest (a local file)
-  raw/              layer 1: one typed table per source file
-    table.py        Column specs, Member, read_delimited, read_sheet, flag; ParseError
-    psse.py         PSS/E v30 RAW -> psse_* tables, both dialects
-    crr.py, dam.py  package members classified and parsed -> crr_* / dam_* tables
-    crr_auction.py  CRR auction results (NP7-802-M, NP7-803-M) -> crr_auction_* tables
-    gtl.py          the GTL workbook (NP3-766-M) -> gtl_hourly
-    prices.py       DAM prices and pricing inputs (Public API)
-    mappings.py     settlement point and hub mappings (NP4-160-SG, NP3-220-SG)
-    disclosure.py   the 60-Day DAM Disclosure (NP3-966-ER)
+  session.py        Session, the hub: list, fetch, ingest, probe; build_raw, build_core; raw, core, core_rows, raw_rows;
+                    network, injections, match_*, diff_*, viewer, newest, hour_ids
+  daily.py          the daily job's steps: fetch_products, build_layers, at_risk
+  config.py         data folder, identity, secrets
+  clock.py          ERCOT's hours as UTC instants; the CRR time-of-use blocks
+  archive/          layer 0: ERCOT's files as sent, and how they arrive
+    products.py     EMIL product specs
+    ews.py          EWS client: build_request, sign, parse_reports, EwsClient; retrying() for stalled calls; probe
+    public_api.py   Public API client: ID token, paged archive listing, paced calls
+    store.py        content-addressed files, read-only, atomic; zip member hashing
+    catalog.py      the DuckDB catalog; posting_order (TOP-11); writing(), ReadOnlyCatalog
+    fetch.py        list_documents (a listing into the catalog), fetch (a document into the store), ingest (a local file)
+  raw/              layer 1: one typed table per source file; one parser per dataset note in docs/datasets/
+    columns.py      Column specs, Member, read_delimited, read_sheet, flag; ParseError
+    psse_raw.py     PSS/E v30 RAW -> psse_* tables, both dialects
+    crr_network_model.py          NP7-800-M, NP7-801-M -> crr_* tables
+    dam_network_model.py          NP4-500-SG -> dam_* tables
+    crr_auction_results.py        NP7-802-M, NP7-803-M -> crr_auction_* tables
+    generic_transmission_limits.py  NP3-766-M -> gtl_hourly
+    dam_prices.py                 DAM prices and pricing inputs (Public API)
+    settlement_point_mappings.py  NP4-160-SG, NP3-220-SG
+    dam_disclosure.py             NP3-966-ER
     build.py        parse packages in a process pool, write Parquet with identity columns, register artifacts
   core/             layer 2: tidy keyed tables shared by CRR and DAM
     snapshot.py     snapshot ids and revisions
@@ -264,9 +271,6 @@ src/ercot_mis/
     identity.py     how CRR and DAM keys line up
     register.py     a measurement for every register row no other check covers
   viewer/           a single-file network viewer; its output is CEII
-  session.py        Session, the hub: list, fetch, ingest, probe; build_raw, build_core; raw, core, core_rows, raw_rows;
-                    network, injections, match_*, diff_*, viewer, newest, hour_ids
-  pull.py           the daily pull's bookkeeping: fetch_products, build_layers, at_risk
 demo/tour.ipynb              the walkthrough of every call; pulls into demo/data/
 scripts/check.py             runs one check: prices, flows, crr_prices, injections, ldf, network, identity, register
 scripts/daily_pull.py        fetch, build, the price, flow and CRR price checks, the at-risk line; launchd template in scripts/launchd/

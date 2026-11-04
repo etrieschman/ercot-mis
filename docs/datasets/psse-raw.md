@@ -20,7 +20,7 @@ is read from the archived zip, never downloaded on its own.
 
 ## What we parse
 
-`raw/psse.py` writes `psse_case`, `psse_bus`, `psse_load`, `psse_generator`,
+`raw/psse_raw.py` writes `psse_case`, `psse_bus`, `psse_load`, `psse_generator`,
 `psse_branch`, `psse_transformer`, `psse_area`, `psse_switched_shunt`,
 `psse_impedance_correction`, `psse_zone` and `psse_owner`. Column names follow the
 PSS/E manual (`i`, `j`, `ckt`, `ratea`). Every table except `psse_case` ends with

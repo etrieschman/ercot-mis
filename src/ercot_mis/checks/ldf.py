@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 
 import polars as pl
-from ..raw.table import flag
+from ..raw.columns import flag
 
 from . import write_report
 

@@ -6,7 +6,7 @@ import pytest
 
 from ercot_mis import Session
 from ercot_mis.raw import build
-from ercot_mis.raw import dam as dam_parser
+from ercot_mis.raw import dam_network_model as dam_parser
 
 from test_psse import MARKED, to_bare
 
@@ -24,7 +24,7 @@ def _headers(columns) -> bytes:
 def _workbook() -> bytes:
     from openpyxl import Workbook
 
-    from ercot_mis.raw import crr as crr_parser
+    from ercot_mis.raw import crr_network_model as crr_parser
 
     book = Workbook()
     lines = book.active
@@ -139,7 +139,7 @@ def test_build_raw_reports_a_broken_package_without_stopping(tmp_path):
 
 def test_parser_id_names_the_versions_that_matter():
     assert build.parser_id("NP7-800-M") != build.parser_id("NP4-500-SG")
-    assert build.parser_id("NP4-500-SG") == "ercot-mis=0.0.1|build=2|table=1|psse=1|dam=1"
+    assert build.parser_id("NP4-500-SG") == "ercot-mis=0.0.1|build=2|columns=1|psse_raw=1|dam_network_model=1"
     with pytest.raises(ValueError, match="no raw-layer parser"):
         build.parser_id("SYS-608-CD")
 
@@ -189,7 +189,7 @@ def test_snapshot_revisions_order_packages_by_posting_time(tmp_path):
     from datetime import datetime, timezone
 
     from ercot_mis.core.snapshot import snapshots
-    from ercot_mis.ews import RemoteDoc
+    from ercot_mis.archive.ews import RemoteDoc
 
     with Session(tmp_path / "data") as mis:
         (tmp_path / "later").mkdir()

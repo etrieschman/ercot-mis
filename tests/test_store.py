@@ -5,7 +5,7 @@ import zipfile
 
 import pytest
 
-from ercot_mis import store
+from ercot_mis.archive import store
 
 
 def _zip(members: dict[str, bytes]) -> bytes:

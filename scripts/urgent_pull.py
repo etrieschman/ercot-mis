@@ -14,7 +14,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import ercot_mis as em
-from ercot_mis import pull
+from ercot_mis import daily
 
 
 def keep_awake() -> None:
@@ -27,15 +27,15 @@ def main() -> int:
     keep_awake()
     print(f"urgent pull {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC", flush=True)
     with em.open() as mis:
-        captured = pull.load_captured(mis)
-        print(f"  before: {pull.risk_line(pull.at_risk(mis, captured))}", flush=True)
+        captured = daily.load_captured(mis)
+        print(f"  before: {daily.risk_line(daily.at_risk(mis, captured))}", flush=True)
         never = datetime.min.replace(tzinfo=timezone.utc)
-        specs = sorted(pull.windowed_products(), key=lambda spec: captured.get(spec.emil_id, never) + timedelta(days=spec.display_days))
-        failed = pull.fetch_products(mis, specs, captured)
-        pull.save_captured(mis, captured)
-        risk = pull.at_risk(mis, captured)
-        print(f"  after: {pull.risk_line(risk)}", flush=True)
-    urgent = pull.is_urgent(risk)
+        specs = sorted(daily.windowed_products(), key=lambda spec: captured.get(spec.emil_id, never) + timedelta(days=spec.display_days))
+        failed = daily.fetch_products(mis, specs, captured)
+        daily.save_captured(mis, captured)
+        risk = daily.at_risk(mis, captured)
+        print(f"  after: {daily.risk_line(risk)}", flush=True)
+    urgent = daily.is_urgent(risk)
     if urgent:
         print("  still urgent: look at the failures above and run this again", flush=True)
     return 1 if failed or urgent else 0

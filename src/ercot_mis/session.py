@@ -15,17 +15,18 @@ from pathlib import Path
 
 import polars as pl
 
-from . import ews, fetch, viewer
+from . import viewer
+from .archive import ews, fetch
 from .core import diff, match
 from .core.build import build as build_core_tables
 from .out import injection, network as out
 from .raw import build as raw_build
-from .catalog import Catalog, ReadOnlyCatalog, writing
+from .archive.catalog import Catalog, ReadOnlyCatalog, writing
 from .config import Identity, load_identity
-from .ews import PRIVATE_COLUMNS, EwsClient, Probe
-from .fetch import as_date
-from .products import Product, get_product
-from .public_api import PublicApiClient
+from .archive.ews import PRIVATE_COLUMNS, EwsClient, Probe
+from .archive.fetch import as_date
+from .archive.products import Product, get_product
+from .archive.public_api import PublicApiClient
 
 BUILD_SCHEMA = {
     "emil_id": pl.String,
@@ -96,7 +97,7 @@ class Session:
             self._public_api = PublicApiClient.from_secrets()
         return self._public_api
 
-    # ------------------------------------------------------------------ the archive: ercot_mis.fetch
+    # ------------------------------------------------------------------ the archive: ercot_mis.archive.fetch
 
     def _client(self, spec: Product):
         return self.ews if spec.source == "ews" else self.public_api

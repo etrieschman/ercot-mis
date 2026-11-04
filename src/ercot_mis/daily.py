@@ -15,7 +15,7 @@ from pathlib import Path
 
 import polars as pl
 
-from .products import PRODUCTS, Product
+from .archive.products import PRODUCTS, Product
 from .raw.build import PARSERS
 from .session import Session
 

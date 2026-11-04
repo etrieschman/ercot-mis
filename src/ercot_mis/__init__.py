@@ -3,9 +3,9 @@
 from pathlib import Path
 
 from .config import ConfigError, Identity, load_identity, load_secret, resolve_data_dir, secure_permissions
-from .ews import EwsError, Probe, RemoteDoc
-from .fetch import BudgetError, DownloadError
-from .products import PRODUCTS, Product, get_product
+from .archive.ews import EwsError, Probe, RemoteDoc
+from .archive.fetch import BudgetError, DownloadError
+from .archive.products import PRODUCTS, Product, get_product
 from .session import Session
 
 __version__ = "0.0.1"

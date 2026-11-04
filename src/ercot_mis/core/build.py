@@ -17,7 +17,7 @@ from pathlib import Path
 
 import polars as pl
 
-from ..catalog import posting_order
+from ..archive.catalog import posting_order
 from ..raw import build as raw_build
 from . import award, branch, bus, contingency, gtc, load, settlement_point, snapshot
 

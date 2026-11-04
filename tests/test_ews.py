@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from lxml import etree
 
-from ercot_mis import ews
+from ercot_mis.archive import ews
 
 DSIG = "http://www.w3.org/2000/09/xmldsig#"
 

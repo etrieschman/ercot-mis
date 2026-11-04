@@ -23,8 +23,8 @@ import polars as pl
 import requests
 from lxml import etree
 
-from .clock import TZ
-from .config import Identity
+from ..clock import TZ
+from ..config import Identity
 
 if TYPE_CHECKING:
     from .products import Product

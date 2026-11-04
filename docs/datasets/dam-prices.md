@@ -18,7 +18,7 @@ weight a load zone (NP4-159-CD).
 
 ## Source and capture
 
-The Public API archive (`public_api.py`): one document per product and delivery date,
+The Public API archive (`archive/public_api.py`): one document per product and delivery date,
 posted once the DAM clears. The archive reaches back years, so the daily pull looks
 back a month and older days are fetched by hand with `fetch(product, since=...)`. The
 archive listing gives a document id, a posting time and a link, without a size or an
@@ -32,7 +32,7 @@ load distribution factors come several weeks at a time in one CSV.
 
 ## What we parse
 
-The header picks the table (`raw/prices.py`): `dam_shadow_prices`, `dam_lmps`,
+The header picks the table (`raw/dam_prices.py`): `dam_shadow_prices`, `dam_lmps`,
 `dam_settlement_point_prices`, `dam_system_lambda`, `dam_deenergized_settlement_points`,
 `dam_electrically_similar_settlement_points`, `heuristic_pricing_associations` and
 `load_distribution_factors`. `delivery_date` (`MM/DD/YYYY`), `hour_ending` (`HH:00`,

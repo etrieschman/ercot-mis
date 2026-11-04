@@ -23,16 +23,17 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from polars.exceptions import PanicException
 
-from ..products import Product, get_product
-from . import crr, crr_auction, dam, disclosure, gtl, mappings, prices, psse, table
+from ..archive.products import Product, get_product
+from . import (columns, crr_auction_results, crr_network_model, dam_disclosure, dam_network_model, dam_prices, generic_transmission_limits,
+               psse_raw, settlement_point_mappings)
 
 LAYER = "raw"
 COMPRESSION = "zstd"
 NONE = "<none>"  # the artifact row of a package that yields no table (a document shape the parser archives but does not read)
 # The parser of each product, in build order; each module has VERSION, classify_member and parse_member.
-PARSERS = {"NP7-801-M": crr, "NP7-800-M": crr, "NP7-803-M": crr_auction, "NP7-802-M": crr_auction, "NP4-500-SG": dam, "NP3-766-M": gtl,
-           "NP4-191-CD": prices, "NP4-183-CD": prices, "NP4-190-CD": prices, "NP4-523-CD": prices, "NP4-200-CD": prices, "NP4-158-SG": prices,
-           "NP4-231-CD": prices, "NP4-159-CD": prices, "NP4-160-SG": mappings, "NP3-220-SG": mappings, "NP3-966-ER": disclosure}
+PARSERS = {"NP7-801-M": crr_network_model, "NP7-800-M": crr_network_model, "NP7-803-M": crr_auction_results, "NP7-802-M": crr_auction_results, "NP4-500-SG": dam_network_model, "NP3-766-M": generic_transmission_limits,
+           "NP4-191-CD": dam_prices, "NP4-183-CD": dam_prices, "NP4-190-CD": dam_prices, "NP4-523-CD": dam_prices, "NP4-200-CD": dam_prices, "NP4-158-SG": dam_prices,
+           "NP4-231-CD": dam_prices, "NP4-159-CD": dam_prices, "NP4-160-SG": settlement_point_mappings, "NP3-220-SG": settlement_point_mappings, "NP3-966-ER": dam_disclosure}
 
 
 def parser_id(emil_id: str) -> str:
@@ -41,7 +42,7 @@ def parser_id(emil_id: str) -> str:
 
     if emil_id not in PARSERS:
         raise ValueError(f"{emil_id} has no raw-layer parser")
-    parts = [f"ercot-mis={__version__}", f"build={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (table, psse, PARSERS[emil_id])]
+    parts = [f"ercot-mis={__version__}", f"build={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (columns, psse_raw, PARSERS[emil_id])]
     return "|".join(parts)
 
 
@@ -107,9 +108,9 @@ def parse_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str
 
 def _parsed_members(path: Path, module, members: dict[str, str], operating_date, blob_sha256: str):
     """(member, bytes, member sha256) for every member a parser reads: the zip's files, or the whole document."""
-    if module is gtl:
+    if module is generic_transmission_limits:
         data = path.read_bytes()
-        member = gtl.classify_document("<document>", data, operating_date)
+        member = generic_transmission_limits.classify_document("<document>", data, operating_date)
         if member.is_parsed:
             yield member, data, blob_sha256
         return

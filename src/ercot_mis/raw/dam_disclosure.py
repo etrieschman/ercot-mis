@@ -14,7 +14,7 @@ from datetime import datetime
 
 import pyarrow as pa
 
-from .table import Column, F, Member, extension, read_delimited, table_for_header
+from .columns import Column, F, Member, extension, read_delimited, table_for_header
 
 VERSION = 3
 

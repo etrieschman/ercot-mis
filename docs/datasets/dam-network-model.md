@@ -23,10 +23,10 @@ disconnects), `SpNb` (non-biddable resource nodes) and a README.
 
 ## What we parse
 
-`raw/dam.py` writes `dam_contingencies`, `dam_generators`, `dam_hub_buses`, `dam_loads`,
+`raw/dam_network_model.py` writes `dam_contingencies`, `dam_generators`, `dam_hub_buses`, `dam_loads`,
 `dam_lines`, `dam_settlement_points`, `dam_transformers`,
 `dam_settlement_point_contingencies` and `dam_non_biddable_resource_nodes`, and
-`raw/psse.py` writes the `psse_*` tables from each RAW. The README is archived and not
+`raw/psse_raw.py` writes the `psse_*` tables from each RAW. The README is archived and not
 parsed.
 
 ## Decisions

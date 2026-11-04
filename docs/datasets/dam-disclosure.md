@@ -27,7 +27,7 @@ ancillary services. Offer curves are wide (ten MW and price pairs per row).
 
 ## What we parse
 
-Every member, into `dam_60d_<table>` (`raw/disclosure.py`). The date in the member name
+Every member, into `dam_60d_<table>` (`raw/dam_disclosure.py`). The date in the member name
 is the rows' `operating_date`; the header picks the table and must match exactly.
 Numbers (MW, prices, awards, limits, costs) are cast; identifiers, flags and indicators
 stay text.

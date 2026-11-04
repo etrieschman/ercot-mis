@@ -7,15 +7,14 @@ PACKAGE = Path(__file__).resolve().parents[1] / "src" / "ercot_mis"
 
 # Earliest first. A module may import from its own layer and any earlier one, never a later one.
 LAYERS = [
-    {"products", "config", "clock"},  # vocabulary: no dependencies
-    {"ews", "public_api"},            # how bytes arrive
-    {"store", "catalog", "fetch"},    # layer 0: original documents, and how they arrive
+    {"config", "clock"},              # vocabulary: no dependencies
+    {"archive"},                      # layer 0: the original documents, the clients that fetch them, the catalog
     {"raw"},                          # layer 1: typed tables, one per source file
     {"core"},                         # layer 2: tidy keyed tables shared by CRR and DAM
     {"out"},                          # layer 3: what consumers read
     {"checks"},                       # layer 4: the layers tested against ERCOT's results
     {"viewer"},
-    {"session", "pull", "__init__"},  # strings the layers together; the only writer
+    {"session", "daily", "__init__"},  # strings the layers together; the only writer
 ]
 
 

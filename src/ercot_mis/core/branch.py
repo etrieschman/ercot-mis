@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from ..raw.table import flag
+from ..raw.columns import flag
 from .bus import TIE_REACTANCE, autos_by_key
 
 VERSION = 5  # bump when columns or identities change

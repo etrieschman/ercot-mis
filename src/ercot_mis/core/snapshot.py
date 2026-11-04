@@ -14,9 +14,9 @@ from datetime import date
 
 import polars as pl
 
-from ..catalog import posting_order
+from ..archive.catalog import posting_order
 from ..clock import study_hour_start
-from ..raw import crr, dam
+from ..raw import crr_network_model, dam_network_model
 
 CRR_PRODUCTS = ("NP7-801-M", "NP7-800-M")
 MODEL_KIND = {"dam": "dam", "monthly": "crr_monthly", "annual": "crr_annual"}  # the column's values name the market and the cadence
@@ -41,9 +41,9 @@ def is_dam(snapshot_id: str) -> bool:
 def logical(emil_id: str, member_paths: list[str]) -> Logical | None:
     """What a package describes, from its member names; None when no member names a model."""
     if emil_id == DAM_PRODUCT:
-        days = {m.identity["operating_date"] for n in member_paths if (m := dam.classify_member(n)) and m.identity["operating_date"]}
+        days = {m.identity["operating_date"] for n in member_paths if (m := dam_network_model.classify_member(n)) and m.identity["operating_date"]}
         return Logical("dam", (min(days),), (), min(days)) if days else None
-    members = [m.identity for n in member_paths if (m := crr.classify_member(n)) and m.identity["month"]]
+    members = [m.identity for n in member_paths if (m := crr_network_model.classify_member(n)) and m.identity["month"]]
     if not members:
         return None
     months = tuple(sorted({m["month"] for m in members}))
@@ -69,7 +69,7 @@ def snapshots(session) -> pl.DataFrame:
                 base = {"emil_id": emil_id, "doc_id": p["doc_id"], "blob_sha256": p["sha256"], "posted_at": p["posted_at"],
                         "model_kind": MODEL_KIND[kind], "revision": revision}
                 if kind == "dam":
-                    hours = sorted({m.identity["hour"] for n in p["members"] if (m := dam.classify_member(n)) and m.kind == "network_model" and m.identity["hour"]})
+                    hours = sorted({m.identity["hour"] for n in p["members"] if (m := dam_network_model.classify_member(n)) and m.kind == "network_model" and m.identity["hour"]})
                     for hour in hours:
                         rows.append({**base, "snapshot_id": f"dam:{l.day}:he{hour:02d}:r{revision}", "operating_date": l.day,
                                      "hour": hour, "interval_start_utc": study_hour_start(l.day, hour), "month": None, "term": None, "sequence": None})

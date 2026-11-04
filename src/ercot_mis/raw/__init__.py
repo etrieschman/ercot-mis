@@ -6,6 +6,6 @@ expects (headers, field counts, section order) and raises ``ParseError`` naming 
 difference. ``build`` writes the tables to Parquet with the identity of their source.
 """
 
-from .table import ParseError, snake_case
+from .columns import ParseError, snake_case
 
 __all__ = ["ParseError", "snake_case"]

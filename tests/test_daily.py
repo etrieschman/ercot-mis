@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import polars as pl
 
 import ercot_mis as em
-from ercot_mis import pull
+from ercot_mis import daily
 from ercot_mis.session import BUILD_SCHEMA
 
 
@@ -33,7 +33,7 @@ class FakeSession:
 
 
 def test_report_counts_failed_packages_and_prints_their_errors(capsys):
-    assert pull.report("build_raw X", _result("built", "skipped", "failed", "failed")) == 2
+    assert daily.report("build_raw X", _result("built", "skipped", "failed", "failed")) == 2
     out = capsys.readouterr().out
     assert "built 1 (10 rows, 1s), skipped 1, failed 2" in out
     assert out.count("boom") == 2
@@ -41,13 +41,13 @@ def test_report_counts_failed_packages_and_prints_their_errors(capsys):
 
 def test_build_layers_runs_every_parsed_product_then_core():
     session = FakeSession(raw=_result("skipped"), core=_result("built"))
-    assert pull.build_layers(session) == 0
-    assert session.raw_calls == list(pull.PARSERS)
+    assert daily.build_layers(session) == 0
+    assert session.raw_calls == list(daily.PARSERS)
 
 
 def test_build_layers_counts_an_exception_as_one_failure_and_keeps_going(capsys):
     session = FakeSession(raw=RuntimeError("catalog locked"), core=_result("built", "failed"))
-    assert pull.build_layers(session) == len(pull.PARSERS) + 1
+    assert daily.build_layers(session) == len(daily.PARSERS) + 1
     assert "catalog locked" in capsys.readouterr().out
 
 
@@ -77,7 +77,7 @@ def test_at_risk_counts_only_what_ercot_still_offers_and_we_lack():
         "last_listed_at": [NOW] * 4,
         "posted_at": [NOW - timedelta(days=3), NOW - timedelta(days=29), NOW - timedelta(days=60), None],
     })
-    risk = pull.at_risk(session, {"NP4-500-SG": NOW}, NOW)
+    risk = daily.at_risk(session, {"NP4-500-SG": NOW}, NOW)
     assert risk["unarchived_ews_documents"] == 1
     assert risk["days_until_loss"] == 2.0  # a 31-day window, posted 29 days ago
     assert risk["nearest_product"] == "NP4-500-SG"
@@ -85,20 +85,20 @@ def test_at_risk_counts_only_what_ercot_still_offers_and_we_lack():
 
 def test_at_risk_counts_down_from_the_last_clean_fetch_when_pulls_are_missed():
     captured = {"NP4-500-SG": NOW - timedelta(days=26), "NP7-801-M": NOW - timedelta(days=26)}
-    risk = pull.at_risk(RiskSession(), captured, NOW)
+    risk = daily.at_risk(RiskSession(), captured, NOW)
     assert risk["unarchived_ews_documents"] == 0
     assert risk["days_until_loss"] == 5.0 and risk["nearest_product"] == "NP4-500-SG"  # 31 - 26; CRR has 365
-    assert pull.is_urgent(risk)
-    assert not pull.is_urgent(pull.at_risk(RiskSession(), {"NP4-500-SG": NOW - timedelta(days=1)}, NOW))
-    assert not pull.is_urgent(pull.at_risk(RiskSession(), {}, NOW))  # nothing known, nothing claimed
+    assert daily.is_urgent(risk)
+    assert not daily.is_urgent(daily.at_risk(RiskSession(), {"NP4-500-SG": NOW - timedelta(days=1)}, NOW))
+    assert not daily.is_urgent(daily.at_risk(RiskSession(), {}, NOW))  # nothing known, nothing claimed
 
 
 def test_captured_round_trips_and_seeds_from_the_newest_listing(tmp_path):
     session = RiskSession({"is_archived": [True, True], "last_listed_at": [NOW - timedelta(days=2), NOW - timedelta(days=1)],
                            "posted_at": [NOW - timedelta(days=5), NOW - timedelta(days=4)]}, data_dir=tmp_path)
-    assert pull.load_captured(session) == {"NP4-500-SG": NOW - timedelta(days=1)}
-    pull.save_captured(session, {"NP4-500-SG": NOW})
-    assert pull.load_captured(session) == {"NP4-500-SG": NOW}
+    assert daily.load_captured(session) == {"NP4-500-SG": NOW - timedelta(days=1)}
+    daily.save_captured(session, {"NP4-500-SG": NOW})
+    assert daily.load_captured(session) == {"NP4-500-SG": NOW}
 
 
 def test_fetch_products_records_a_clean_fetch_only(capsys):
@@ -114,6 +114,6 @@ def test_fetch_products_records_a_clean_fetch_only(capsys):
 
     specs = [em.PRODUCTS[e] for e in ("NP4-500-SG", "NP7-801-M", "NP7-800-M")]
     captured = {"NP7-801-M": NOW, "NP7-800-M": NOW}
-    assert pull.fetch_products(FetchSession(), specs, captured) == 2
+    assert daily.fetch_products(FetchSession(), specs, captured) == 2
     assert captured["NP4-500-SG"] > NOW and captured["NP7-801-M"] == NOW and captured["NP7-800-M"] == NOW
     assert "network down" in capsys.readouterr().out

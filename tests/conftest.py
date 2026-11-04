@@ -1,6 +1,6 @@
 import pytest
 
-from ercot_mis import ews
+from ercot_mis.archive import ews
 
 
 @pytest.fixture(autouse=True)

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from ..raw.table import flag
+from ..raw.columns import flag
 
 from ..core.match import DAM_REACTANCE_FLOOR, name_key, placeholder_name
 from . import write_report

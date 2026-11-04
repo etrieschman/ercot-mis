@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from .clock import TZ
-from .config import ConfigError, load_secret
+from ..clock import TZ
+from ..config import ConfigError, load_secret
 from .ews import CHUNK, RemoteDoc, retrying
 from .products import Product
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from ..raw.table import flag
+from ..raw.columns import flag
 
 VERSION = 3
 

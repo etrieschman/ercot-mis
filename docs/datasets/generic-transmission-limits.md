@@ -28,7 +28,7 @@ NP3-770-M is one zip of PDF, PPTX and database files.
 
 ## What we parse
 
-`raw/gtl.py` writes `gtl_hourly`: `interval_start_utc`, `gtc_name`, `market` (`rt` or
+`raw/generic_transmission_limits.py` writes `gtl_hourly`: `interval_start_utc`, `gtc_name`, `market` (`rt` or
 `dam`) and `limit_mw`. The document is not a zip, so it is parsed whole and its shape is
 told from the bytes. Archived and not parsed: the DC tie limits and all of NP3-770-M.
 

@@ -16,8 +16,8 @@ from datetime import date
 
 import pyarrow as pa
 
-from .crr import MONTHS
-from .table import F, Column, Member, extension, read_delimited
+from .crr_network_model import MONTHS
+from .columns import F, Column, Member, extension, read_delimited
 
 VERSION = 1
 

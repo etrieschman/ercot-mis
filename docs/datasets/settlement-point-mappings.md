@@ -22,7 +22,7 @@ electrical bus list. A document has no operating date; the listing's posting tim
 
 ## What we parse
 
-Every member, by header (`raw/mappings.py`): `sp_electrical_bus_mapping`,
+Every member, by header (`raw/settlement_point_mappings.py`): `sp_electrical_bus_mapping`,
 `sp_resource_node_units`, `sp_noie_mapping`, `sp_ccp_resource_names`,
 `sp_hub_and_dc_tie_names`, `hub_buses` and `electrical_buses`. The raw rows carry no
 operating date or hour.

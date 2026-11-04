@@ -28,9 +28,9 @@ the monthly auction posts one document a month.
 
 ## What we parse
 
-`raw/crr.py` writes `crr_contingencies`, `crr_monitored_lines_and_transformers`,
+`raw/crr_network_model.py` writes `crr_contingencies`, `crr_monitored_lines_and_transformers`,
 `crr_non_thermal_constraints`, `crr_sources_and_sinks`, `crr_mapping_lines`,
-`crr_mapping_autos` and `crr_outages`, and `raw/psse.py` writes the `psse_*` tables from
+`crr_mapping_autos` and `crr_outages`, and `raw/psse_raw.py` writes the `psse_*` tables from
 the RAW. Archived and not parsed: the XML twins (the CSV is canonical), the one-line
 diagrams (images), and the dynamic ratings workbook (monthly ambient-temperature
 assumptions; the monitored CSV already carries the ratings they produce).

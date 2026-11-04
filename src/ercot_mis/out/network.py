@@ -27,7 +27,7 @@ import polars as pl
 
 from ..core.bus import components
 from ..core.snapshot import is_dam
-from ..raw.table import flag
+from ..raw.columns import flag
 
 INF = math.inf
 

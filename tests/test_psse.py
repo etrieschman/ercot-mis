@@ -4,7 +4,7 @@ import pyarrow as pa
 import pytest
 
 from ercot_mis.raw import ParseError
-from ercot_mis.raw.psse import parse_raw
+from ercot_mis.raw.psse_raw import parse_raw
 
 # A synthetic two-bus case in the CRR (PSS/ODMS) dialect.
 MARKED = """\

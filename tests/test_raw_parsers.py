@@ -4,7 +4,7 @@ from datetime import date
 import pyarrow as pa
 import pytest
 
-from ercot_mis.raw import ParseError, crr, dam, snake_case
+from ercot_mis.raw import ParseError, crr_network_model, dam_network_model, snake_case
 
 
 def test_snake_case():
@@ -38,27 +38,27 @@ def test_snake_case():
     ],
 )
 def test_classify_crr_members(path, expected):
-    m = crr.classify_member(path)
+    m = crr_network_model.classify_member(path)
     assert (m.kind, m.format, *(m.identity[k] for k in ("auction", "term", "sequence", "month", "time_of_use"))) == expected
-    assert crr.classify_member("2029.1st6.AnnualAuction.Seq6.JAN/") is None
+    assert crr_network_model.classify_member("2029.1st6.AnnualAuction.Seq6.JAN/") is None
 
 
 def test_crr_csvs():
-    member = crr.classify_member("2026.OCT.Monthly.Auction.MonitoredLinesAndTransformers.CSV")
+    member = crr_network_model.classify_member("2026.OCT.Monthly.Auction.MonitoredLinesAndTransformers.CSV")
     data = b"DeviceName,DeviceType,BaseCaseRating,EmergencyRating,TimeOfUse\r\nA LINE 1,Line,100.5,120,PeakWD\r\nB XF 1,XFMR,50,,Off-peak\r\n"
-    table = crr.parse_member(member, data)["crr_monitored_lines_and_transformers"]
+    table = crr_network_model.parse_member(member, data)["crr_monitored_lines_and_transformers"]
     assert table.column_names == ["device_name", "device_type", "base_case_rating", "emergency_rating", "time_of_use"]
     assert table["base_case_rating"].to_pylist() == [100.5, 50.0]
     assert table["emergency_rating"].to_pylist() == [120.0, None]
 
-    gtc = crr.classify_member("2026.OCT.Monthly.Auction.Non-ThermalConstraints.CSV")
+    gtc = crr_network_model.classify_member("2026.OCT.Monthly.Auction.Non-ThermalConstraints.CSV")
     data = b"Name, Limit, DeviceName, DeviceType, FlowDirection, Factor\nGTC_A, 1500, A LINE 1, Line, From-To, 1\n"
-    assert crr.parse_member(gtc, data)["crr_non_thermal_constraints"].to_pylist() == [
+    assert crr_network_model.parse_member(gtc, data)["crr_non_thermal_constraints"].to_pylist() == [
         {"name": "GTC_A", "limit": 1500.0, "device_name": "A LINE 1", "device_type": "Line",
          "flow_direction": "From-To", "factor": 1.0}]
 
     with pytest.raises(ParseError, match="header does not match"):
-        crr.parse_member(member, b"DeviceName,Type\nA,Line\n")
+        crr_network_model.parse_member(member, b"DeviceName,Type\nA,Line\n")
 
 
 def test_crr_mapping_workbook_and_outages():
@@ -67,157 +67,157 @@ def test_crr_mapping_workbook_and_outages():
     book = Workbook()
     lines = book.active
     lines.title = "Lines"
-    lines.append([c.header for c in crr.MAPPING_LINES])
+    lines.append([c.header for c in crr_network_model.MAPPING_LINES])
     lines.append(["TAG_A", "OPS_A", "EQ", "LN", "EQN", 101, "ALPHA", 102, "BRAVO", "1"])
     autos = book.create_sheet("Autos")
-    autos.append([c.header for c in crr.MAPPING_AUTOS])
+    autos.append([c.header for c in crr_network_model.MAPPING_AUTOS])
     autos.append(["AUTO_A", "OPS_B", "PT", 103, "CHARLIE", 104, "DELTA", "T1"])
     buffer = io.BytesIO()
     book.save(buffer)
 
-    member = crr.classify_member("2026.OCT.Monthly.Auction.MappingDocument.xlsx")
-    tables = crr.parse_member(member, buffer.getvalue())
+    member = crr_network_model.classify_member("2026.OCT.Monthly.Auction.MappingDocument.xlsx")
+    tables = crr_network_model.parse_member(member, buffer.getvalue())
     assert tables["crr_mapping_lines"].to_pylist()[0]["from_number"] == "101"
     assert tables["crr_mapping_autos"].column_names[-1] == "id"
 
-    outages = crr.classify_member("2026.OCT.Monthly.Auction.Outages_OCT_2026_OCT01.txt")
-    header = "|".join(c.header for c in crr.OUTAGES)
-    row = "|".join(["_{X}", "", "10/1/2026 00:00:00"] + ["v"] * (len(crr.OUTAGES) - 3))
-    table = crr.parse_member(outages, f"{header}\n{row}\n".encode())["crr_outages"]
+    outages = crr_network_model.classify_member("2026.OCT.Monthly.Auction.Outages_OCT_2026_OCT01.txt")
+    header = "|".join(c.header for c in crr_network_model.OUTAGES)
+    row = "|".join(["_{X}", "", "10/1/2026 00:00:00"] + ["v"] * (len(crr_network_model.OUTAGES) - 3))
+    table = crr_network_model.parse_member(outages, f"{header}\n{row}\n".encode())["crr_outages"]
     assert table.num_rows == 1 and table["actual_end_date"].to_pylist() == [None]
-    assert crr.parse_member(outages, f"{header}\n".encode())["crr_outages"].num_rows == 0
-    comma_header = ",".join(c.header for c in crr.OUTAGES)  # annual "_None" files
-    assert crr.parse_member(outages, f"{comma_header}\r\n".encode())["crr_outages"].num_rows == 0
+    assert crr_network_model.parse_member(outages, f"{header}\n".encode())["crr_outages"].num_rows == 0
+    comma_header = ",".join(c.header for c in crr_network_model.OUTAGES)  # annual "_None" files
+    assert crr_network_model.parse_member(outages, f"{comma_header}\r\n".encode())["crr_outages"].num_rows == 0
 
 
 # ------------------------------------------------------------------ DAM
 
 
 def test_classify_dam_members():
-    raw = dam.classify_member("DAM09162026_001.RAW")
+    raw = dam_network_model.classify_member("DAM09162026_001.RAW")
     assert (raw.kind, raw.format, raw.identity["operating_date"], raw.identity["hour"]) == ("network_model", "raw", date(2026, 9, 16), 1)
-    assert dam.classify_member("DAM09162026_Ln_025.csv").identity["hour"] == 25
-    assert dam.classify_member("DAM09162026_SpCtg.csv").kind == "settlement_point_contingencies"
-    assert dam.classify_member("DAM09162026_SpNb.csv").identity["hour"] is None
-    assert dam.classify_member("README_DAM09162026.txt").kind == "readme"
-    assert dam.classify_member("DAM09162026_Zz_001.csv").kind == "unknown"
+    assert dam_network_model.classify_member("DAM09162026_Ln_025.csv").identity["hour"] == 25
+    assert dam_network_model.classify_member("DAM09162026_SpCtg.csv").kind == "settlement_point_contingencies"
+    assert dam_network_model.classify_member("DAM09162026_SpNb.csv").identity["hour"] is None
+    assert dam_network_model.classify_member("README_DAM09162026.txt").kind == "readme"
+    assert dam_network_model.classify_member("DAM09162026_Zz_001.csv").kind == "unknown"
 
 
 def test_dam_lines_and_loads():
-    header = ", ".join(c.header for c in dam.LINES)
+    header = ", ".join(c.header for c in dam_network_model.LINES)
     row = "1, 101, 102, 1 , IN, Y, N, ALPHA, 138, BRAVO, 138, LINE_A, 0.001, 0.01, 0.02, 100, 110, 120"
-    table = dam.parse_member(dam.classify_member("DAM09162026_Ln_001.csv"), f"{header}\n{row}\n".encode())["dam_lines"]
+    table = dam_network_model.parse_member(dam_network_model.classify_member("DAM09162026_Ln_001.csv"), f"{header}\n{row}\n".encode())["dam_lines"]
     record = table.to_pylist()[0]
     assert (record["hour"], record["psse_from_bus_number"], record["psse_ckt_id"], record["x_pu"], record["ratec"]) == (1, 101, "1", 0.01, 120.0)
 
     # The load file's header ends with a trailing comma its rows do not have.
-    header = ",".join(c.header for c in dam.LOADS) + ","
+    header = ",".join(c.header for c in dam_network_model.LOADS) + ","
     row = ",".join(["1", "101", "L1", "ALPHA", "138", "LOAD_A", "IN", "WZ", "LZ", "Y", "C", "0.5", "0.1", "N", "1", "LOAD_B", "1.0"] + [""] * 18)
-    table = dam.parse_member(dam.classify_member("DAM09162026_Ld_001.csv"), f"{header}\n{row}\n".encode())["dam_loads"]
+    table = dam_network_model.parse_member(dam_network_model.classify_member("DAM09162026_Ld_001.csv"), f"{header}\n{row}\n".encode())["dam_loads"]
     assert table.num_columns == 35
     assert table.to_pylist()[0]["fraction_of_this_load_to_1st_target_load"] == 1.0
     assert table.to_pylist()[0]["10th_target_load_name"] is None
 
 
 def test_price_files_are_told_apart_by_their_header():
-    from ercot_mis.raw import prices
-    from ercot_mis.raw.table import ParseError
+    from ercot_mis.raw import dam_prices
+    from ercot_mis.raw.columns import ParseError
 
-    member = prices.classify_member("prices.csv")
-    lmp = prices.parse_member(member, b"DeliveryDate,HourEnding,BusName,LMP,DSTFlag\r\n01/02/2030,24:00,BUS_A,12.5,N\r\n")
+    member = dam_prices.classify_member("dam_prices.csv")
+    lmp = dam_prices.parse_member(member, b"DeliveryDate,HourEnding,BusName,LMP,DSTFlag\r\n01/02/2030,24:00,BUS_A,12.5,N\r\n")
     assert list(lmp) == ["dam_lmps"] and lmp["dam_lmps"].to_pylist() == [
         {"delivery_date": "01/02/2030", "hour_ending": "24:00", "bus_name": "BUS_A", "lmp": 12.5, "dst_flag": "N"}]
-    shadow = prices.parse_member(member, (
+    shadow = dam_prices.parse_member(member, (
         b"DeliveryDate,HourEnding,ConstraintID,ConstraintName,ContingencyName,ConstraintLimit,ConstraintValue,ViolationAmount,"
         b"ShadowPrice,FromStation,ToStation,FromStationkV,ToStationkV,DeliveryTime,DSTFlag\n"
         b"01/02/2030,01:00,7,LINE_A,BASE CASE,100,100,0,3.25,STA,STB,138,138,01/01/2030 12:00:00,N\n"))
     row = shadow["dam_shadow_prices"].to_pylist()[0]
     assert row["constraint_id"] == 7 and row["shadow_price"] == 3.25 and row["from_station_kv"] == 138.0
-    assert not prices.classify_member("prices.xml").is_parsed
+    assert not dam_prices.classify_member("dam_prices.xml").is_parsed
     with pytest.raises(ParseError, match="matches no known table"):
-        prices.parse_member(member, b"A,B\n1,2\n")
+        dam_prices.parse_member(member, b"A,B\n1,2\n")
 
 
 def test_pricing_input_files_are_told_apart_by_their_header():
-    from ercot_mis.raw import prices
+    from ercot_mis.raw import dam_prices
 
-    member = prices.classify_member("x.csv")
-    lam = prices.parse_member(member, b"DeliveryDate,HourEnding,SystemLambda,DSTFlag\r\n01/02/2030,01:00,25.5,N\r\n")
+    member = dam_prices.classify_member("x.csv")
+    lam = dam_prices.parse_member(member, b"DeliveryDate,HourEnding,SystemLambda,DSTFlag\r\n01/02/2030,01:00,25.5,N\r\n")
     assert lam["dam_system_lambda"].to_pylist() == [{"delivery_date": "01/02/2030", "hour_ending": "01:00", "system_lambda": 25.5, "dst_flag": "N"}]
-    essp = prices.parse_member(member, b"DeliveryDate,HourEnding,SettlementPoint,GroupIndex,UpdateTime,DSTFlag\n01/02/2030,01:00,SP_A,7,01/01/2030 10:00:00,N\n")
+    essp = dam_prices.parse_member(member, b"DeliveryDate,HourEnding,SettlementPoint,GroupIndex,UpdateTime,DSTFlag\n01/02/2030,01:00,SP_A,7,01/01/2030 10:00:00,N\n")
     assert essp["dam_electrically_similar_settlement_points"]["group_index"].to_pylist() == [7]
-    dead = prices.parse_member(member, b"DeliveryDate,HourEnding,SettlementPoint,DSTFlag\n01/02/2030,01:00,SP_A,N\n")
+    dead = dam_prices.parse_member(member, b"DeliveryDate,HourEnding,SettlementPoint,DSTFlag\n01/02/2030,01:00,SP_A,N\n")
     assert "dam_deenergized_settlement_points" in dead
-    heur = prices.parse_member(member, b"MarketType,FromEBName,ToEBName,Type,Priority\nDAM,EB_A,EB_B,X,1\n")
+    heur = dam_prices.parse_member(member, b"MarketType,FromEBName,ToEBName,Type,Priority\nDAM,EB_A,EB_B,X,1\n")
     assert heur["heuristic_pricing_associations"].column_names == ["market_type", "from_electrical_bus", "to_electrical_bus", "type", "priority"]
-    ldf = prices.parse_member(member, b"LdfDate,LdfHour,SubStation,DistributionFactor,LoadID,MVARDistributionFactor,MRIDLoad,DSTFlag\n01/02/2030,1,SUB_A,0.25,L1,0.2,abc,N\n")
+    ldf = dam_prices.parse_member(member, b"LdfDate,LdfHour,SubStation,DistributionFactor,LoadID,MVARDistributionFactor,MRIDLoad,DSTFlag\n01/02/2030,1,SUB_A,0.25,L1,0.2,abc,N\n")
     row = ldf["load_distribution_factors"].to_pylist()[0]
     assert row["distribution_factor"] == 0.25 and row["substation"] == "SUB_A" and row["mvar_distribution_factor"] == 0.2
 
 
 def test_mapping_files_are_told_apart_by_their_header():
-    from ercot_mis.raw import mappings
-    from ercot_mis.raw.table import ParseError
+    from ercot_mis.raw import settlement_point_mappings
+    from ercot_mis.raw.columns import ParseError
 
-    member = mappings.classify_member("SP_List_EB_Mapping/Settlement_Points_1_2.csv")
+    member = settlement_point_mappings.classify_member("SP_List_EB_Mapping/Settlement_Points_1_2.csv")
     assert member.is_parsed and member.identity == {}
-    assert mappings.classify_member("SP_List_EB_Mapping/") is None
-    full = mappings.parse_member(member, (
+    assert settlement_point_mappings.classify_member("SP_List_EB_Mapping/") is None
+    full = settlement_point_mappings.parse_member(member, (
         b"ELECTRICAL_BUS,NODE_NAME,PSSE_BUS_NAME,VOLTAGE_LEVEL,SUBSTATION,SETTLEMENT_LOAD_ZONE,RESOURCE_NODE,HUB_BUS_NAME,HUB,PSSE_BUS_NUMBER\r\n"
         b"EB_A,N_A,P_A,138,SUB_A,LZ_X,,HB_A,HB_HUB,1234\r\n"))
     row = full["sp_electrical_bus_mapping"].to_pylist()[0]
     assert row["psse_bus_number"] == 1234 and row["resource_node"] is None and row["hub"] == "HB_HUB"
-    hubs = mappings.parse_member(member, b"ELECTRICAL_BUS,ELECTRICAL_BUS_KV,HUB_BUS_NAME,HUB\nEB_A,345,HB_A,HB_HUB\n")
+    hubs = settlement_point_mappings.parse_member(member, b"ELECTRICAL_BUS,ELECTRICAL_BUS_KV,HUB_BUS_NAME,HUB\nEB_A,345,HB_A,HB_HUB\n")
     assert hubs["hub_buses"]["electrical_bus_kv"].to_pylist() == [345.0]
-    ccp = mappings.parse_member(member, b"CCP_NAME,LOGICALREOURCENODENAME\nC,L\n")
+    ccp = settlement_point_mappings.parse_member(member, b"CCP_NAME,LOGICALREOURCENODENAME\nC,L\n")
     assert ccp["sp_ccp_resource_names"].column_names == ["ccp_name", "logical_resource_node_name"]
-    assert "sp_hub_and_dc_tie_names" in mappings.parse_member(member, b"NAME\nHB_X\n")
+    assert "sp_hub_and_dc_tie_names" in settlement_point_mappings.parse_member(member, b"NAME\nHB_X\n")
     with pytest.raises(ParseError):
-        mappings.parse_member(member, b"A,B\n1,2\n")
+        settlement_point_mappings.parse_member(member, b"A,B\n1,2\n")
 
 
 def test_disclosure_members_are_dated_by_name_and_told_apart_by_header():
-    from ercot_mis.raw import disclosure
+    from ercot_mis.raw import dam_disclosure
 
-    member = disclosure.classify_member("60d_DAM_EnergyOnlyOfferAwards-06-OCT-26.csv")
+    member = dam_disclosure.classify_member("60d_DAM_EnergyOnlyOfferAwards-06-OCT-26.csv")
     assert member.is_parsed and member.identity == {"operating_date": date(2026, 10, 6)}
-    assert not disclosure.classify_member("README.txt").is_parsed
-    assert disclosure.classify_member("folder/") is None
-    awards = disclosure.parse_member(member, (
+    assert not dam_disclosure.classify_member("README.txt").is_parsed
+    assert dam_disclosure.classify_member("folder/") is None
+    awards = dam_disclosure.parse_member(member, (
         b"Delivery Date,Hour Ending,Settlement Point,QSE Name,Energy Only Offer Award in MW,Settlement Point Price,Offer ID\r\n"
         b"10/06/2026,1:00,SP_A,QX,12.5,30.25,777\r\n"))
     row = awards["dam_60d_energy_only_offer_awards"].to_pylist()[0]
     assert row["energy_only_offer_award_in_mw"] == 12.5 and row["settlement_point_price"] == 30.25 and row["offer_id"] == "777"
-    gen_columns = [c.column_name for c in disclosure.TABLES["dam_60d_gen_resource_data"]]
+    gen_columns = [c.column_name for c in dam_disclosure.TABLES["dam_60d_gen_resource_data"]]
     assert {"awarded_quantity", "settlement_point_name", "resource_status", "hsl", "lsl"} <= set(gen_columns)
-    assert disclosure.TABLES["dam_60d_gen_resource_data"][gen_columns.index("awarded_quantity")].type == pa.float64()
-    assert disclosure.TABLES["dam_60d_gen_resource_data"][gen_columns.index("resource_status")].type == pa.string()
-    assert len(disclosure.TABLES) == 17 and all(t.startswith("dam_60d_") for t in disclosure.TABLES)
+    assert dam_disclosure.TABLES["dam_60d_gen_resource_data"][gen_columns.index("awarded_quantity")].type == pa.float64()
+    assert dam_disclosure.TABLES["dam_60d_gen_resource_data"][gen_columns.index("resource_status")].type == pa.string()
+    assert len(dam_disclosure.TABLES) == 17 and all(t.startswith("dam_60d_") for t in dam_disclosure.TABLES)
     # the storage table shares the generation table's header; the file name keeps them apart
-    header = ",".join(c.header for c in disclosure.TABLES["dam_60d_gen_resource_data"]).encode() + b"\n"
-    esr = disclosure.classify_member("60d_DAM_ESR_Data-06-OCT-26.csv")
-    assert list(disclosure.parse_member(esr, header)) == ["dam_60d_esr_data"]
-    gen = disclosure.classify_member("60d_DAM_Gen_Resource_Data-06-OCT-26.csv")
-    assert list(disclosure.parse_member(gen, header)) == ["dam_60d_gen_resource_data"]
+    header = ",".join(c.header for c in dam_disclosure.TABLES["dam_60d_gen_resource_data"]).encode() + b"\n"
+    esr = dam_disclosure.classify_member("60d_DAM_ESR_Data-06-OCT-26.csv")
+    assert list(dam_disclosure.parse_member(esr, header)) == ["dam_60d_esr_data"]
+    gen = dam_disclosure.classify_member("60d_DAM_Gen_Resource_Data-06-OCT-26.csv")
+    assert list(dam_disclosure.parse_member(gen, header)) == ["dam_60d_gen_resource_data"]
 
 
 def test_auction_result_members_carry_the_auction_and_month_in_their_name():
     from datetime import date
 
-    from ercot_mis.raw import crr_auction
+    from ercot_mis.raw import crr_auction_results
 
-    monthly = crr_auction.classify_member("Common_BindingConstraint_2030.NOV.Monthly.Auction_AUCTION.csv")
+    monthly = crr_auction_results.classify_member("Common_BindingConstraint_2030.NOV.Monthly.Auction_AUCTION.csv")
     assert monthly.kind == "crr_auction_binding_constraints" and monthly.is_parsed
     assert monthly.identity == {"auction": "monthly", "term": None, "sequence": None, "month": date(2030, 11, 1)}
-    assert not crr_auction.classify_member("Common_BindingConstraint_2030.NOV.Monthly.Auction_AUCTION.xml").is_parsed
-    annual = crr_auction.classify_member("Common_BaseLoading_2031.1st6.AnnualAuction.Seq5_AUCTION_FEB_2031.csv")
+    assert not crr_auction_results.classify_member("Common_BindingConstraint_2030.NOV.Monthly.Auction_AUCTION.xml").is_parsed
+    annual = crr_auction_results.classify_member("Common_BaseLoading_2031.1st6.AnnualAuction.Seq5_AUCTION_FEB_2031.csv")
     assert annual.identity == {"auction": "annual", "term": "2031.1st6", "sequence": 5, "month": date(2031, 2, 1)}
-    assert crr_auction.classify_member("Common_SourceAndSinkShadowPrices_2031.1st6.AnnualAuction.Seq5_AUCTION.csv").identity["month"] is None
-    assert crr_auction.classify_member("README.txt").kind == "unknown" and crr_auction.classify_member("folder/") is None
-    rows = crr_auction.parse_member(monthly, b"DeviceName,DeviceType,Direction,Flow,Limit,Description,Contingency,CalendarPeriod,TimeOfUse,ShadowPrice\n"
+    assert crr_auction_results.classify_member("Common_SourceAndSinkShadowPrices_2031.1st6.AnnualAuction.Seq5_AUCTION.csv").identity["month"] is None
+    assert crr_auction_results.classify_member("README.txt").kind == "unknown" and crr_auction_results.classify_member("folder/") is None
+    rows = crr_auction_results.parse_member(monthly, b"DeviceName,DeviceType,Direction,Flow,Limit,Description,Contingency,CalendarPeriod,TimeOfUse,ShadowPrice\n"
                                               b"LINE_A,Line,From - To,100.5,100.5,Base Case,,NOV_2030,PeakWD,3.25\n")["crr_auction_binding_constraints"]
     row = rows.to_pylist()[0]
     assert (row["device_name"], row["direction"], row["flow"], row["contingency"], row["shadow_price"]) == ("LINE_A", "From - To", 100.5, None, 3.25)
-    prices = crr_auction.parse_member(crr_auction.classify_member("Common_SourceAndSinkShadowPrices_2030.NOV.Monthly.Auction_AUCTION.csv"),
+    prices = crr_auction_results.parse_member(crr_auction_results.classify_member("Common_SourceAndSinkShadowPrices_2030.NOV.Monthly.Auction_AUCTION.csv"),
                                       b"SourceSink,CalendarPeriod,TimeOfUse,ShadowPricePerMWH\nRN_A,NOV_2030,Off-peak,-1.5\n")
     assert prices["crr_auction_source_sink_shadow_prices"].column_names == ["source_sink", "calendar_period", "time_of_use", "shadow_price_per_mwh"]

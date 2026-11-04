@@ -18,7 +18,7 @@ import zipfile
 import polars as pl
 
 import ercot_mis as em
-from ercot_mis.raw import ParseError, crr, dam, gtl, psse
+from ercot_mis.raw import ParseError, crr_network_model, dam_network_model, generic_transmission_limits, psse_raw
 
 
 def packages(mis, emil_id, limit=None):
@@ -30,7 +30,7 @@ def packages(mis, emil_id, limit=None):
 
 
 def check_raw(data, label, problems):
-    case = psse.parse_raw(data, label)
+    case = psse_raw.parse_raw(data, label)
     for section, lines in case.line_counts.items():
         table = case.tables.get(f"psse_{section}")
         if table is None:
@@ -47,7 +47,7 @@ def validate_crr(mis, emil_id, problems):
     for path in packages(mis, emil_id):
         with zipfile.ZipFile(path) as package:
             for name in package.namelist():
-                member = crr.classify_member(name)
+                member = crr_network_model.classify_member(name)
                 if member is None:
                     continue
                 kinds[(member.kind, member.format, "parsed" if member.is_parsed else "archived")] += 1
@@ -60,7 +60,7 @@ def validate_crr(mis, emil_id, problems):
                         dialects[case.dialect] += 1
                         tables = case.tables
                     else:
-                        tables = crr.parse_member(member, package.read(name))
+                        tables = crr_network_model.parse_member(member, package.read(name))
                 except ParseError as error:
                     problems.append(str(error))
                     continue
@@ -80,7 +80,7 @@ def validate_dam(mis, days, problems):
         per_hour = collections.defaultdict(dict)
         with zipfile.ZipFile(path) as package:
             for name in package.namelist():
-                member = dam.classify_member(name)
+                member = dam_network_model.classify_member(name)
                 if member is None:
                     continue
                 kinds[(member.kind, member.format, "parsed" if member.is_parsed else "archived")] += 1
@@ -93,7 +93,7 @@ def validate_dam(mis, days, problems):
                         tables = check_raw(package.read(name), label, problems).tables
                         hours += 1
                     else:
-                        tables = dam.parse_member(member, package.read(name))
+                        tables = dam_network_model.parse_member(member, package.read(name))
                 except ParseError as error:
                     problems.append(str(error))
                     continue
@@ -121,12 +121,12 @@ def validate_gtl(mis, problems):
     paths = packages(mis, "NP3-766-M")
     for path in paths:
         data = path.read_bytes()
-        member = gtl.classify_document(path.name, data)
+        member = generic_transmission_limits.classify_document(path.name, data)
         shapes[(member.kind, member.format)] += 1
         if not member.is_parsed:
             continue
         try:
-            table = gtl.parse_gtl(data, f"GTL document {len(days) + 1}")
+            table = generic_transmission_limits.parse_gtl(data, f"GTL document {len(days) + 1}")
         except ParseError as error:
             problems.append(str(error))
             continue

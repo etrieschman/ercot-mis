@@ -18,7 +18,7 @@ import requests
 
 from . import store
 from .catalog import writing
-from .clock import TZ
+from ..clock import TZ
 from .ews import CHUNK, EwsError, retrying
 from .products import Product, get_product
 
