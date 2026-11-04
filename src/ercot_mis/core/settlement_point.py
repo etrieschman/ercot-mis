@@ -59,7 +59,7 @@ def _kind_from_type(type_text: pl.Expr) -> pl.Expr:
             .otherwise(pl.lit("resource_node")))
 
 
-def _finish(points: pl.DataFrame, rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+def _normalized(points: pl.DataFrame, rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """The caller resolved each row's PSS/E number to its bus; here weights are normalized and counts taken.
 
     ``rows`` has settlement_point_id, bus_key (null when unresolved), raw_weight, source, node_number, bus_number.
@@ -95,11 +95,11 @@ def crr_settlement_points(nodes: pl.DataFrame, sources_sinks: pl.DataFrame) -> t
             .join(to_bus, on="node_number", how="left"))
     points = (sources_sinks.select(pl.col("name").alias("settlement_point_id")).unique()
               .with_columns(_kind_from_name(pl.col("settlement_point_id")).alias("kind"), pl.lit(None, pl.String).alias("type_text")))
-    return _finish(points, rows)
+    return _normalized(points, rows)
 
 
 def dam_settlement_points(buses: pl.DataFrame, settlement_points: pl.DataFrame, hub_buses: pl.DataFrame,
-                          loads: pl.DataFrame, generators: pl.DataFrame | None = None) -> tuple[pl.DataFrame, pl.DataFrame]:
+                          loads: pl.DataFrame, generators: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """One DAM hour's settlement points and their bus weights, from its ``Sp``, ``Hb``, ``Ld`` and ``Gn`` files; ``buses`` is the hour's ``core.bus``."""
     sp = settlement_points.select(pl.col("settlement_point_name").alias("settlement_point_id"), pl.col("settlement_point_type").alias("type_text"),
                                   pl.col("psse_bus_number").cast(pl.Int64).alias("bus_number"),
@@ -113,11 +113,11 @@ def dam_settlement_points(buses: pl.DataFrame, settlement_points: pl.DataFrame, 
     missing = points.filter(~pl.col("settlement_point_id").is_in(rows["settlement_point_id"].implode())).select(
         "settlement_point_id", pl.lit(None, pl.Int64).alias("bus_number"), pl.lit(None, pl.Float64).alias("raw_weight"),
         pl.lit("dam_sp").alias("source"), pl.lit(None, pl.String).alias("bus_key"))
-    return _finish(points, pl.concat([rows.select("settlement_point_id", "bus_number", "raw_weight", "source", "bus_key"), missing])
+    return _normalized(points, pl.concat([rows.select("settlement_point_id", "bus_number", "raw_weight", "source", "bus_key"), missing])
                    .with_columns(pl.lit(None, pl.Int64).alias("node_number")))
 
 
-def _dam_resource_nodes(sp: pl.DataFrame, points: pl.DataFrame, generators: pl.DataFrame | None) -> pl.DataFrame:
+def _dam_resource_nodes(sp: pl.DataFrame, points: pl.DataFrame, generators: pl.DataFrame) -> pl.DataFrame:
     """Resource nodes and DC ties with a bus of their own: the ``Sp`` file's bus.
 
     A logical resource node (a combined-cycle train) takes its combined-cycle point's bus when ``Sp``
@@ -132,7 +132,7 @@ def _dam_resource_nodes(sp: pl.DataFrame, points: pl.DataFrame, generators: pl.D
               .select("settlement_point_id", "bus_number", pl.lit(1.0).alias("raw_weight"), pl.lit("dam_sp").alias("source")))
     column = "combined_cycle_logical_resource_node_settlement_point_name"
     without_bus = direct.filter(pl.col("bus_number").is_null())["settlement_point_id"]
-    if generators is None or column not in generators.columns or without_bus.is_empty():
+    if without_bus.is_empty():
         return direct
     units = (generators.filter(pl.col(column).is_in(without_bus.implode()))
              .select(pl.col(column).cast(pl.String).alias("settlement_point_id"),
@@ -184,10 +184,7 @@ def _dam_zones(loads: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
     zones = (zone_loads.filter(in_service)
              .select(pl.col("load_zone_name").cast(pl.String).alias("settlement_point_id"), pl.col("psse_bus_number").cast(pl.Int64).alias("bus_number"),
                      pl.col("raw_mw_ldf").cast(pl.Float64).alias("raw_weight"), pl.lit("dam_loads").alias("source")))
-    if "load_rollover_capable" not in loads.columns:
-        return zones
-    targets = [(f"{n}_target_load_name", f"fraction_of_this_load_to_{n}_target_load") for n in ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th")
-               if f"{n}_target_load_name" in loads.columns]
+    targets = [(f"{n}_target_load_name", f"fraction_of_this_load_to_{n}_target_load") for n in ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th")]
     rolling = zone_loads.filter(~in_service & flag(pl.col("load_rollover_capable"), "Y"))
     receivers = loads.filter(in_service).select(pl.col("load_name").alias("_target"), pl.col("psse_bus_number").cast(pl.Int64).alias("bus_number"))
     rolled = pl.concat([

@@ -25,7 +25,7 @@ class FakeSession:
                                     "is_monitored": [False, False], "is_secured": [True, True], "is_temporary": [False, False]}),
             "branch_rating": pl.DataFrame({"snapshot_id": [SID] * 2, "branch_id": ["XF1", "L1"], "rating_source": ["psse_raw"] * 2, "time_of_use": [None, None],
                                            "base_mw": [400.0, 200.0], "emergency_mw": [440.0, 220.0]}, schema_overrides={"time_of_use": pl.String}),
-            "contingency_outage": pl.DataFrame({"snapshot_id": [SID] * 2, "contingency_id": ["C1", "C2"], "branch_id": ["L1", "L1"]}),
+            "contingency_outage": pl.DataFrame({"snapshot_id": [SID] * 2, "contingency_id": ["C1", "C2"], "branch_id": ["L1", "L1"], "is_resolved": [True, True]}),
             "settlement_point": pl.DataFrame({"snapshot_id": [SID] * 2, "settlement_point_id": ["RN_ALPHA", "LZ_X"], "kind": ["resource_node", "load_zone"]}),
             "settlement_point_bus": pl.DataFrame({"snapshot_id": [SID] * 2, "settlement_point_id": ["RN_ALPHA", "LZ_X"], "bus_key": ["b", "c"], "is_resolved": [True, True]}),
             "load": pl.DataFrame({"snapshot_id": [SID], "load_id": ["BRAVO_L1"], "bus_number": [3], "is_in_service": [True], "mw": [12.5], "mw_ldf": [0.001], "load_zone": ["LZ_X"]}),

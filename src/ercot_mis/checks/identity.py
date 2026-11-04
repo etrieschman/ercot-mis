@@ -224,14 +224,14 @@ def matching(session, crr_id: str, dam_id: str, r: Report) -> None:
     pairs = pairs.join(ties, on="crr_branch_id", how="left")
     r.show("matched branches", n=pairs.height, same_reactance=int(pairs["same_reactance"].sum()), same_reactance_without_floor=int(raw_ok.sum()),
          same_kind=int(pairs["same_kind"].sum()), same_kv_ignoring_tenths=int(pairs["same_kv"].sum()),
-         in_service_both=int((pairs["crr_in_service"] & pairs["dam_in_service"]).sum()), enforced_both=int((pairs["crr_enforced"] & pairs["dam_enforced"]).sum()),
-         enforced_crr_only=int((pairs["crr_enforced"] & ~pairs["dam_enforced"]).sum()), enforced_dam_only=int((~pairs["crr_enforced"] & pairs["dam_enforced"]).sum()),
+         in_service_both=int((pairs["crr_is_in_service"] & pairs["dam_is_in_service"]).sum()), enforced_both=int((pairs["crr_is_enforced"] & pairs["dam_is_enforced"]).sum()),
+         enforced_crr_only=int((pairs["crr_is_enforced"] & ~pairs["dam_is_enforced"]).sum()), enforced_dam_only=int((~pairs["crr_is_enforced"] & pairs["dam_is_enforced"]).sum()),
          crr_ties_matched=int(pairs["is_tie"].fill_null(False).sum()),
          crr_ties_matched_to_dam_floor=int((pairs["is_tie"].fill_null(False) & (pairs["dam_x_pu"].abs() == match.DAM_REACTANCE_FLOOR)).sum()),
          crr_x_below_floor=int((pairs["crr_x_pu"].abs() < match.DAM_REACTANCE_FLOOR).sum()))
     r.show("  reactance agreement by method", **{m: f"{ok} of {n}" for m, ok,
                                                  n in pairs.group_by("match_method").agg(pl.col("same_reactance").sum(), pl.len()).sort("match_method").rows()})
-    both = pairs.filter(pl.col("crr_enforced") & pl.col("dam_enforced") & pl.col("crr_base_mw").is_not_null() & (pl.col("dam_base_mw") > 0))
+    both = pairs.filter(pl.col("crr_is_enforced") & pl.col("dam_is_enforced") & pl.col("crr_base_mw").is_not_null() & (pl.col("dam_base_mw") > 0))
     ratio = both["crr_base_mw"] / both["dam_base_mw"]
     r.show("  enforced on both sides: CRR base over DAM rate A", n=both.height, quantiles=[round(ratio.quantile(q), 3) for q in (0.05, 0.25, 0.5, 0.75, 0.95)],
          within_1pct=int(((ratio - 1).abs() <= 0.01).sum()))

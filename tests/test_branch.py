@@ -15,7 +15,7 @@ def _raw_branch(rows):
 def _raw_xf(rows):
     return pl.DataFrame(rows, schema={"i": pl.Int64, "j": pl.Int64, "ckt": pl.String, "r1_2": pl.Float64, "x1_2": pl.Float64, "windv1": pl.Float64,
                                       "windv2": pl.Float64, "ang1": pl.Float64, "rata1": pl.Float64, "ratb1": pl.Float64, "ratc1": pl.Float64,
-                                      "stat": pl.Int64, "comment": pl.String}, orient="row")
+                                      "stat": pl.Int64, "comment": pl.String}, orient="row").with_columns(pl.lit(1).alias("cw"), pl.lit(1).alias("cz"))
 
 
 def test_crr_branches_name_lines_by_comment_transformers_by_autos_and_keep_both_ratings():
@@ -30,7 +30,8 @@ def test_crr_branches_name_lines_by_comment_transformers_by_autos_and_keep_both_
                               "base_case_rating": [180.0, 170.0, 270.0], "emergency_rating": [220.0, 200.0, 330.0],
                               "time_of_use": ["PeakWD", "Off-peak", "PeakWD"]})
     nodes, _ = buses_.crr_buses(bus, raw_branch, raw_xf, autos, sources)
-    branches, ratings = branch.crr_branches(nodes, raw_branch, raw_xf, autos, monitored)
+    plain = pl.DataFrame({"crr_tag": ["2 A2 3 B 1"], "op_eqcode": ["SOME_LINE_1"]})
+    branches, ratings = branch.crr_branches(nodes, raw_branch, raw_xf, autos, monitored, plain)
 
     by = {r["branch_id"]: r for r in branches.to_dicts()}
     assert set(by) == {"1 A1 2 A2 1", "2 A2 3 B 1", "3 B 4 C 1", "AUTO_A"}

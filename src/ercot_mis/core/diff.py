@@ -29,14 +29,14 @@ import polars as pl
 
 from .match import reactance_agrees
 
-VERSION = 3
+VERSION = 4
 
 COLUMNS = ("crr_branch_id", "dam_branch_id", "match_method",
            "crr_kind", "dam_kind", "same_kind",
            "crr_x_pu", "dam_x_pu", "same_reactance",
            "crr_kv_lo", "crr_kv_hi", "dam_kv_lo", "dam_kv_hi", "same_kv",
-           "crr_in_service", "dam_in_service",
-           "crr_enforced", "dam_enforced", "crr_base_mw", "dam_base_mw", "crr_emergency_mw", "dam_emergency_mw")
+           "crr_is_in_service", "dam_is_in_service",
+           "crr_is_enforced", "dam_is_enforced", "crr_base_mw", "dam_base_mw", "crr_emergency_mw", "dam_emergency_mw")
 
 
 def _side(branch: pl.DataFrame, buses: pl.DataFrame, ratings: pl.DataFrame, prefix: str, enforced: str,
@@ -52,7 +52,7 @@ def _side(branch: pl.DataFrame, buses: pl.DataFrame, ratings: pl.DataFrame, pref
     return frame.select(pl.col("branch_id").alias(f"{prefix}_branch_id"), pl.col("kind").alias(f"{prefix}_kind"),
                         pl.col("x_pu").alias(f"{prefix}_x_pu"),
                         pl.min_horizontal("_f", "_t").alias(f"{prefix}_kv_lo"), pl.max_horizontal("_f", "_t").alias(f"{prefix}_kv_hi"),
-                        pl.col("is_in_service").alias(f"{prefix}_in_service"), pl.col(enforced).fill_null(False).alias(f"{prefix}_enforced"),
+                        pl.col("is_in_service").alias(f"{prefix}_is_in_service"), pl.col(enforced).fill_null(False).alias(f"{prefix}_is_enforced"),
                         pl.col("base_mw").alias(f"{prefix}_base_mw"), pl.col("emergency_mw").alias(f"{prefix}_emergency_mw"))
 
 

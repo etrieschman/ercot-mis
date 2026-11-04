@@ -155,7 +155,7 @@ def comparison(session, left: str, right: str) -> dict:
     out = {"left": {}, "right": {}}
     if is_dam(left) != is_dam(right):
         crr, dam = (right, left) if is_dam(left) else (left, right)
-        pairs = session.diff_branches(crr, dam).select("crr_branch_id", "dam_branch_id", "same_reactance", "crr_in_service", "dam_in_service").rows()
+        pairs = session.diff_branches(crr, dam).select("crr_branch_id", "dam_branch_id", "same_reactance", "crr_is_in_service", "dam_is_in_service").rows()
         for c, d, same_x, c_on, d_on in pairs:
             same = bool(same_x) and c_on == d_on
             a, b = (d, c) if is_dam(left) else (c, d)

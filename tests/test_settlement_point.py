@@ -8,6 +8,20 @@ def _nodes(numbers, keys):
     return pl.DataFrame({"node_number": numbers, "bus_number": numbers, "bus_key": keys})
 
 
+TARGETS = [c for n in ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th") for c in (f"{n}_target_load_name", f"fraction_of_this_load_to_{n}_target_load")]
+
+
+def _ld(**columns) -> pl.DataFrame:
+    """A ``dam_loads`` frame with every column the builder reads; the rollover columns are null unless given."""
+    n = len(next(iter(columns.values()), []))
+    base = {"load_zone_name": pl.String, "psse_bus_number": pl.Int64, "load_name": pl.String, "load_status": pl.String, "raw_mw_ldf": pl.Float64,
+            "load_rollover_capable": pl.String, "number_of_target_loads": pl.Int64, **{c: (pl.Float64 if c.startswith("fraction") else pl.String) for c in TARGETS}}
+    return pl.DataFrame({c: columns.get(c, [None] * n) for c in base}, schema=base)
+
+
+NO_GN = pl.DataFrame(schema={"combined_cycle_logical_resource_node_settlement_point_name": pl.String, "resource_node_psse_bus_number": pl.Int64, "generator_status": pl.String})
+
+
 def test_crr_points_normalize_weights_merge_contracted_buses_and_flag_unknown_buses():
     nodes = _nodes([1, 2, 3, 4], ["A", "A", "B", "C"])  # buses 1 and 2 are one contracted node
     ss = pl.DataFrame({
@@ -39,9 +53,9 @@ def test_dam_points_use_sp_hub_and_load_files_and_derive_the_average_hubs():
     # HB_NORTH has two hub buses: one with two energized buses and a de-energized one, one with a single bus.
     hb = pl.DataFrame({"hub_name": ["HB_NORTH", "HB_NORTH", "HB_NORTH", "HB_NORTH", "HB_PAN"], "hub_bus_name": ["HBN1", "HBN1", "HBN1", "HBN2", "HBP1"],
                        "psse_bus_number": [11, 12, 15, 13, 14], "bus_status": ["Energized", "Energized", "De-energized", "Energized", "Energized"]})
-    ld = pl.DataFrame({"load_zone_name": ["LZ_Q", "LZ_Q", "LZ_Q", "DC_T"], "psse_bus_number": [12, 13, 14, 10],
-                       "load_status": ["In-Service", "In-Service", "Out-Of-Service", "In-Service"], "raw_mw_ldf": [30.0, 10.0, 60.0, 5.0]})
-    points, rows = spm.dam_settlement_points(nodes, sp, hb, ld)
+    ld = _ld(load_zone_name=["LZ_Q", "LZ_Q", "LZ_Q", "DC_T"], psse_bus_number=[12, 13, 14, 10],
+             load_status=["In-Service", "In-Service", "Out-Of-Service", "In-Service"], raw_mw_ldf=[30.0, 10.0, 60.0, 5.0])
+    points, rows = spm.dam_settlement_points(nodes, sp, hb, ld, NO_GN)
     by = {r["settlement_point_id"]: r for r in points.to_dicts()}
     weights = lambda name: {r["bus_key"]: round(r["weight"], 4) for r in rows.filter(pl.col("settlement_point_id") == name).to_dicts()}
     assert weights("RN_A") == {"N10": 1.0} and weights("RN_LOGICAL") == {"N10": 1.0}
@@ -62,8 +76,7 @@ def test_dam_point_without_any_row_is_unresolved():
     sp = pl.DataFrame({"settlement_point_name": ["RN_A", "HB_LONE"], "settlement_point_type": ["Resource Node", "Hub"],
                        "psse_bus_number": [10, None], "combined_cycle_settlement_point": [None, None]})
     hb = pl.DataFrame(schema={"hub_name": pl.String, "hub_bus_name": pl.String, "psse_bus_number": pl.Int64, "bus_status": pl.String})
-    ld = pl.DataFrame(schema={"load_zone_name": pl.String, "psse_bus_number": pl.Int64, "load_status": pl.String, "raw_mw_ldf": pl.Float64})
-    points, rows = spm.dam_settlement_points(nodes, sp, hb, ld)
+    points, rows = spm.dam_settlement_points(nodes, sp, hb, _ld(), NO_GN)
     lone = points.filter(pl.col("settlement_point_id") == "HB_LONE").row(0, named=True)
     assert (lone["n_buses"], lone["n_unresolved"]) == (0, 1)
     assert rows.filter(pl.col("settlement_point_id") == "HB_LONE")["is_resolved"].to_list() == [False]
@@ -73,15 +86,13 @@ def test_dam_zone_weights_roll_an_out_of_service_load_to_its_targets():
     nodes = _nodes([1, 2, 3], ["N1", "N2", "N3"])
     sp = pl.DataFrame({"settlement_point_name": ["LZ_Q"], "settlement_point_type": ["Load Zone"], "psse_bus_number": [None], "combined_cycle_settlement_point": [None]},
                       schema_overrides={"psse_bus_number": pl.Int64, "combined_cycle_settlement_point": pl.String})
-    ld = pl.DataFrame({
-        "load_zone_name": ["LZ_Q"] * 3, "psse_bus_number": [1, 2, 3], "load_name": ["LA", "LB", "LC"],
-        "load_status": ["In-Service", "In-Service", "Out-Of-Service"], "raw_mw_ldf": [60.0, 20.0, 20.0],
-        "load_rollover_capable": ["NO", "NO", "YES"], "number_of_target_loads": [0, 0, 2],
-        "1st_target_load_name": [None, None, "LA"], "fraction_of_this_load_to_1st_target_load": [None, None, 0.75],
-        "2nd_target_load_name": [None, None, "LB"], "fraction_of_this_load_to_2nd_target_load": [None, None, 0.25],
-    })
+    ld = _ld(load_zone_name=["LZ_Q"] * 3, psse_bus_number=[1, 2, 3], load_name=["LA", "LB", "LC"],
+             load_status=["In-Service", "In-Service", "Out-Of-Service"], raw_mw_ldf=[60.0, 20.0, 20.0],
+             load_rollover_capable=["NO", "NO", "YES"], number_of_target_loads=[0, 0, 2],
+             **{"1st_target_load_name": [None, None, "LA"], "fraction_of_this_load_to_1st_target_load": [None, None, 0.75],
+                "2nd_target_load_name": [None, None, "LB"], "fraction_of_this_load_to_2nd_target_load": [None, None, 0.25]})
     hb = pl.DataFrame(schema={"hub_name": pl.String, "hub_bus_name": pl.String, "psse_bus_number": pl.Int64, "bus_status": pl.String})
-    points, rows = spm.dam_settlement_points(nodes, sp, hb, ld)
+    points, rows = spm.dam_settlement_points(nodes, sp, hb, ld, NO_GN)
     weights = {k: round(w, 4) for k, w in rows.group_by("bus_key").agg(pl.col("weight").sum()).rows()}
     assert weights == {"N1": 0.75, "N2": 0.25}  # 60 + 15 and 20 + 5 of the rolled 20 MW; the dead load's own node gets nothing
     assert set(rows["source"]) == {"dam_loads", "dam_loads_rollover"} and points["n_buses"][0] == 2  # two buses, one row per source each
@@ -95,7 +106,7 @@ def test_dam_logical_resource_node_spreads_over_its_units_resource_nodes():
                        "psse_bus_number": [20, 21, None, None], "combined_cycle_settlement_point": [None, None, None, None]},
                       schema_overrides={"psse_bus_number": pl.Int64, "combined_cycle_settlement_point": pl.String})
     hb = pl.DataFrame(schema={"hub_name": pl.String, "hub_bus_name": pl.String, "psse_bus_number": pl.Int64, "bus_status": pl.String})
-    ld = pl.DataFrame(schema={"load_zone_name": pl.String, "psse_bus_number": pl.Int64, "load_status": pl.String, "raw_mw_ldf": pl.Float64})
+    ld = _ld()
     # LRN_T: two turbines at RN_CT, a steam unit at RN_ST, a third turbine out of service elsewhere. LRN_OFF: every unit out, so all count.
     gn = pl.DataFrame({"combined_cycle_logical_resource_node_settlement_point_name": ["LRN_T", "LRN_T", "LRN_T", "LRN_T", "LRN_OFF", "LRN_OFF"],
                        "resource_node_psse_bus_number": [20, 20, 21, 22, 21, 22],
@@ -106,5 +117,5 @@ def test_dam_logical_resource_node_spreads_over_its_units_resource_nodes():
     assert weights("LRN_OFF") == {"N21": 0.5, "N22": 0.5}
     assert set(rows.filter(pl.col("settlement_point_id").str.starts_with("LRN"))["source"]) == {"dam_gn"}
     assert points["n_unresolved"].sum() == 0
-    points, _ = spm.dam_settlement_points(nodes, sp, hb, ld)  # without Gn both stay unresolved
+    points, _ = spm.dam_settlement_points(nodes, sp, hb, ld, NO_GN)  # without Gn both stay unresolved
     assert points.filter(pl.col("settlement_point_id").str.starts_with("LRN"))["n_unresolved"].to_list() == [1, 1]

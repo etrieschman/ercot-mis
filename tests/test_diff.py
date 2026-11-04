@@ -26,11 +26,11 @@ def test_diff_branches_compares_kind_reactance_kv_and_ratings_side_by_side():
     by = {r["crr_branch_id"]: r for r in result.to_dicts()}
     c1 = by["C1"]
     assert (c1["same_kind"], c1["same_reactance"], c1["same_kv"]) == (True, True, True)  # tie at the DAM floor; kv tenths dropped
-    assert (c1["crr_base_mw"], c1["dam_base_mw"], c1["crr_emergency_mw"], c1["crr_enforced"], c1["dam_enforced"]) == (90.0, 100.0, 99.0, True, True)
+    assert (c1["crr_base_mw"], c1["dam_base_mw"], c1["crr_emergency_mw"], c1["crr_is_enforced"], c1["dam_is_enforced"]) == (90.0, 100.0, 99.0, True, True)
     c2 = by["C2"]
-    assert (c2["same_reactance"], c2["same_kv"], c2["crr_enforced"], c2["crr_base_mw"]) == (False, True, False, None)
+    assert (c2["same_reactance"], c2["same_kv"], c2["crr_is_enforced"], c2["crr_base_mw"]) == (False, True, False, None)
     c3 = by["C3"]
-    assert (c3["same_kind"], c3["same_kv"], c3["crr_in_service"], c3["dam_in_service"]) == (False, False, False, True)
+    assert (c3["same_kind"], c3["same_kv"], c3["crr_is_in_service"], c3["dam_is_in_service"]) == (False, False, False, True)
     assert c3["crr_base_mw"] is None  # only the CRR CSV block counts as a CRR rating here
 
 

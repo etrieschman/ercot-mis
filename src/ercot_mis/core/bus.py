@@ -59,7 +59,7 @@ def _attachments(pairs: list[tuple[pl.DataFrame, str, str, str]]) -> pl.DataFram
     return pl.concat(parts).unique()
 
 
-def _keys(buses: pl.DataFrame, attachments: pl.DataFrame, number: str) -> pl.DataFrame:
+def _with_bus_keys(buses: pl.DataFrame, attachments: pl.DataFrame, number: str) -> pl.DataFrame:
     """Add ``attachments``, ``n_attachments``, ``bus_key`` and ``is_ambiguous`` to ``buses``, joined to ``attachments`` on ``number``."""
     joined = (attachments.group_by("number").agg(pl.col("label").sort().str.join("|").alias("attachments"),
                                                  pl.len().alias("n_attachments")))
@@ -95,7 +95,7 @@ def dam_buses(bus: pl.DataFrame, lines: pl.DataFrame, transformers: pl.DataFrame
     ])
     buses = bus.select(pl.col("i").alias("bus_number"), pl.col("name").map_elements(_norm, return_dtype=pl.String).alias("raw_name"),
                        pl.col("basekv").alias("kv"), pl.col("ide").alias("bus_type"))
-    return (_keys(buses, attachments, "bus_number")
+    return (_with_bus_keys(buses, attachments, "bus_number")
             .with_columns(pl.col("raw_name").alias("substation"), pl.lit(None, pl.Int64).alias("n_nodes"))
             .select(BUS_COLUMNS).sort("bus_number"))
 
@@ -169,7 +169,7 @@ def crr_buses(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame
         pl.col("raw_name").sort().str.join("+").alias("raw_name"), pl.col("kv").min().alias("kv"), pl.len().cast(pl.Int64).alias("n_nodes"),
         pl.when((pl.col("node_type") == 3).any()).then(3).when((pl.col("node_type") == 4).all()).then(4)
         .otherwise(pl.col("node_type").filter(pl.col("node_type") != 4).max()).alias("bus_type"))
-    buses = (_keys(grouped, attachments, "_group")
+    buses = (_with_bus_keys(grouped, attachments, "_group")
              .with_columns(pl.lit(None, pl.String).alias("substation"), pl.lit(None, pl.Int64).alias("bus_number")))
     nodes = nodes.join(buses.select("_group", "bus_key"), on="_group", how="left").select(NODE_COLUMNS).sort("node_number")
     return nodes, buses.select(BUS_COLUMNS).sort("bus_key")

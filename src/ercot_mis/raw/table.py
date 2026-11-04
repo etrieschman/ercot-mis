@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-VERSION = 1  # bump when reading or casting changes what every parser produces
-
 import io
 import re
 from collections.abc import Sequence
@@ -14,6 +12,8 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.csv as pacsv
+
+VERSION = 1  # bump when reading or casting changes what every parser produces
 
 I, F, S = pa.int64(), pa.float64(), pa.string()
 

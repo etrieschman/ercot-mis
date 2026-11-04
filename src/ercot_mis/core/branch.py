@@ -72,12 +72,13 @@ def _check_transformer_conventions(psse_transformer: pl.DataFrame) -> None:
     no phase shift (``ang1 = 0``). A RAW that breaks one of them fails the build here, loudly, instead of being
     modelled as if it did not; the message carries counts, never names."""
     checks = {"cw": pl.col("cw") != 1, "cz": pl.col("cz") != 1, "ang1": pl.col("ang1").fill_null(0.0) != 0.0}
-    bad = {name: int(psse_transformer.filter(expr).height) for name, expr in checks.items() if name in psse_transformer.columns}
+    bad = {name: int(psse_transformer.filter(expr).height) for name, expr in checks.items()}
     if any(bad.values()):
         raise ValueError(f"transformer conventions the DC model assumes do not hold (rows breaking each): {bad}; see RAT-01 in docs/assumptions.md")
 
 
-def _finish(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+def _ties_and_raw_ratings(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Flag the ties, then split the frame into ``core.branch`` columns and the RAW's rating rows."""
     frame = frame.with_columns(((pl.col("kind") == "line") & (pl.col("x_pu").abs() <= TIE_REACTANCE)).alias("is_tie"))
     ratings = frame.select("branch_id", pl.lit("psse_raw").alias("rating_source"), pl.lit(None, pl.String).alias("time_of_use"),
                            "base_mw", "emergency_mw", "rate_c_mw")
@@ -94,13 +95,13 @@ def dam_branches(buses: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
                      (flag(pl.col("monitored_and_secured"), "Y")).alias("is_secured"))
         for frame in (dam_lines, dam_transformers)])
     frame = _with_endpoints(_raw_parts(psse_branch, psse_transformer).join(named, on=["from_number", "to_number", "ckt"], how="left"), buses, "bus_number")
-    return _finish(frame.with_columns(pl.lit(False).alias("is_name_reversed"), pl.lit(False).alias("is_temporary"),
+    return _ties_and_raw_ratings(frame.with_columns(pl.lit(False).alias("is_name_reversed"), pl.lit(False).alias("is_temporary"),
                                       pl.lit(None, pl.Int64).alias("from_node"), pl.lit(None, pl.Int64).alias("to_node"),
                                       pl.col("from_number").alias("from_bus_number"), pl.col("to_number").alias("to_bus_number")))
 
 
 def crr_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transformer: pl.DataFrame,
-                 autos: pl.DataFrame, monitored: pl.DataFrame, mapping_lines: pl.DataFrame | None = None) -> tuple[pl.DataFrame, pl.DataFrame]:
+                 autos: pl.DataFrame, monitored: pl.DataFrame, mapping_lines: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """``core.branch`` and ``core.branch_rating`` for one CRR month; ``nodes`` is the month's ``core.node``.
 
     ``is_temporary`` marks the branches the mapping workbook labels as temporary split-bus
@@ -122,12 +123,11 @@ def crr_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
     frame = (_with_endpoints(frame, nodes, "node_number").join(listed, on="branch_id", how="left")
              .with_columns(pl.col("is_monitored").fill_null(False)).with_columns(pl.col("is_monitored").alias("is_secured")))
     temporary = (mapping_lines.filter(pl.col("op_eqcode").cast(pl.String).str.to_uppercase().str.contains("TEMPORARY SPLIT"))
-                 .select(pl.col("crr_tag").alias("branch_id")).unique().with_columns(pl.lit(True).alias("is_temporary"))
-                 if mapping_lines is not None else pl.DataFrame(schema={"branch_id": pl.String, "is_temporary": pl.Boolean}))
+                 .select(pl.col("crr_tag").alias("branch_id")).unique().with_columns(pl.lit(True).alias("is_temporary")))
     frame = (frame.join(temporary, on="branch_id", how="left")
              .with_columns(pl.col("is_temporary").fill_null(False), pl.col("from_number").alias("from_node"), pl.col("to_number").alias("to_node"),
                            pl.lit(None, pl.Int64).alias("from_bus_number"), pl.lit(None, pl.Int64).alias("to_bus_number")))
-    branch, raw_ratings = _finish(frame)
+    branch, raw_ratings = _ties_and_raw_ratings(frame)
     csv_ratings = monitored.select(pl.col("device_name").alias("branch_id"), pl.lit("crr_monitored").alias("rating_source"),
                                    "time_of_use", pl.col("base_case_rating").alias("base_mw"),
                                    pl.col("emergency_rating").alias("emergency_mw"), pl.lit(None, pl.Float64).alias("rate_c_mw"))
