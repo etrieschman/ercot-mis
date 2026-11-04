@@ -1,27 +1,10 @@
-"""ERCOT External Web Services (EWS): the SOAP channel for Secure and ECEII reports.
+"""ERCOT's External Web Services (EWS): listing and downloading Secure and ECEII documents over SOAP.
 
-ERCOT runs two unrelated APIs. The Public Data API (REST) serves only products
-classified Public. EWS (``misapi.ercot.com/NodalAPI/EWS/``) is the only
-programmatic route to Secure and ECEII products such as the CRR and DAM network
-models. This module lists the documents posted for a report type; downloading
-them arrives with the archive store.
-
-Credentials
------------
-EWS needs an *API* certificate, not the personal one used for MIS in a browser:
-the server rejects user IDs not prefixed ``API_`` (``SECU1073``). Two layers of
-authentication apply to every call, both with the same certificate:
-
-1. mutual TLS during the handshake, and
-2. a WS-Security XML signature over the SOAP Body (``SECU1096`` without it).
-
-ERCOT's WS-Security stack predates SHA-2 and rejects anything but SHA-1
-(``SECU3518`` for the digest, ``SECU3517`` for the signature). That is the
-server's requirement, not a choice made here.
-
-The envelope is built by hand from ERCOT's ``Message.xsd``; zeep is used only as
-a signing library. The shipped WSDL declares a placeholder address and an untyped
-payload, so a generated client would buy little and hide the wire format.
+EWS is the only programmatic route to the CRR and DAM network models. Every call presents an
+API certificate twice: for mutual TLS, and as a WS-Security signature over the SOAP body. The
+server accepts SHA-1 only, for the digest and the signature. The envelope is built by hand from
+ERCOT's ``Message.xsd``; zeep signs it. EWS keeps a document only for the product's display
+window, so anything not archived in time is gone (CLAUDE.md, "EWS").
 """
 
 from __future__ import annotations
@@ -52,29 +35,26 @@ ENDPOINT = "https://misapi.ercot.com/NodalAPI/EWS/"
 TIMEOUT = 300  # seconds per call; a 30 MB download on a slow day
 CHUNK = 1 << 20
 
-# All EWS operations accept the same RequestMessage; the Noun selects the
-# resource, and reports are served by MarketInfo. The SOAPAction is a path, not a
-# URN: a URN yields "RUNTIME0031: Failed to locate the operation".
+# Reports are served by the MarketInfo operation; its SOAPAction is a path, not a URN.
 SOAP_ACTION = "/BusinessService/NodalService.serviceagent/HttpEndPoint/MarketInfo"
 
 NS = {
     "soap": "http://schemas.xmlsoap.org/soap/envelope/",
     "msg": "http://www.ercot.com/schema/2007-06/nodal/ews/message",
-    # Message.xsd imports a "www.docs" variant of the WSS namespaces for its
-    # ReplayDetection types, while the Security header zeep adds uses the standard
-    # OASIS namespaces. The server validates both, so do not unify them.
+    # Message.xsd uses a "www.docs" variant of the WSS namespaces for ReplayDetection; the Security header zeep
+    # adds uses the standard OASIS ones. The server validates both, so the two stay different.
     "wsse_msg": "http://www.docs.oasis-open.org/wss/2004/01/"
     "oasis-200401-wss-wssecurity-secext-1.0.xsd",
     "wsu_msg": "http://www.docs.oasis-open.org/wss/2004/01/"
     "oasis-200401-wss-wssecurity-utility-1.0.xsd",
 }
 
-# Seconds to wait before the second and third attempts at a stalled call. Tests shorten this.
+# Seconds to wait before the second and third attempts at a stalled call.
 DELAYS: tuple[float, ...] = (5.0, 20.0)
 
 
 def retrying(call: Callable[[], T], transient: tuple[type[BaseException], ...]) -> T:
-    """Run ``call``; on a ``transient`` error (a stalled download, a 5xx reply) wait and try again, up to ``len(DELAYS)`` times."""
+    """The result of ``call``, retried after each ``transient`` error (a stalled download, a 5xx reply) with the ``DELAYS`` between attempts."""
     for delay in (*DELAYS, None):
         try:
             return call()
@@ -86,16 +66,16 @@ def retrying(call: Callable[[], T], transient: tuple[type[BaseException], ...]) 
 
 
 class EwsError(RuntimeError):
-    """EWS answered with a SOAP Fault, a non-OK reply code, or an HTTP error."""
+    """EWS answered with a SOAP fault, a reply code other than OK, or an HTTP error."""
 
 
 class _ServerError(EwsError):
-    """A gateway error (502-504) worth one more attempt."""
+    """A gateway error (HTTP 502 to 504), retried."""
 
 
 @dataclass(frozen=True)
 class RemoteDoc:
-    """One posted document, as a listing describes it (EWS GetReports or the Public API archive)."""
+    """One posted document as a listing describes it, from EWS or the Public API archive."""
 
     report_type_id: int | None
     doc_id: str | None
@@ -121,14 +101,9 @@ def build_request(
     start: datetime | None = None,
     end: datetime | None = None,
 ) -> str:
-    """Build an unsigned GetReports envelope.
+    """An unsigned GetReports envelope for one report type, posted within ``start`` and ``end`` when given.
 
-    Element order is load-bearing: ``HeaderType`` and ``RequestType`` are
-    ``xsd:sequence``, so children follow schema order (Header: Verb, Noun,
-    ReplayDetection, Revision, Source, UserID; Request: ..., StartTime, EndTime,
-    ..., Option). ``Option`` is the report type ID and is required. Either time
-    bound may be omitted, and omitting both asks for everything available.
-    ReplayDetection is mandatory and its Nonce is fresh per call.
+    Header and Request are ``xsd:sequence`` types, so the children keep the schema's order; ``Option`` carries the report type id.
     """
     nonce = base64.b64encode(secrets.token_bytes(16)).decode()
     created = _iso(datetime.now(timezone.utc))
@@ -165,12 +140,7 @@ def build_request(
 
 
 def sign(envelope: str, cert: Path, key: Path) -> bytes:
-    """Attach a WS-Security header carrying an XML signature over the Body.
-
-    The certificate travels as a BinarySecurityToken, the X.509 Token Profile
-    ERCOT's spec cites. The server checks the digest algorithm before the
-    signature algorithm, so a wrong digest masks a wrong signature method.
-    """
+    """The envelope with a WS-Security header: an RSA-SHA1 signature over the body and the certificate as a BinarySecurityToken."""
     try:
         import xmlsec
         from zeep.wsse.signature import BinarySignature
@@ -193,12 +163,9 @@ def sign(envelope: str, cert: Path, key: Path) -> bytes:
 
 
 def parse_reports(xml: bytes, report_type_id: int) -> list[RemoteDoc]:
-    """Extract the documents from a GetReports reply.
+    """The documents in a GetReports reply; a SOAP fault or an error reply code raises ``EwsError``.
 
-    Reports are matched by local name rather than a fixed namespace: the payload
-    and the message envelope use different namespaces, and ERCOT has changed them
-    across revisions, so a future change shows up as a parse difference rather
-    than a silent empty result.
+    Elements are matched by local name because ERCOT has changed the payload namespaces between revisions.
     """
     root = etree.fromstring(xml)
 
@@ -210,7 +177,7 @@ def parse_reports(xml: bytes, report_type_id: int) -> list[RemoteDoc]:
     code = root.findtext(".//msg:ReplyCode", namespaces=NS)
     if code and code.upper() != "OK":
         errors = [(e.text or "").strip() for e in root.findall(".//msg:Error", NS)]
-        # An empty window comes back as ReplyCode=ERROR, not as an empty payload.
+        # An empty window comes back as an error reply, not as an empty payload.
         if errors and all(e.startswith("No reports found") for e in errors):
             return []
         raise EwsError(f"ReplyCode={code}: {errors}")
@@ -256,7 +223,7 @@ def _parse_time(text: str) -> datetime | None:
 
 
 class EwsClient:
-    """Lists documents over EWS with an ERCOT API certificate."""
+    """Lists and downloads documents over EWS with the participant's API certificate."""
 
     def __init__(self, identity: Identity):
         self.identity = identity
@@ -268,17 +235,13 @@ class EwsClient:
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list[RemoteDoc]:
-        """The Source interface: list a product's documents."""
+        """The documents posted for ``product``, within ``start`` and ``end`` when given."""
         if product.report_type_id is None:
             raise ValueError(f"{product.emil_id} has no EWS report type ID")
         return self.get_reports(product.report_type_id, start, end)
 
     def download(self, url: str) -> Iterator[bytes]:
-        """The Source interface: stream a listed document.
-
-        The download servlet wants the same client certificate as the SOAP call, but no
-        signed envelope.
-        """
+        """The bytes of a listed document, in chunks; the download servlet wants the certificate but no signed envelope."""
         with self.session.get(
             url,
             cert=(str(self.identity.cert), str(self.identity.key)),
@@ -295,7 +258,7 @@ class EwsClient:
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list[RemoteDoc]:
-        """List the documents posted for a report type, optionally within a time window."""
+        """The documents posted for a report type, within ``start`` and ``end`` when given; a stalled call is retried."""
         return retrying(lambda: self._get_reports(report_type_id, start, end), (requests.RequestException, _ServerError))
 
     def _get_reports(self, report_type_id: int, start: datetime | None, end: datetime | None) -> list[RemoteDoc]:
@@ -305,14 +268,13 @@ class EwsClient:
             ENDPOINT,
             data=body,
             headers={"Content-Type": "text/xml; charset=utf-8", "SOAPAction": SOAP_ACTION},
-            # Presented again for mutual TLS; sign() already put it inside the message.
             cert=(str(self.identity.cert), str(self.identity.key)),
             timeout=TIMEOUT,
         )
         if response.status_code >= 502:
             raise _ServerError(f"HTTP {response.status_code}")
         if response.status_code != 200:
-            # Faults usually arrive as HTTP 500 with a SOAP body worth reading.
+            # A fault arrives as HTTP 500 with a SOAP body that says why.
             try:
                 parse_reports(response.content, report_type_id)
             except (EwsError, etree.XMLSyntaxError) as error:
@@ -321,10 +283,9 @@ class EwsClient:
         return parse_reports(response.content, report_type_id)
 
 
-# ------------------------------------------------------------------ the archive probe (M0: how deep EWS keeps a product)
+# ------------------------------------------------------------------ the archive probe: how far back EWS keeps a product
 
-# Columns that embed the participant DUNS (ERCOT's file names) or point at the
-# participant's download servlet. They stay in the catalog and never leave it.
+# Listing columns that embed the participant's DUNS (ERCOT's file names) or point at its download servlet; they stay in the catalog.
 PRIVATE_COLUMNS = ("file_name", "url")
 
 DOCUMENT_SCHEMA = {
@@ -340,24 +301,16 @@ DOCUMENT_SCHEMA = {
 
 @dataclass(frozen=True)
 class Probe:
-    """What EWS holds for one product.
-
-    Both parts are safe to print: ``summary`` holds counts, dates, bytes and report
-    groups; ``documents`` is the listing without ERCOT's file names and URLs.
-    """
+    """What EWS holds for one product: ``summary`` (counts, dates, bytes, report groups) and ``documents`` (the listing without file names and URLs). Both print safely."""
 
     summary: dict
     documents: pl.DataFrame
 
 
 def probe(client: EwsClient | None, spec: Product, *, archive_years: float = 7, now: datetime | None = None) -> Probe:
-    """List everything EWS offers for a product, and whether it reaches past the display window.
+    """Two listings of a product and nothing downloaded: one unbounded, one asking for documents posted before the display window.
 
-    Makes two listing calls and downloads nothing. The first omits the time window,
-    which EWS documents as "everything available". The second asks explicitly for
-    documents posted before the display window, since an unbounded listing may be
-    capped at the window. ``summary["n_docs_before_display_window"] > 0`` is the
-    answer to "does the archive go deeper than MIS shows?".
+    ``summary["n_docs_before_display_window"]`` says whether EWS keeps anything older than the window.
     """
     if client is None or spec.source != "ews" or spec.report_type_id is None:
         raise NotImplementedError(f"{spec.emil_id} comes from the Public API; probe() measures the EWS archive only.")

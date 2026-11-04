@@ -1,8 +1,9 @@
-"""The session: one open data folder, the clients that fill it, and the layers built from it.
+"""The session: one data folder, the clients that fill it, and every layer read from it.
 
-``em.open()`` returns a ``Session``. Its methods follow the data flow: ``list`` and
-``fetch``/``ingest`` fill the archive, ``build_raw`` and ``build_core`` write the
-layers, ``raw(table)`` and ``core(table)`` read them.
+``em.open()`` returns a ``Session``. ``list``, ``fetch`` and ``ingest`` fill the archive;
+``build_raw`` and ``build_core`` write the layers; ``raw`` and ``core`` read them;
+``network``, ``injections``, ``match_*`` and ``diff_*`` compute from them. Each method
+names the module that does the work.
 """
 
 from __future__ import annotations
@@ -38,13 +39,10 @@ BUILD_SCHEMA = {
 }
 
 class Session:
-    """A local ercot-mis data folder plus the clients that fill it.
+    """A data folder and the clients that fill it.
 
-    The catalog is a DuckDB file that allows one process at a time. The session never
-    keeps a connection: reads open one for the call (``session.catalog``,
-    ``session.query``), and writes take a writable one only for the moment they record
-    a listing, a blob or an artifact, never across a download or a parse. A notebook
-    left open therefore never blocks the daily pull.
+    The session holds no catalog connection: a read opens one for the call, and a write holds one only
+    while it records a listing, a blob or an artifact. A notebook left open never blocks the daily pull.
     """
 
     def __init__(self, data_dir: Path, identity: Identity | None = None):
@@ -64,19 +62,19 @@ class Session:
         self.close()
 
     def close(self) -> None:
-        """Nothing is held open between calls; kept so ``with em.open() as s:`` reads naturally."""
+        """Nothing to close; ``with em.open() as s:`` is allowed."""
 
     @property
     def catalog(self) -> ReadOnlyCatalog:
-        """Read-only catalog access; each method call is its own short connection."""
+        """The catalog, read-only, one connection per call."""
         return ReadOnlyCatalog(self.data_dir)
 
     def query(self, sql: str, params: list | None = None) -> list[tuple]:
-        """Ad hoc read-only SQL on the catalog (``remote_doc``, ``archive_blob``, ``artifact``, ...); returns the rows."""
+        """The rows of an ad hoc read-only SQL query on the catalog."""
         return self.catalog.query(sql, params)
 
     def latest_doc(self, emil_id: str, doc_ids: Iterable[str]) -> str:
-        """Of ``doc_ids``, the one ERCOT posted last; an undated one counts as oldest (TOP-11)."""
+        """The one of ``doc_ids`` ERCOT posted last (TOP-11)."""
         return self.catalog.latest_doc(emil_id, doc_ids)
 
     @contextmanager
@@ -86,7 +84,7 @@ class Session:
 
     @property
     def ews(self) -> EwsClient:
-        """The EWS client, created on first use so reading local data never needs credentials."""
+        """The EWS client, created on first use; reading local data never needs credentials."""
         if self._ews is None:
             self._ews = EwsClient(self._identity or load_identity())
         return self._ews
@@ -104,65 +102,52 @@ class Session:
         return self.ews if spec.source == "ews" else self.public_api
 
     def list(self, product: str | int, since: date | datetime | str | None = None, until: date | datetime | str | None = None) -> pl.DataFrame:
-        """List what ERCOT currently offers for a product, and record it in the catalog.
+        """The documents ERCOT lists for a product, recorded in the catalog, each with ``is_archived`` and ``sha256``.
 
-        ``since`` and ``until`` bound the posting time; a date means midnight ERCOT time.
-        Returns the listed documents with ``is_archived`` and ``sha256``, without ERCOT's
-        file names (they embed the participant DUNS). Listing is how an unfetched product is tracked.
+        ``since`` and ``until`` bound the posting time (a date is midnight ERCOT time). File names and URLs stay in the catalog.
         """
         spec = get_product(product)
         return fetch.list_documents(self._client(spec), spec, self.data_dir, since, until).drop(PRIVATE_COLUMNS)
 
     def probe(self, product: str | int, *, archive_years: float = 7, now: datetime | None = None) -> Probe:
-        """List everything EWS offers for a product, and whether it reaches past the display window (``ews.probe``)."""
+        """Two EWS listings of a product and whether any document predates the display window (``ews.probe``)."""
         spec = get_product(product)
         return ews.probe(self.ews if spec.source == "ews" else None, spec, archive_years=archive_years, now=now)
 
     def fetch(self, product: str | int, since: date | datetime | str | None = None, until: date | datetime | str | None = None, *,
               operating_dates: Iterable[date | str] | None = None, max_gb: float | None = None) -> pl.DataFrame:
-        """Download every listed document that is not archived yet; one row per document (``fetch.fetch``).
+        """One row per listed document not yet archived: fetched, or failed with the error (``fetch.fetch``).
 
-        Each document is committed on its own, so running again resumes an interrupted fetch; a
-        document that fails is reported (``status == "failed"``) and retried on the next run.
-        ``operating_dates`` restricts the fetch to those listing days; ``max_gb`` refuses a larger fetch before downloading.
+        ``operating_dates`` keeps only those listing days; ``max_gb`` refuses a larger fetch before downloading.
         """
         spec = get_product(product)
         return fetch.fetch(self._client(spec), spec, self.data_dir, since, until, operating_dates=operating_dates, max_gb=max_gb)
 
     def ingest(self, path: str | Path, product: str | int | None = None) -> pl.DataFrame:
-        """Adopt ERCOT documents downloaded outside ercot-mis: a zip file, or a folder's top-level zips (``fetch.ingest``)."""
+        """One row per ERCOT document adopted from a zip or a folder's top-level zips (``fetch.ingest``)."""
         return fetch.ingest(self.data_dir, path, product)
 
     # ----------------------------------------------------------------- building
 
     def build_raw(self, product: str | int, *, workers: int | None = None, limit: int | None = None) -> pl.DataFrame:
-        """Parse every archived package of a product into raw Parquet, skipping what is built.
-
-        One file per package and table under ``raw/<table>/emil_id=<EMIL>/``, every row
-        carrying its source identity. See ``ercot_mis.raw.build``. Returns one row per package.
-        """
+        """One row per archived package of a product: built into raw Parquet, skipped as already built, or failed (``raw.build``)."""
         return pl.DataFrame(raw_build.build(self, product, workers=workers, limit=limit), schema=BUILD_SCHEMA)
 
     def build_core(self, *, limit: int | None = None) -> pl.DataFrame:
-        """Write every core table from the raw layer, skipping packages already built.
-
-        ``core/snapshot.parquet`` is rewritten each time. Per network model package, every table
-        in ``ercot_mis.core.build.TABLES``; per disclosure day, ``hourly_award``. Each lands under
-        ``core/<table>/emil_id=<EMIL>/``.
-        """
+        """One row per package: its core tables built, skipped as already built, or failed (``core.build``); ``core/snapshot.parquet`` is rewritten each time."""
         return pl.DataFrame(build_core_tables(self, limit=limit), schema=BUILD_SCHEMA)
 
     # ----------------------------------------------------------------- one model
 
     def snapshot(self, snapshot_id: str) -> dict:
-        """The ``core.snapshot`` row of one model."""
+        """The ``core.snapshot`` row of one model, as a dict."""
         rows = pl.read_parquet(self.data_dir / "core" / "snapshot.parquet").filter(pl.col("snapshot_id") == snapshot_id)
         if rows.is_empty():
             raise KeyError(f"{snapshot_id!r} is not in core.snapshot; run build_core()")
         return rows.row(0, named=True)
 
     def newest(self) -> tuple[str, str]:
-        """The newest monthly CRR model and hour 12 of the newest DAM day, latest revisions: the pair the checks and the viewer default to."""
+        """The newest monthly CRR model and hour 12 of the newest DAM day, latest revisions; the pair the checks and the viewer default to."""
         snaps = self.core("snapshot").collect()
         crr = snaps.filter(pl.col("model_kind") == "crr_monthly").sort("month", "revision")
         dam = snaps.filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision")
@@ -176,7 +161,7 @@ class Session:
         return snaps.sort("hour", "revision").unique(subset=["hour"], keep="last").sort("hour")["snapshot_id"].to_list()
 
     def core_rows(self, table: str, snapshot_id: str) -> pl.DataFrame:
-        """One model's rows of a core table, read from its package's file alone."""
+        """One model's rows of a core table, read from its package's file."""
         snap = self.snapshot(snapshot_id)
         path = self.data_dir / raw_build.artifact_path("core", table, snap["emil_id"], snap["blob_sha256"])
         if not path.is_file():
@@ -184,7 +169,7 @@ class Session:
         return pl.scan_parquet(path).filter(pl.col("snapshot_id") == snapshot_id).collect().with_columns(pl.lit(snap["emil_id"]).alias("emil_id"))
 
     def raw_rows(self, table: str, snapshot_id: str) -> pl.DataFrame:
-        """One model's rows of a raw table: its package's file, narrowed to the DAM hour or the CRR month."""
+        """One model's rows of a raw table: its package's file, narrowed to the model's DAM hour or CRR month."""
         snap = self.snapshot(snapshot_id)
         path = self.data_dir / raw_build.artifact_path("raw", table, snap["emil_id"], snap["blob_sha256"])
         rows = pl.scan_parquet(path) if path.is_file() else self.raw(table).filter(pl.col("blob_sha256") == snap["blob_sha256"]).drop("emil_id")
@@ -198,7 +183,7 @@ class Session:
     # ----------------------------------------------------------------- one CRR model against one DAM hour
 
     def match_branches(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
-        """``core.match_branch``: every CRR branch with the DAM branch it matched and the ``match_method``; unmatched rows kept."""
+        """``core.match_branch``: every CRR branch with its DAM branch and ``match_method``, unmatched rows on both sides included."""
         def compute() -> pl.DataFrame:
             return match.match_branches(self.core_rows("branch", crr_snapshot_id), self.raw_rows("crr_mapping_lines", crr_snapshot_id),
                                         self.raw_rows("crr_mapping_autos", crr_snapshot_id), self.core_rows("branch", dam_snapshot_id))
@@ -206,7 +191,7 @@ class Session:
         return self._pair("match_branch", match.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
 
     def match_buses(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
-        """``core.match_bus``: settlement points first, then the endpoints of matched branches."""
+        """``core.match_bus``: every CRR bus with its DAM bus, matched through settlement points first, then the ends of matched branches."""
         def compute() -> pl.DataFrame:
             return match.match_buses(self.core_rows("bus", crr_snapshot_id), self.core_rows("bus", dam_snapshot_id),
                                      self.core_rows("branch", crr_snapshot_id), self.core_rows("branch", dam_snapshot_id),
@@ -215,7 +200,7 @@ class Session:
         return self._pair("match_bus", match.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
 
     def match_contingencies(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
-        """``core.match_contingency``: by name, then by the translated branch set."""
+        """``core.match_contingency``: every CRR contingency with its DAM contingency, matched by name, then by the translated branch set."""
         def compute() -> pl.DataFrame:
             return match.match_contingencies(self.core_rows("contingency_outage", crr_snapshot_id), self.core_rows("contingency_outage", dam_snapshot_id),
                                              self.match_branches(crr_snapshot_id, dam_snapshot_id))
@@ -223,7 +208,7 @@ class Session:
         return self._pair("match_contingency", match.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
 
     def diff_branches(self, crr_snapshot_id: str, dam_snapshot_id: str, time_of_use: str = "PeakWD") -> pl.DataFrame:
-        """``core.diff_branch``: matched branches' kind, reactance, voltages, service and ratings side by side, with ``same_*`` verdicts."""
+        """``core.diff_branch``: each matched pair's kind, reactance, voltages, service and ratings side by side, with ``same_*`` verdicts."""
         def compute() -> pl.DataFrame:
             crr, dam = crr_snapshot_id, dam_snapshot_id
             return diff.diff_branches(self.match_branches(crr, dam), self.core_rows("branch", crr), self.core_rows("bus", crr), self.core_rows("branch_rating", crr),
@@ -249,10 +234,7 @@ class Session:
         return self._pair("diff_load", diff.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
 
     def _pair(self, table: str, version: int, crr_snapshot_id: str, dam_snapshot_id: str, compute, suffix: str = "") -> pl.DataFrame:
-        """A table about one CRR model and one DAM hour, computed once per session; recomputed when either model's core files or ``version`` change.
-
-        Recomputing a pair costs tens of milliseconds, so nothing is written to disk.
-        """
+        """A table about one CRR model and one DAM hour, computed once per session and again when either model's core files or ``version`` change; nothing is written to disk."""
         packages = [self.snapshot(sid) for sid in (crr_snapshot_id, dam_snapshot_id)]
         files = sorted(f for snap in packages for f in (self.data_dir / "core").glob(f"*/emil_id={snap['emil_id']}/{snap['blob_sha256'][:16]}.parquet"))
         stamp = (version, tuple((str(f.relative_to(self.data_dir)), f.stat().st_mtime_ns, f.stat().st_size) for f in files))
@@ -266,37 +248,33 @@ class Session:
         return cached[1]
 
     def viewer(self, left: str | None = None, right: str | None = None, *, reference_dam: str | None = None) -> Path:
-        """Write the single-file network viewer and return its path.
+        """The path of the single-file network viewer for one snapshot or a pair (default: the newest pair), under ``reports/viewer/``.
 
-        With no arguments: the latest monthly CRR model beside hour 12 of the latest DAM day.
-        Otherwise one snapshot id, or a pair. The page holds CEII and stays inside the data
-        folder (``reports/viewer/``); open it with ``?nohash`` if its address could leave the
-        machine. See ``ercot_mis.viewer``.
+        The page holds CEII; open it with ``?nohash`` when its address could leave the machine.
         """
         if left is None:
             left, right = self.newest()
         return viewer.build(self, left, right, reference_dam=reference_dam)
 
     def network(self, snapshot_id: str, options=None):
-        """One snapshot as a DC model reads it: ``out.network``, assembled from the core tables on every call.
+        """One snapshot's ``Network`` (``out.network``), assembled from its core tables on every call.
 
-        ``options`` is an ``ercot_mis.out.network.Options``: tie contraction and the CRR time-of-use block; every other
-        rule is ERCOT's practice. Assembly takes well under a second; reading a saved copy took longer, so none is kept.
+        ``options`` is an ``out.network.Options``: tie contraction and the CRR time-of-use block; every other rule is ERCOT's practice.
         """
         return out.build_network(snapshot_id, out.core_tables(self, snapshot_id), options or out.Options())
 
     # ----------------------------------------------------------------- reading
 
     def injections(self, day: date) -> pl.DataFrame:
-        """The DAM's net injection per settlement point and hour for one operating day: ``out.injection`` (needs the 60-day disclosure built)."""
+        """The DAM's net injection per settlement point and hour for one operating day (``out.injection``), from the 60-day disclosure."""
         return injection.injections(self, as_date(day))
 
     def raw(self, table: str) -> pl.LazyFrame:
-        """A lazy scan over every raw artifact of a table (``emil_id`` comes from the path)."""
+        """A lazy scan over every file of a raw table; ``emil_id`` comes from the path."""
         return self._scan("raw", table)
 
     def core(self, table: str) -> pl.LazyFrame:
-        """A lazy scan over a core table: ``snapshot`` (one file) or any per-package table."""
+        """A lazy scan over a core table: ``snapshot`` (one file) or a per-package table."""
         return self._scan("core", table)
 
     def _scan(self, layer: str, table: str) -> pl.LazyFrame:
@@ -304,9 +282,7 @@ class Session:
         single = folder.with_suffix(".parquet")
         if single.is_file():
             return pl.scan_parquet(str(single))
-        # CRR and DAM packages carry different identity columns (month vs operating_date).
-        # Union the schema of one file per product so a scan across products fills the
-        # missing columns with nulls instead of failing.
+        # CRR and DAM packages carry different identity columns; the union of one file's schema per product lets one scan span both.
         schema: dict = {}
         for product in sorted(folder.glob("emil_id=*")):
             for file in sorted(product.glob("*.parquet"))[:1]:
@@ -319,12 +295,12 @@ class Session:
     # ----------------------------------------------------------------- recording builds (used by raw.build and core.build)
 
     def start_run(self, command: str) -> str:
-        """Open a ``run`` row in the catalog; returns its id."""
+        """The id of a new ``run`` row in the catalog."""
         with self._writer() as writer:
             return writer.start_run(command)
 
     def record_artifacts(self, run_id: str, layer: str, emil_id: str, blob_sha256: str, identity: str, placed: list) -> None:
-        """Register files a build has moved into place: ``placed`` is ``[(artifact key, Written, path relative to the data folder)]``."""
+        """Register a build's files: ``placed`` is ``[(artifact key, Written, path relative to the data folder)]``."""
         with self._writer() as writer:
             writer.add_artifacts(run_id, layer, emil_id, blob_sha256, identity, placed)
 

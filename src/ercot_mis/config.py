@@ -1,9 +1,8 @@
-"""Where data lives, and who we are to ERCOT.
+"""The data folder, and the participant's identity and secrets.
 
-Neither the DUNS nor the API user ID is a secret the way a password is, but both
-identify the market participant, and the certificate key is an unencrypted
-private key. All of it comes from the environment (or a gitignored ``.env``) and
-none of it is ever written into the repository.
+The DUNS, the API user id, the certificate key and the Public API secrets come from the
+environment, the gitignored ``.env``, or the macOS Keychain. None of them is written into
+the repository or printed.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from pathlib import Path
 
 DATA_ENV = "ERCOT_MIS_DATA"
 
-# Meaningful for a source checkout (the intended install: uv add --editable).
+# The source checkout; the editable install is the intended one.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Relative to the home folder.
@@ -28,12 +27,12 @@ _MAYBE_SYNCED = ("Desktop", "Documents")  # synced when iCloud "Desktop & Docume
 
 
 class ConfigError(RuntimeError):
-    """Configuration is missing or unusable; the message says how to fix it."""
+    """Configuration is missing or unusable; the message says what to set."""
 
 
 @dataclass(frozen=True)
 class Identity:
-    """Credentials for EWS. The identifiers are hidden from repr so they stay out of logs."""
+    """The EWS credentials; the two identifiers are left out of ``repr`` so they stay out of logs."""
 
     duns: str = field(repr=False)
     api_user: str = field(repr=False)
@@ -42,7 +41,7 @@ class Identity:
 
 
 def read_dotenv(path: Path) -> dict[str, str]:
-    """Minimal ``KEY=VALUE`` reader: blank lines, comments and ``export`` are allowed."""
+    """The ``KEY=VALUE`` pairs of a ``.env`` file; blank lines, comments and ``export`` are allowed."""
     if not path.is_file():
         return {}
     values = {}
@@ -57,8 +56,7 @@ def read_dotenv(path: Path) -> dict[str, str]:
 
 KEYCHAIN_SERVICE = "ercot-mis"
 
-# Values that may live in the macOS Keychain instead of the environment or .env:
-#   security add-generic-password -s ercot-mis -a ERCOT_PUBLIC_API_PASSWORD -w
+# Secrets that may live in the macOS Keychain (security add-generic-password -s ercot-mis -a <name> -w).
 SECRET_VARIABLES = (
     "ERCOT_PUBLIC_API_USERNAME",
     "ERCOT_PUBLIC_API_PASSWORD",
@@ -67,7 +65,7 @@ SECRET_VARIABLES = (
 
 
 def keychain_secret(name: str) -> str | None:
-    """A generic password from the macOS Keychain (account ``name``), or None."""
+    """The Keychain password stored under account ``name``, or None."""
     if sys.platform != "darwin":
         return None
     try:
@@ -82,7 +80,7 @@ def keychain_secret(name: str) -> str | None:
 
 
 def load_secret(name: str, env: Mapping[str, str] | None = None, dotenv: Path | None = None) -> str | None:
-    """A secret by name: environment, then ``.env``, then the Keychain. Never logged."""
+    """The secret ``name``: from the environment, else ``.env``, else the Keychain; None when nowhere."""
     dotenv = REPO_ROOT / ".env" if dotenv is None else dotenv
     values = {**read_dotenv(dotenv), **(os.environ if env is None else env)}
     value = values.get(name, "").strip()
@@ -94,17 +92,14 @@ def load_secret(name: str, env: Mapping[str, str] | None = None, dotenv: Path | 
 def secure_permissions(data_dir: Path) -> None:
     """Make the data folder, its top-level entries and the archive's product folders owner-only.
 
-    ``Path.mkdir(mode=...)`` applies the mode to the last component only, and launchd
-    creates the log file with its own mode, so this runs on every ``open()``. Archived
-    documents themselves are already read-only for the owner and are left alone.
+    Runs on every ``open()``: ``mkdir`` sets the mode of the last path component only, and launchd creates the log file with its own mode.
     """
     targets = [data_dir]
     if data_dir.is_dir():
         for entry in data_dir.iterdir():
             targets.append(entry)
             if entry.is_dir():
-                # Product folders under archive/; log and probe files elsewhere. Archived
-                # documents (two levels down) are already 0400.
+                # Archived documents, two levels down, are already read-only and are left alone.
                 targets += [p for p in entry.iterdir() if entry.name != "archive" or p.is_dir()]
     for path in targets:
         try:
@@ -117,7 +112,7 @@ def secure_permissions(data_dir: Path) -> None:
 
 
 def resolve_data_dir(path: str | Path | None = None, env: Mapping[str, str] | None = None) -> Path:
-    """Pick the data folder: explicit path, then ``$ERCOT_MIS_DATA``, then ``data/`` here."""
+    """The data folder: ``path``, else ``$ERCOT_MIS_DATA``, else ``data/`` in this checkout."""
     env = os.environ if env is None else env
     if path is not None:
         chosen = Path(path)
@@ -133,7 +128,7 @@ def resolve_data_dir(path: str | Path | None = None, env: Mapping[str, str] | No
 
 
 def warn_if_synced(path: Path, home: Path | None = None) -> None:
-    """Warn when ``path`` sits in a folder that syncs to a cloud service."""
+    """Warn when ``path`` is inside a folder a cloud service syncs; Secure and ECEII data must stay local."""
     home = Path.home() if home is None else home
     try:
         rel = path.relative_to(home)
@@ -157,7 +152,7 @@ def warn_if_synced(path: Path, home: Path | None = None) -> None:
 
 
 def load_identity(env: Mapping[str, str] | None = None, dotenv: Path | None = None) -> Identity:
-    """Read DUNS, API user and certificate paths; real environment variables beat ``.env``."""
+    """The EWS identity from the environment and ``.env`` (the environment wins); raises ``ConfigError`` with what to set."""
     dotenv = REPO_ROOT / ".env" if dotenv is None else dotenv
     values = {**read_dotenv(dotenv), **(os.environ if env is None else env)}
 

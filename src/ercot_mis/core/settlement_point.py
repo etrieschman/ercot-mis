@@ -1,31 +1,12 @@
-"""``core.settlement_point`` and ``core.settlement_point_bus``: where each settlement
-point sits in the network.
+"""``core.settlement_point`` and ``core.settlement_point_bus``: each settlement point of a snapshot and the buses it is priced on, with weights summing to one.
 
-ERCOT settles prices at settlement points (resource nodes, hubs, load zones); each
-resolves to one or more electrical buses with weights. The CRR model calls those
-buses "price nodes" (its sources and sinks file ships the weights per node); the DAM model
-gives one bus per resource node (``Sp``), the hub buses (``Hb``) and each load's
-zone and distribution factor (``Ld``). This module puts both in one shape:
-
-- ``settlement_point``: one row per settlement point per snapshot with its ``kind``
-  (``resource_node``, ``hub``, ``load_zone``, ``dc_tie``), the model's own type text,
-  how many buses it reaches and how many rows could not be resolved;
-- ``settlement_point_bus``: one row per (settlement point, bus) with ``weight``
-  (normalized to sum to one over the resolved rows), the ``raw_weight`` as the file
-  gave it, the ``source`` file and the PSS/E number it came through (a CRR ``node_number``
-  or a DAM ``bus_number``).
-
-Weights are facts from the files, normalized only so they sum to one: CRR hub and
-zone rows carry MW-scale weights, DAM zone LDFs sometimes sum to one and sometimes
-to the zone's MW. A DAM hub follows Protocols 3.5.2: equal weight per Hub Bus, then
-equal weight per energized power flow bus inside it (the ``Hb`` file names both
-levels and the status). ERCOT's two average hubs (names ending ``AVG``) are derived
-from the four regional hubs: the hub average weighs each hub equally and then as
-above; the bus average weighs every Hub Bus of the four hubs equally. A DAM logical resource node (a
-combined-cycle train) has no bus in ``Sp``: it takes the bus of its combined-cycle settlement point when
-``Sp`` names one, and otherwise its units' resource nodes as the ``Gn`` file lists them. On several buses,
-each in-service unit takes an equal share: ERCOT weighs units by their registered High Reasonability Limit
-(Protocols 4.6.1.4), which no file we pull carries. SP-05.
+Sources: the CRR sources and sinks file (participation factors per node); the DAM ``Sp`` file (one
+bus per resource node), ``Hb`` file (hub buses: equal weight per Hub Bus, then per energized bus
+inside it, Protocols 3.5.2; SP-01), ``Ld`` file (load zones by distribution factor, with rollover;
+SP-02) and ``Gn`` file (a combined-cycle train's units, an equal share per in-service unit where
+Protocols 4.6.1.4 uses unpublished limits; SP-05). ``raw_weight`` is the file's number, ``weight``
+the normalized one, ``node_number`` or ``bus_number`` the PSS/E number the row came through.
+Details: docs/datasets/settlement-point-mappings.md and docs/datasets/dam-network-model.md.
 """
 
 from __future__ import annotations
@@ -60,11 +41,7 @@ def _kind_from_type(type_text: pl.Expr) -> pl.Expr:
 
 
 def _normalized(points: pl.DataFrame, rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """The caller resolved each row's PSS/E number to its bus; here weights are normalized and counts taken.
-
-    ``rows`` has settlement_point_id, bus_key (null when unresolved), raw_weight, source, node_number, bus_number.
-    Rows landing on the same bus (several CRR nodes joined by closed breakers) are merged.
-    """
+    """Weights normalized to sum to one per settlement point over the resolved rows, and the per-point counts; rows on the same bus (CRR nodes one bus joins) are merged."""
     rows = rows.with_columns(pl.col("bus_key").is_not_null().alias("is_resolved"))
     resolved = (rows.filter(pl.col("is_resolved"))
                 .group_by("settlement_point_id", "bus_key", "source")
@@ -118,12 +95,7 @@ def dam_settlement_points(buses: pl.DataFrame, settlement_points: pl.DataFrame, 
 
 
 def _dam_resource_nodes(sp: pl.DataFrame, points: pl.DataFrame, generators: pl.DataFrame) -> pl.DataFrame:
-    """Resource nodes and DC ties with a bus of their own: the ``Sp`` file's bus.
-
-    A logical resource node (a combined-cycle train) takes its combined-cycle point's bus when ``Sp``
-    names one; otherwise its units' resource node buses from ``Gn``, one share per in-service unit
-    (every unit when none is in service). ERCOT weighs units by registered HRL, which is not published (SP-05).
-    """
+    """Resource nodes and DC ties on a bus of their own, from ``Sp``; a combined-cycle train takes its combined-cycle point's bus, else its in-service units' resource node buses from ``Gn`` in equal shares (SP-05)."""
     by_name = sp.select(pl.col("settlement_point_id").alias("_cc"), pl.col("bus_number").alias("_cc_bus"))
     direct = (sp.join(by_name, on="_cc", how="left")
               .with_columns(pl.coalesce(pl.col("bus_number"), pl.col("_cc_bus")).alias("bus_number"))
@@ -145,12 +117,7 @@ def _dam_resource_nodes(sp: pl.DataFrame, points: pl.DataFrame, generators: pl.D
 
 
 def _dam_hubs(hub_buses: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
-    """Hubs (SP-01, Protocols 3.5.2): each Hub Bus weighs the same, and inside one each energized bus weighs the same.
-
-    A bus therefore weighs 1 / (hub buses) / (buses in its Hub Bus); de-energized buses are left out, as
-    ERCOT leaves them out of the price. The two average hubs are derived from the four regional hubs
-    (not Panhandle): the hub average weighs those hubs equally, the bus average every Hub Bus of them equally.
-    """
+    """Hub weights per Protocols 3.5.2 (SP-01): equal per Hub Bus, then equal per energized bus inside it; the two average hubs are built from the four regional hubs (3.5.2.6 and 3.5.2.7)."""
     hb = hub_buses.select(pl.col("hub_name").cast(pl.String).alias("settlement_point_id"), pl.col("hub_bus_name").cast(pl.String).alias("_hub_bus"),
                           pl.col("psse_bus_number").cast(pl.Int64).alias("bus_number"),
                           flag(pl.col("bus_status"), "ENERGIZED").alias("_energized"))
@@ -173,11 +140,7 @@ def _dam_hubs(hub_buses: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
 
 
 def _dam_zones(loads: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
-    """Load zones and DC-tie zones (SP-02): the zone's in-service loads, weighted by their MW distribution factor.
-
-    An out-of-service load the ``Ld`` file marks rollover-capable hands its MW to the target loads it
-    names, by the fractions given, when those targets are in service (the file's own rule).
-    """
+    """Load zone and DC-tie zone weights (SP-02): the zone's in-service loads by MW distribution factor, with an out-of-service rollover-capable load's MW handed to its in-service targets by the file's fractions."""
     zone_names = points.filter(pl.col("kind").is_in(["load_zone", "dc_tie"]))["settlement_point_id"]
     in_service = flag(pl.col("load_status"), "IN")
     zone_loads = loads.filter(pl.col("load_zone_name").is_in(zone_names.implode()))

@@ -1,85 +1,93 @@
 # DAM Network Model (NP4-500-SG)
 
 ## What it is and why we use it
-The network the Day-Ahead Market cleared on: the DAM model `g` in `ftr_align`. One
-PSS/E model per operating hour plus CSVs mapping ERCOT's CIM model onto each RAW
-(substation names, branch names, monitored flags, settlement points, hubs, load
-distribution, contingency definitions).
+
+The network the Day-Ahead Market cleared on. A package holds one PSS/E model per
+operating hour and the CSVs that map ERCOT's CIM model onto each RAW: substation names,
+branch names, monitored flags, settlement points, hub buses, load distribution factors
+and contingency definitions. Each RAW record is a bus.
 
 ## Source and capture
-EWS, ECEII. Report type 13070. Display window 31 days and **no archive beyond it**, so
-every day is captured daily by `scripts/daily_pull.py` (decision: capture every day for
-now). One package per operating day, posted the day before; `scripts/probe.py` reports
-sizes.
+
+EWS, ECEII. Report type 13070. The display window is 31 days and EWS keeps nothing
+older, so `scripts/daily_pull.py` fetches every day. One package per operating day,
+posted the day before.
 
 ## Package layout
-Flat. Per hour `HHH` (`001`-`024`): `DAM<mmddyyyy>_<HHH>.RAW` and
-`DAM<mmddyyyy>_<Kind>_<HHH>.csv` for `Ctg`, `Gn`, `Hb`, `Ld`, `Ln`, `Sp`, `Xf`. Once per
-day: `DAM<mmddyyyy>_SpCtg.csv`, `DAM<mmddyyyy>_SpNb.csv`, `README_DAM<mmddyyyy>.txt`.
+
+Flat. Per hour `HHH` (`001` to `024`; `023` on the short DST day, `025` on the long one,
+where the extra hour is the third): a RAW and CSVs for `Ctg` (contingencies), `Gn`
+(generators), `Hb` (hub buses), `Ld` (loads), `Ln` (lines), `Sp` (settlement points) and
+`Xf` (transformers). Once per day: `SpCtg` (the settlement points a contingency
+disconnects), `SpNb` (non-biddable resource nodes) and a README.
 
 ## What we parse
-`raw/dam.py`: `dam_contingencies`, `dam_generators`, `dam_hub_buses`, `dam_loads`,
+
+`raw/dam.py` writes `dam_contingencies`, `dam_generators`, `dam_hub_buses`, `dam_loads`,
 `dam_lines`, `dam_settlement_points`, `dam_transformers`,
-`dam_settlement_point_contingencies`, `dam_non_biddable_resource_nodes`, plus the
-`psse_*` tables from each RAW. Archived, not parsed: the README.
+`dam_settlement_point_contingencies` and `dam_non_biddable_resource_nodes`, and
+`raw/psse.py` writes the `psse_*` tables from each RAW. The README is archived and not
+parsed.
 
 ## Decisions
-- **Snapshot per hour**: `dam:<date>:he<HH>:r<n>`, because each hour is its own model.
-- **Column names**: ERCOT's long human headers, snake_cased; a few very long or
-  misspelled ones get explicit names (`equipment_type`, `contingency_operation`,
-  `split_bus_*`, `number_of_energized_components`, `load_zone`, `dc_tie`,
-  `resource_node_settlement_point_name`).
-- **No blob dedup; identity by equipment**: no two hourly files are byte-identical,
-  because PSS/E numbers are reassigned to the buses in every hourly model. The equipment maps
-  (generator, load, settlement point and branch name to substation and kV) are identical
-  across hours, so the core layer keys every hour's buses by the equipment attached to
-  them (`bus_key`, see identity-and-matching.md) and every hour's branches by name;
-  raw stays one table per file, and core stays one row per hour with keys that agree
-  across hours rather than a per-day dictionary.
+
+- **One snapshot per hour**, `dam:<date>:he<HH>:r<n>`, because each hour is its own
+  model with its own contingency set.
+- **Column names** are ERCOT's headers in snake case; a few long or misspelt headers get
+  explicit names in the column specs.
+- **Identity by equipment.** PSS/E numbers are reassigned in every hourly model, so no
+  two hourly files are byte-identical and a bus number does not identify a bus across
+  hours. The equipment attached to a bus (generator, load, settlement point and branch
+  names, each resolving to a substation and kV) is the same from hour to hour, so core
+  keys every bus by it (`bus_key`, identity-and-matching.md) and every branch by name.
+  Raw stays one table per file; core stays one row per hour with keys that agree across
+  hours.
 
 ## ERCOT quirks
-- The RAW is the blank-separated dialect with no VSC DC section (see psse-raw.md).
-- The README states: lossless DC power flow; the RAW already incorporates the outage
-  scheduler (a branch with status OUT is either normally open or on outage); bus shunt,
-  load and generator MW/MVAr in the RAW are all zero; it names the MMS-DAM slack bus
-  (the RAW's type-3 bus); a blank or "De-energized" settlement point status means
-  de-energized; 23 or 25 hourly files on DST days, the extra hour being the third.
-- **Contingency files differ by hour** (a few names come and go across a day), so
-  each hour is its own snapshot with its own contingency set.
-- `SpCtg` lists, for all hours, the single-bus settlement points a contingency
-  disconnects: which resource nodes a contingency islands. Parsed
-  (`dam_settlement_point_contingencies`), not yet used by core.
+
+- The RAW is the blank-separated dialect without a VSC DC section (psse-raw.md).
+- The README states that the DAM solves a lossless DC power flow, that the RAW already
+  includes the outage scheduler (a branch with status OUT is normally open or on outage),
+  that bus shunt, load and generator MW and MVAr in the RAW are zero, that the MMS-DAM
+  slack is the RAW's type 3 bus, and that a blank or "De-energized" settlement point
+  status means de-energized.
+- **Contingency files differ by hour**: a few names come and go across a day.
+- `SpCtg` lists, for all hours, the single-bus settlement points each contingency
+  disconnects. `checks/prices.py` compares it with the points our solve leaves without a
+  connected bus (NAM-07).
 - The load CSV header ends with a trailing comma its rows lack.
-- **Logical resource nodes (combined-cycle trains) have no bus in `Sp`**, and no
-  combined-cycle settlement point either, although the column exists. The `Gn` file is
-  where they are placed: every unit of a train names the train's logical resource node and
-  its own resource node and bus, and those agree with `Sp` row for row. Protocols 4.6.1.4
-  weighs each unit by its High Reasonability Limit from Resource Registration, which no file
-  we pull carries. Core gives each in-service unit an equal share (SP-05); on one bus the
-  weights do not matter, and the price check reports both kinds of train apart.
-  A train with no unit listed in an hour is one `Sp` marks de-energized.
-- A split-bus contingency row gives two split-bus columns: the end of the branch that
+- **Logical resource nodes (combined-cycle trains) have no bus in `Sp`** and no
+  combined-cycle settlement point either, although the column exists. The `Gn` file
+  places them: every unit of a train names the train's logical resource node and its own
+  resource node and bus. Protocols 4.6.1.4 weighs the units by their High Reasonability
+  Limit from Resource Registration, which no file we pull carries, so core gives each
+  in-service unit an equal share (SP-05). On one bus the weights do not matter;
+  `checks/prices.py` reports the two cases apart. A train with no unit listed in an hour
+  is one `Sp` marks de-energized.
+- A split-bus contingency row has two split-bus columns: the end of the branch that
   stays holds its bus number, the end that moves to the new bus section holds a note
-  instead of a number (kept as text). `core.contingency_outage.split_end` says which
-  end moves, `out.network` lists the moves per contingency and the DC solver applies
-  them under that contingency (NAM-09).
+  instead of a number (kept as text). `core.contingency_outage.split_end` says which end
+  moves, `out.network` lists the moves per contingency, and `out.shift_factors` applies
+  them when it solves that contingency (NAM-09).
 - Headers have spaces after commas; values are trimmed.
-- **Node numbers change every hour** and are unrelated to CRR numbering; RAW names are
-  substation names (see identity-and-matching.md).
-- **Reactance floor**: no branch has |x| below 0.0005 pu; a sizeable set sits at exactly
-  that value (breakers and short lines the CRR model carries at 0.0001 or less). A few
-  reactances are negative (series capacitors).
-- **Base kV with a tenths digit** (138.1, 345.2) distinguishes buses at one substation; it
+- **Reactance floor**: no branch has |x| below `core.match.DAM_REACTANCE_FLOOR`, and a
+  sizeable set sits at exactly that value (breakers and short lines the CRR model carries
+  at or below its tie reactance). A few reactances are negative (series capacitors).
+- **Base kV with a tenths digit** (138.1, 345.2) tells buses of one substation apart; it
   is not a voltage. Drop the tenths to compare voltage levels.
-- No GTC file: DAM GTC definitions and daily limits come from NP3-770-M and NP3-766-M.
-- `Monitored?` and `Monitored and Secured?` are the CIM `DAM Monitored`/`DAM Secured` flags
-  (defaults FALSE/TRUE); see identity-and-matching.md for the working reading.
+- The package has no GTC file. DAM GTC limits come from NP3-766-M and the member
+  definitions from NP3-770-M (generic-transmission-limits.md).
+- `Monitored?` and `Monitored and Secured?` are the CIM `DAM Monitored` and `DAM Secured`
+  flags (defaults FALSE and TRUE). Secured means enforced; `out.network` limits secured
+  branches (RAT-08).
 
 ## Validation
-`scripts/validate_parsers.py`: every hourly model parses, and in every hour the RAW's
-branch, transformer, load and generator counts equal the `Ln`, `Xf`, `Ld`, `Gn` CSV
-row counts.
+
+`scripts/validate_parsers.py` checks that every hourly model parses and that the RAW's
+branch, transformer, load and generator counts equal the `Ln`, `Xf`, `Ld` and `Gn` row
+counts in every hour.
 
 ## Open questions
-- Hour numbering and timestamps on DST days (verify on 2026-11-01, the long day).
-- Whether `Ld` raw LDFs match NP4-159-CD load distribution factors.
+
+- Whether the `Ld` file's distribution factors match the published load distribution
+  factors (NP4-159-CD) in every hour. `checks/ldf.py` compares one hour at a time (SP-02).

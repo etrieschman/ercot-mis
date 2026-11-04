@@ -45,6 +45,7 @@ def check(session, day: date, hour: int) -> dict:
 
 
 def run(session, day: date, hour: int = 12) -> dict:
+    """The comparison for one hour; writes its report."""
     result = check(session, day, hour)
     write_report(session, "ldf", f"{day}_he{hour:02d}", result)
     return result

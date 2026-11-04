@@ -1,19 +1,13 @@
-"""``core.bus`` and ``core.node``: the points of each model, and the stable key of every bus.
+"""``core.bus`` and ``core.node``: the points of each model, keyed by ``bus_key``.
 
-The vocabulary (docs/datasets/identity-and-matching.md): a **node** is a point of a
-node-breaker model, one RAW record of the CRR model; a **bus** is a point of a bus-branch
-model: one RAW record of the DAM model, or the CRR nodes that closed breakers join into
-one electrical point. ``core.node`` holds the CRR nodes (the DAM model has none);
-``core.bus`` holds the buses of both models.
+A node is a point of a node-breaker model: one RAW record of the CRR model. A bus is a point
+of a bus-branch model: one RAW record of the DAM model, or the CRR nodes that in-service ties
+(breakers and switches at PSS/E's minimum reactance) join into one electrical point.
+``core.node`` holds the CRR nodes; ``core.bus`` holds both models' buses.
 
-Neither PSS/E number nor RAW name identifies a bus across snapshots or across models:
-DAM hourly models renumber their buses, and their RAW names are substation names
-shared by up to sixteen buses; CRR numbers are unrelated to DAM's. What is stable is
-the equipment attached. A **bus key** is derived from the RAW name, the voltage and the
-sorted set of attached equipment names (branches, generators, loads, settlement points),
-so the PSS/E number is a per-snapshot attribute used only for joins within that snapshot.
-CRR nodes joined by in-service ties (closed breakers and switches at PSS/E's minimum
-reactance) form one bus and share its key.
+``bus_key`` is derived from the RAW name, the voltage and the sorted names of the attached
+equipment, because PSS/E numbers change between DAM hours and RAW names are substation names
+shared by many buses (TOP-02, TOP-07, TOP-09, TOP-10). Details: docs/datasets/identity-and-matching.md.
 """
 
 from __future__ import annotations
@@ -79,11 +73,7 @@ def _with_bus_keys(buses: pl.DataFrame, attachments: pl.DataFrame, number: str) 
 
 def dam_buses(bus: pl.DataFrame, lines: pl.DataFrame, transformers: pl.DataFrame, generators: pl.DataFrame,
               loads: pl.DataFrame, settlement_points: pl.DataFrame) -> pl.DataFrame:
-    """``core.bus`` for one DAM hour: one row per RAW record, with its stable ``bus_key``.
-
-    Inputs are the raw tables of one hour (``psse_bus``, ``dam_lines``, ``dam_transformers``,
-    ``dam_generators``, ``dam_loads``, ``dam_settlement_points``).
-    """
+    """``core.bus`` for one DAM hour: one row per ``psse_bus`` record, with its ``bus_key`` from the hour's ``dam_lines``, ``dam_transformers``, ``dam_generators``, ``dam_loads`` and ``dam_settlement_points``."""
     branches = pl.concat([lines.select("psse_from_bus_number", "psse_to_bus_number", "branch_name"),
                           transformers.select("psse_from_bus_number", "psse_to_bus_number", "branch_name")])
     attachments = _attachments([
@@ -126,9 +116,7 @@ def tie_groups(branch: pl.DataFrame) -> pl.DataFrame:
 
 
 def autos_by_key(autos: pl.DataFrame) -> pl.DataFrame:
-    """``Autos`` names keyed by (from_node, to_node, ckt) in both orientations: the sheet
-    lists some transformers with from and to swapped relative to the RAW. ``is_swapped``
-    says which orientation a key came from."""
+    """``Autos`` names keyed by (from_node, to_node, ckt) in both orientations, ``is_swapped`` saying which; the sheet lists some transformers with from and to swapped relative to the RAW (NAM-02)."""
     direct = autos.select(pl.col("from_number").cast(pl.Int64, strict=False).alias("from_node"),
                           pl.col("to_number").cast(pl.Int64, strict=False).alias("to_node"),
                           pl.col("id").str.strip_chars().alias("ckt"), pl.col("crr_name").alias("name"),
@@ -139,14 +127,12 @@ def autos_by_key(autos: pl.DataFrame) -> pl.DataFrame:
 
 def crr_buses(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame, autos: pl.DataFrame,
               sources_sinks: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """``core.node`` and ``core.bus`` for one CRR model: every RAW record as a node, and the buses their closed breakers join them into.
+    """``core.node`` and ``core.bus`` for one CRR model: every ``psse_bus`` record as a node, and the buses in-service ties join them into.
 
-    Inputs are ``psse_bus``, ``psse_branch``, ``psse_transformer``, ``crr_mapping_autos``
-    and ``crr_sources_and_sinks``. Lines are named by their RAW comment, transformers by
-    the ``Autos`` sheet matched on (from, to, ckt), settlement points by the source/sink
-    whose ``BusName`` is "<number> <name>". A bus's ``raw_name`` joins its nodes' names,
-    its ``kv`` is their lowest, and its ``bus_type`` is 3 (swing) when a node is, 4 (isolated)
-    when all are, else the highest member type.
+    Lines are named by their RAW comment, transformers by the ``Autos`` sheet on (from, to, ckt), settlement
+    points by the sources and sinks file. A bus's ``raw_name`` joins its nodes' names, its ``kv`` is their
+    lowest, and its ``bus_type`` is 3 when a node is the swing, 4 when every node is isolated, else the highest
+    member type.
     """
     groups = tie_groups(branch)
     nodes = (bus.select(pl.col("i").alias("node_number"), pl.col("name").map_elements(_norm, return_dtype=pl.String).alias("raw_name"),

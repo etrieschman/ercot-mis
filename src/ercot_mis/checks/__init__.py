@@ -1,12 +1,12 @@
 """Layer 4: the layers tested against what ERCOT published.
 
-Each check reads the archive's own ERCOT reports (prices, binding constraints, awards,
-distribution factors) and compares them with what our network and tables say. A check
+Each check reads ERCOT's own reports from the archive (prices, binding constraints, awards,
+distribution factors) and compares them with what the network and the core tables say. A check
 is a report, never a pass or fail: it writes JSON under ``data/reports/<check>/``.
 
-- ``binding``: the DAM's binding constraints of one hour, resolved onto our network
-- ``prices``: published prices rebuilt from shadow prices and our shift factors
-- ``flows``: the DAM's awards pushed through our network, against ERCOT's flows
+- ``binding``: the DAM's binding constraints of one hour, resolved onto the network
+- ``prices``: published prices rebuilt from shadow prices and shift factors
+- ``flows``: the DAM's awards pushed through the network, against ERCOT's flows
 - ``injections``: whether the awards balance every hour
 - ``ldf``: ERCOT's load distribution factors against the DAM load file
 - ``network``: the DC solve on assembled networks, ties kept and contracted

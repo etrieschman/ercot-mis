@@ -1,13 +1,11 @@
-"""``core.gtc`` and ``core.gtc_member``: generic transmission constraints per snapshot.
+"""``core.gtc`` and ``core.gtc_member``: the generic transmission constraints of a snapshot and their member branches.
 
-A GTC is a base-case constraint on a factor-weighted sum of member branch flows with a
-limit in MW. CRR packages ship them in the Non-Thermal Constraints CSV, one row per
-member; members are named like ``core.branch`` names them (``source = "crr_csv"``).
-DAM packages carry none: the hourly day-ahead limits come from the GTL workbook
-(NP3-766-M, ``source = "gtl_dam"``) under human-readable names, and member definitions
-from NP3-770-M are not parsed. A manual crosswalk in ``data/overrides/gtc_names.csv``
-(``gtl_name,crr_gtc_id``) links a DAM row to the CRR GTC of the same constraint, so
-``out.network`` can borrow the CRR member set; DAM ``core.gtc_member`` stays empty.
+A GTC limits a factor-weighted sum of member branch flows. CRR packages define their GTCs in
+the Non-Thermal Constraints CSV (``source = "crr_csv"``). DAM packages define none: the DAM's
+hourly limits come from the GTL workbook (NP3-766-M, ``source = "gtl_dam"``), the member
+definitions in NP3-770-M are not parsed, and ``data/overrides/gtc_names.csv`` links each GTL
+name to its CRR GTC so ``out.network`` can borrow the CRR members (PRC-04). Details:
+docs/datasets/generic-transmission-limits.md.
 """
 
 from __future__ import annotations
@@ -26,7 +24,7 @@ MEMBER_COLUMNS = ("gtc_id", "branch_id", "factor", "flow_direction", "element_na
 
 
 def crr_gtcs(branches: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """From ``crr_non_thermal_constraints`` (Name, Limit, DeviceName, DeviceType, FlowDirection, Factor)."""
+    """``core.gtc`` and ``core.gtc_member`` for one CRR month from ``crr_non_thermal_constraints``."""
     members = (raw.select(pl.col("name").alias("gtc_id"), pl.col("device_name").alias("branch_id"), "factor",
                           "flow_direction", pl.col("device_name").alias("element_name"), pl.col("limit"))
                .pipe(resolved, branches))

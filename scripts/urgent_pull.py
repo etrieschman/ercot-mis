@@ -1,15 +1,11 @@
-"""Urgent pull: archive the EWS documents a missed pull could lose, and nothing else.
+"""The urgent pull: fetch the EWS documents a missed pull could lose, and nothing else.
 
-Run it when the daily pull's notification says EWS data is at risk:
+Run it when the daily pull's notification says EWS data is at risk. It keeps the Mac awake,
+fetches every EWS product with a display window (the one closest to a loss first), records
+each clean fetch and prints what is still at risk. The next daily pull does the builds and
+the checks. It exits non-zero when a fetch failed or data is still at risk.
 
     uv run python scripts/urgent_pull.py
-
-It keeps the Mac awake while it runs (``caffeinate``), prints what is at risk, fetches
-every EWS product with a display window (the one closest to losing data first), records
-each clean fetch in ``data/logs/ews_captured.json`` and prints what is still at risk.
-No Public API products (their archive keeps years), no builds and no price check: the
-next daily pull does those. ``DAM_OPERATING_DATES`` comes from ``scripts/pull.py``,
-not from a copy in pulls/. It exits non-zero if anything failed or is still urgent.
 """
 
 import os
@@ -22,7 +18,7 @@ from ercot_mis import pull
 
 
 def keep_awake() -> None:
-    """Hold off idle sleep until this process exits."""
+    """Keep the Mac from idle sleep until this process exits."""
     if sys.platform == "darwin":
         subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
 

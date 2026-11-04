@@ -1,4 +1,4 @@
-"""Shared parsing pieces: column specs, casting, and delimited-file reading."""
+"""What every parser shares: the ``Member`` record, column specs, casting, and the readers for delimited files and worksheets."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ I, F, S = pa.int64(), pa.float64(), pa.string()
 
 
 class ParseError(ValueError):
-    """A source file lacks the structure its parser expects. The message says where."""
+    """A source file lacks the structure its parser expects; the message says which file and what differs."""
 
 
 class Column(NamedTuple):
@@ -36,9 +36,8 @@ class Column(NamedTuple):
 class Member:
     """One file of a package: what it is, whether a parser reads it, and the identity columns its rows get.
 
-    ``identity`` holds what the file name says about its rows: CRR ``auction``, ``term``,
-    ``sequence``, ``month``, ``time_of_use``; DAM ``operating_date``, ``hour``; a disclosure
-    day's ``operating_date``. The builder adds the package's own identity (``emil_id``, hashes).
+    ``identity`` is what the file name says about its rows: CRR ``auction``, ``term``, ``sequence``, ``month``,
+    ``time_of_use``; DAM ``operating_date``, ``hour``; a disclosure day's ``operating_date``.
     """
 
     path: str
@@ -55,7 +54,7 @@ def extension(path: str) -> str:
 
 
 def classify_csv(path: str) -> Member | None:
-    """A member whose table is told by its header (price reports, mappings): parsed when it is a CSV; None for folders."""
+    """The member for a file whose header names its table (price reports, mappings): parsed when it is a CSV; None for a folder."""
     if path.endswith("/"):
         return None
     fmt = extension(path)
@@ -69,7 +68,7 @@ def parse_csv(data: bytes, tables: dict[str, Sequence[Column]], label: str) -> d
 
 
 def flag(expr: pl.Expr, prefix: str) -> pl.Expr:
-    """ERCOT's yes/no and status text as a boolean: true when it starts with ``prefix`` (``Y``, ``IN``, ``ENERGIZED``, ``C``, ``TO``), any case."""
+    """ERCOT's yes/no and status text as a boolean: true when it starts with ``prefix`` (``Y``, ``IN``, ``ENERGIZED``, ``C``, ``TO``), in any case."""
     return expr.cast(pl.String).str.to_uppercase().str.starts_with(prefix)
 
 
@@ -82,7 +81,7 @@ def snake_case(header: str) -> str:
 
 
 def cast_column(values: pa.Array | pa.ChunkedArray, type: pa.DataType, label: str):
-    """Cast text to ``type``. Integers written as ``3.0`` are accepted when they are whole."""
+    """``column`` cast to ``type``; an integer written as ``3.0`` is accepted."""
     if type == S:
         return pc.cast(values, S)
     try:
@@ -99,7 +98,7 @@ def cast_column(values: pa.Array | pa.ChunkedArray, type: pa.DataType, label: st
 
 
 def finish_text_table(table: pa.Table, columns: Sequence[Column], label: str) -> pa.Table:
-    """Trim text, turn empty strings into nulls, and cast each column to its spec's type."""
+    """The table with text trimmed, empty strings null, and each column cast to its spec's type."""
     arrays = []
     for column, source in zip(columns, table.columns):
         text = pc.utf8_trim_whitespace(pc.cast(source, S))
@@ -113,13 +112,13 @@ def empty_table(columns: Sequence[Column]) -> pa.Table:
 
 
 def csv_header(data: bytes) -> tuple[str, ...]:
-    """The first line of a CSV as trimmed header names (UTF-8 BOM and CR tolerated)."""
+    """The first line of a CSV as trimmed header names; a byte-order mark and a carriage return are allowed."""
     first = data.removeprefix(b"\xef\xbb\xbf").partition(b"\n")[0].decode("utf-8", "replace")
     return tuple(h.strip() for h in first.rstrip("\r").split(","))
 
 
 def table_for_header(data: bytes, tables: dict[str, Sequence[Column]], label: str) -> str:
-    """Which of ``tables`` a CSV is, by exact header; ``ParseError`` names the header otherwise."""
+    """The one of ``tables`` whose header the CSV carries exactly; ``ParseError`` names the header otherwise."""
     header = csv_header(data)
     for table, columns in tables.items():
         if header == tuple(c.header for c in columns):
@@ -135,10 +134,9 @@ def read_delimited(
     delimiter: str = ",",
     quoting: bool = True,
 ) -> pa.Table:
-    """Read a delimited file whose header must match ``columns`` exactly (after trimming).
+    """The typed table of a delimited file whose header matches ``columns`` exactly after trimming.
 
-    Tolerates a byte-order mark, CRLF line endings, and a trailing delimiter on the
-    header line (ERCOT's DAM load file has one).
+    A byte-order mark, CRLF line endings and a trailing delimiter on the header line (the DAM load file has one) are allowed.
     """
     data = data.removeprefix(b"\xef\xbb\xbf")
     first, _, rest = data.partition(b"\n")
@@ -172,7 +170,7 @@ def read_delimited(
 
 
 def read_sheet(data: bytes, sheet: str, columns: Sequence[Column], label: str) -> pa.Table:
-    """Read one worksheet whose header row must match ``columns`` exactly."""
+    """The typed table of one worksheet whose header row matches ``columns`` exactly."""
     try:
         frame = pl.read_excel(io.BytesIO(data), sheet_name=sheet, infer_schema_length=0)
     except Exception as error:  # fastexcel raises its own types for a missing sheet

@@ -1,14 +1,10 @@
-"""Run the parsers over archived CRR and DAM packages and check the results.
+"""Parse the archived CRR, DAM and GTL packages and print the counts that should agree.
 
-Reads the archive only and writes nothing. Prints counts and check results, never
-values, so the output is safe to share.
-
-Checks:
-  * every member ERCOT ships is recognized (no "unknown" kinds);
-  * PSS/E record counts match the data lines in each section (four per transformer);
-  * DAM: RAW branches, transformers, loads and generators match the hour's CSVs;
-  * GTL: every workbook parses, each delivery day has one row per hour and market
-    for every GTC, and the day-ahead and real-time columns pair up.
+Reads the archive and writes nothing; prints counts, never values. It checks that every
+member ERCOT ships is recognized, that PSS/E record counts match each section's data lines
+(four lines per transformer), that a DAM hour's RAW branches, transformers, loads and
+generators match its CSVs, and that every GTL day has one row per hour and market for
+every GTC.
 
     uv run python scripts/validate_parsers.py              # every CRR and GTL document, latest 2 DAM days
     uv run python scripts/validate_parsers.py --dam-days 32
@@ -119,7 +115,7 @@ def validate_dam(mis, days, problems):
 
 
 def validate_gtl(mis, problems):
-    """NP3-766-M: one document per posting, not a zip; two shapes arrive under one format label."""
+    """Check the GTL documents (NP3-766-M): one workbook per posting, not a zip, in two shapes under one format label."""
     shapes, days, rows = collections.Counter(), set(), 0
     started = time.perf_counter()
     paths = packages(mis, "NP3-766-M")

@@ -1,12 +1,9 @@
-"""The archive: original ERCOT documents, content-addressed and never edited.
+"""The archive: ERCOT's documents as posted, stored once each under their hash and never edited.
 
-A document lives at ``archive/<EMIL ID>/<sha256><suffix>`` inside the data folder.
-The path is derived from the bytes, so identical bytes are stored once, a revised
-document (``_Upd``) is a separate file, and ERCOT's original file name (which
-embeds the participant DUNS) never becomes a path. Files are written to a partial
-folder and moved into place only once complete, then made read-only.
-
-Zips are never unzipped to disk; their members are indexed by hash instead.
+A document lives at ``archive/<EMIL id>/<sha256><suffix>`` in the data folder. Identical bytes
+are stored once, a revision is a separate file, and ERCOT's file name (which embeds the
+participant's DUNS) is never a path. A download lands in a partial folder and moves into place
+when complete, read-only. Zips stay zipped; their members are indexed by hash.
 """
 
 from __future__ import annotations
@@ -28,7 +25,7 @@ class StoredBlob:
     sha256: str
     path: Path  # relative to the data folder
     size_bytes: int
-    created: bool  # False when identical bytes were already archived
+    created: bool  # False when the bytes were already archived
 
 
 @dataclass(frozen=True)
@@ -43,7 +40,7 @@ def blob_path(emil_id: str, sha256: str, suffix: str) -> Path:
 
 
 def put(data_dir: Path, emil_id: str, chunks: Iterable[bytes], suffix: str) -> StoredBlob:
-    """Stream bytes into the archive; nothing appears at the final path until complete."""
+    """The stored blob for ``chunks``; nothing appears at its final path until every chunk is written."""
     partial = data_dir / "archive" / ".partial"
     partial.mkdir(mode=0o700, parents=True, exist_ok=True)
     handle, tmp = tempfile.mkstemp(dir=partial)
@@ -71,12 +68,12 @@ def put(data_dir: Path, emil_id: str, chunks: Iterable[bytes], suffix: str) -> S
 
 
 def discard(data_dir: Path, blob: StoredBlob) -> None:
-    """Remove a blob this run just created and then rejected. Never used on accepted blobs."""
+    """Remove a blob this run created and then rejected (a short download)."""
     (data_dir / blob.path).unlink(missing_ok=True)
 
 
 def index_members(path: Path) -> list[Member]:
-    """Hash every file inside a zip without extracting it; non-zips have no members."""
+    """Every file inside a zip with its hash, read without extracting; a document that is not a zip has none."""
     if not zipfile.is_zipfile(path):
         return []
     members = []

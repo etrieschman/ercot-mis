@@ -1,12 +1,8 @@
-"""The EMIL products ercot-mis knows about.
+"""The ERCOT products the repository knows, one ``Product`` record each.
 
-A product spec declares everything product-specific, so adding a dataset means
-adding a spec, not a pipeline. ``is_fetched`` says whether ``fetch`` downloads a
-product's documents; a product that is not fetched is only listed, so the catalog
-records what ERCOT offers without taking any bytes.
-
-Report type IDs are EWS's numeric handle for a product; they are only listed
-where confirmed from ERCOT's EMIL.
+A product is named by its EMIL id. ``source`` says which API serves it (EWS or the Public API),
+``is_fetched`` whether ``fetch`` downloads its documents or only lists them, ``report_type_id`` the
+EWS handle, and ``display_days`` how long EWS keeps a document. Adding a dataset starts here.
 """
 
 from __future__ import annotations
@@ -46,8 +42,7 @@ PRODUCTS: dict[str, Product] = {
         ),
         Product("NP3-220-SG", "Electrical Bus to Hub List", "Public", "ews", True, 10011, 31),
         Product("NP5-615-SG", "Standard Contingency List", "ECEII", "ews", True, 13006, 31),
-        # GTC definitions and daily limits: the DAM model package (NP4-500-SG) carries no GTC
-        # file; the CRR packages do. Protocols 3.10.7.6 posts both to the MIS Secure Area.
+        # GTC limits and definitions are posted to the MIS Secure Area (Protocols 3.10.7.6); the DAM package carries neither.
         Product("NP3-766-M", "Generic Transmission Limits", "ECEII", "ews", True, 11424, 31),
         Product("NP3-770-M", "Generic Transmission Constraints Methodology", "ECEII", "ews", True, 11425),
         Product("NP6-6-CD", "NSA Active Constraints", "ECEII", "ews", False, 12305),
@@ -57,8 +52,7 @@ PRODUCTS: dict[str, Product] = {
         Product("NP4-190-CD", "DAM Settlement Point Prices", "Public", "public_api", True, 12331),
         Product("NP4-191-CD", "DAM Shadow Prices", "Public", "public_api", True, 12332),
         Product("NP4-159-CD", "Load Distribution Factors", "Public", "public_api", True, 12324),
-        # Tracked from the Public API catalogue (2026-10-01 sweep): known, not pulled yet.
-        # What each is for is in docs/datasets/planning-inputs.md.
+        # Planning-stage inputs: docs/datasets/planning-inputs.md says what each is for.
         Product("NP4-523-CD", "DAM System Lambda", "Public", "public_api", True, 13113),
         Product("NP4-200-CD", "DAM De-Energized Settlement Points in Base Case", "Public", "public_api", True, 13063),
         Product("NP4-158-SG", "DAM Electrically Similar Settlement Points", "Public", "public_api", True, 13058),
@@ -80,7 +74,7 @@ PRODUCTS: dict[str, Product] = {
 
 
 def get_product(key: str | int) -> Product:
-    """Look a product up by EMIL ID (any case) or by EWS report type ID."""
+    """The product with this EMIL id (any case) or EWS report type id."""
     if isinstance(key, int) or (isinstance(key, str) and key.isdigit()):
         for product in PRODUCTS.values():
             if product.report_type_id == int(key):

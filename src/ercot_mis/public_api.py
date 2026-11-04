@@ -1,18 +1,10 @@
-"""ERCOT's Public API: the archive of public reports, as files.
+"""ERCOT's Public API: the archive of posted documents for products classified Public.
 
-The Public API (``api.ercot.com``) serves two things per product: JSON rows, and an
-archive of the documents ERCOT posted. ercot-mis takes the archive only, so a public
-product arrives the same way an EWS one does: original bytes, content-addressed.
-Unlike EWS it keeps history past the MIS display window.
-
-Access needs three values (``load_secret``: environment, ``.env``, then the Keychain):
-the account's user name and password, traded for an ID token that lasts an hour, and
-the subscription key sent with every call. None of them ever reaches a log or an
-error message.
-
-The archive listing gives a document ID, a posting time and a download link; it gives
-no size, report group or operating date, so those stay empty in the catalog and the
-size check on download is skipped.
+The repository takes the archive, not the API's JSON rows, so a public product arrives as
+the original bytes, like an EWS one, and the archive keeps years of history. Access needs
+the account's user name and password (traded for an ID token) and a subscription key; all
+three come from ``load_secret`` and never reach a log. A listing gives a document id, a
+posting time and a link, and no size, report group or operating date.
 """
 
 from __future__ import annotations
@@ -29,7 +21,7 @@ from .ews import CHUNK, RemoteDoc, retrying
 from .products import Product
 
 TOKEN_URL = "https://ercotb2c.b2clogin.com/ercotb2c.onmicrosoft.com/B2C_1_PUBAPI-ROPC-FLOW/oauth2/v2.0/token"
-# The public client of ERCOT's B2C tenant, from the Public API user guide; not a secret.
+# The public client id of ERCOT's B2C tenant, from the Public API user guide; not a secret.
 CLIENT_ID = "fec253ea-0d06-4272-a5e6-b478baeecd70"
 ARCHIVE_URL = "https://api.ercot.com/api/public-reports/archive"
 
@@ -39,15 +31,15 @@ MIN_INTERVAL = 2.1  # seconds between calls: the API allows 30 a minute
 
 
 class PublicApiError(RuntimeError):
-    """The Public API refused a call; the message carries a status, never a credential."""
+    """The Public API refused a call; the message carries the HTTP status, never a credential."""
 
 
 class _Transient(PublicApiError):
-    """Throttled (429) or a gateway error (5xx): worth another attempt."""
+    """Throttled (HTTP 429) or a gateway error (5xx); retried."""
 
 
 class PublicApiClient:
-    """Lists and downloads archived documents of public products."""
+    """Lists and downloads the archived documents of a public product, paced to the API's rate limit."""
 
     def __init__(self, username: str, password: str, subscription_key: str, *, timeout: float = 300,
                  session: requests.Session | None = None, clock: Callable[[], float] = time.monotonic,
@@ -75,7 +67,7 @@ class PublicApiClient:
     # ------------------------------------------------------------------ the Source interface
 
     def list_documents(self, product: Product, start: datetime | None = None, end: datetime | None = None) -> list[RemoteDoc]:
-        """Every archived document of a product posted within the window, oldest first."""
+        """Every archived document of ``product`` posted within ``start`` and ``end``, oldest first."""
         params = {"size": PAGE_SIZE}
         if start is not None:
             params["postDatetimeFrom"] = _local(start)
@@ -91,21 +83,21 @@ class PublicApiClient:
         return sorted(docs, key=lambda d: (d.posted_at is None, d.posted_at, d.doc_id))
 
     def download(self, url: str) -> Iterator[bytes]:
-        """Stream one archived document."""
+        """The bytes of one archived document, in chunks."""
         with self._get(url, None, stream=True) as response:
             yield from response.iter_content(CHUNK)
 
     # ------------------------------------------------------------------ transport
 
     def token(self) -> str:
-        """A valid ID token: the one in hand while it lasts, else a new one."""
+        """An ID token that is still valid: the one in hand, else a new one from the token endpoint."""
         now = datetime.now(timezone.utc)
         if self._token is None or self._token_at is None or now - self._token_at > TOKEN_LIFETIME:
             response = self.session.post(TOKEN_URL, timeout=self.timeout, data={
                 "grant_type": "password", "username": self._username, "password": self._password,
                 "response_type": "id_token", "scope": f"openid {CLIENT_ID} offline_access", "client_id": CLIENT_ID})
             if response.status_code != 200:
-                # The body can echo the user name, so only the status is reported.
+                # The reply body can echo the user name; only the status is reported.
                 raise PublicApiError(f"HTTP {response.status_code} from the token endpoint; check the Public API user name and password")
             self._token, self._token_at = response.json()["id_token"], now
         return self._token
@@ -119,7 +111,7 @@ class PublicApiClient:
             response = self.session.get(url, params=params, stream=stream, timeout=self.timeout, headers={
                 "Authorization": f"Bearer {self.token()}", "Ocp-Apim-Subscription-Key": self._key})
             if response.status_code == 401 and not fresh:
-                self._token = None  # expired early; ask once more with a new one
+                self._token = None  # the token expired early; one more try with a new one
                 continue
             break
         if response.status_code == 429 or response.status_code >= 500:
@@ -136,7 +128,7 @@ class PublicApiClient:
 
 
 def parse_archive(body: dict, emil_id: str) -> list[RemoteDoc]:
-    """One page of an archive listing as documents."""
+    """The documents of one page of an archive listing."""
     docs = []
     for item in body.get("archives") or []:
         name = item.get("friendlyName") or ""
@@ -148,7 +140,7 @@ def parse_archive(body: dict, emil_id: str) -> list[RemoteDoc]:
 
 
 def _local(t: datetime) -> str:
-    """A bound as the API reads it: ERCOT local time without an offset."""
+    """A time bound as the API reads it: ERCOT local time without an offset."""
     if t.tzinfo is None:
         raise ValueError("Public API time bounds must be timezone-aware datetimes")
     return t.astimezone(TZ).strftime("%Y-%m-%dT%H:%M:%S")

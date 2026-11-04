@@ -1,10 +1,9 @@
-"""What a snapshot's core tables carry and what they lack: counts, nothing else.
+"""What a snapshot's core tables carry and lack, as counts.
 
-The viewer shows these beside each model and ``checks/identity.py`` records
-them, so a sparse table is seen as a fact about the source rather than mistaken for a
-bug. Every value is a count; a key says what is counted. The DAM RAW gives every load
-0 MW (the DAM distributes load through its distribution factors), so ``loads_with_mw``
-is a property of the model, not of the parser.
+The viewer shows them beside each model and ``checks/identity.py`` records them, so a sparse
+table reads as a fact about the source. Every value is a count and its key says what is
+counted. The DAM RAW gives every load zero MW (the DAM places load through distribution
+factors), so ``loads_with_mw`` describes the model, not the parser.
 """
 
 from __future__ import annotations

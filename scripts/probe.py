@@ -1,8 +1,7 @@
-"""Probe how far back ERCOT's EWS archive goes for every EWS product.
+"""List every EWS product twice to learn how far back EWS keeps it; downloads nothing.
 
-Lists documents only; downloads nothing. Writes each product's full listing and a
-summary to ``data/probes/<date>/``, and prints the summary. File names are not
-printed because ERCOT embeds the participant DUNS in them.
+Writes each listing and a summary to ``data/probes/<date>/`` and prints the summary without
+file names, which embed the participant's DUNS.
 
     uv run python scripts/probe.py
 """

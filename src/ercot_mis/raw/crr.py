@@ -1,21 +1,14 @@
-"""CRR network model packages (NP7-801-M annual, NP7-800-M monthly).
+"""CRR network model packages (NP7-801-M annual, NP7-800-M monthly) as the ``crr_*`` and ``psse_*`` tables.
 
-Annual packages hold one folder per month (``2029.1st6.AnnualAuction.Seq6.JAN/...``)
-plus package-level mapping workbooks, one-lines and dynamic ratings. Monthly packages
-are flat (``2026.OCT.Monthly.Auction.Contingencies.CSV``). Both carry the same files:
-a PSS/E RAW per month, CSV and XML twins of contingencies, monitored elements,
-non-thermal constraints (GTCs) and sources/sinks, and a mapping workbook.
-
-The CSVs are canonical: checked against the XML twins, they carry the same values
-(the XML spells device types ``Line``/``Transformer`` where the contingency CSV says
-``LINE``/``XFMR``), so the XML is archived but not parsed.
+A package holds, per month, a PSS/E RAW, CSVs of contingencies, monitored elements, generic
+transmission constraints, sources and sinks and outages, and a mapping workbook. The CSVs
+carry the same values as their XML twins, so the XML is archived and not parsed
+(docs/datasets/crr-network-model.md).
 """
 
 from __future__ import annotations
 
-# Bump when the tables this parser produces change (columns, types, values). The raw
-# layer's cache key includes it, so every artifact built with an older version is rebuilt.
-VERSION = 1
+VERSION = 1  # bump when the tables change; every artifact built with an older version is rebuilt
 
 import re
 from datetime import date
@@ -33,7 +26,7 @@ _MONTHLY = re.compile(r"(\d{4})\.([A-Z]{3})\.Monthly\.Auction\.", re.IGNORECASE)
 _MEMBER_MONTH = re.compile(r"_([A-Z]{3})_(\d{4})(?=[._])", re.IGNORECASE)
 _TOU = re.compile(r"_(PeakWD|PeakWE|Off-?peak)(?=[._])", re.IGNORECASE)
 
-# File-name token -> kind. Order matters: the first token found wins.
+# File-name token to kind; the first token found wins.
 _KINDS = (
     ("NetworkModel", "network_model"),
     ("MonitoredLinesAndTransformers", "monitored_lines_and_transformers"),
@@ -59,7 +52,7 @@ NON_THERMAL_CONSTRAINTS = (
     Column("FlowDirection"), Column("Factor", F),
 )
 SOURCES_AND_SINKS = (Column("Name"), Column("PriceNode"), Column("BusName"), Column("ParticipationFactor", F))
-# Bus-number cells in the mapping workbooks are not all numeric, so they stay text here.
+# Number cells in the mapping workbook are not all numeric, so they stay text.
 MAPPING_LINES = (
     Column("CRR_Tag"), Column("Operations_Name"), Column("OP_EQCODE"), Column("LNNAME"),
     Column("EQNAME"), Column("From #"), Column("From Name"), Column("To #"),
@@ -79,7 +72,7 @@ OUTAGES = tuple(Column(h) for h in (
     "LATEST_END_DATE", "NATURE_OF_WORK", "OUTAGE_GROUP_LABEL", "TYPE",
 ))
 
-# (kind, format) pairs that have a parser. Everything else is archived only.
+# The (kind, format) pairs with a parser; every other member is archived only.
 PARSED = {
     ("network_model", "raw"), ("contingencies", "csv"), ("monitored_lines_and_transformers", "csv"),
     ("non_thermal_constraints", "csv"), ("sources_and_sinks", "csv"), ("mapping_document", "xlsx"),
@@ -88,7 +81,7 @@ PARSED = {
 
 
 def classify_member(path: str) -> Member | None:
-    """Describe a zip member of a CRR package from its path; None for folders."""
+    """The member for a zip entry of a CRR package, from its path; None for a folder."""
     if path.endswith("/"):
         return None
     file = path.rsplit("/", 1)[-1]
@@ -109,7 +102,7 @@ def classify_member(path: str) -> Member | None:
 
 
 def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
-    """Parse one member into raw tables; members without a parser return no tables."""
+    """The raw tables of one member; none for a member without a parser."""
     label = f"CRR {member.kind}.{member.format}"
     match (member.kind, member.format):
         case ("network_model", "raw"):
@@ -128,7 +121,7 @@ def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
                 "crr_mapping_autos": read_sheet(data, "Autos", MAPPING_AUTOS, label),
             }
         case ("outages", "txt"):
-            # Monthly outage files are pipe-delimited; annual "_None" files are a comma header only.
+            # A monthly outage file is pipe-delimited; an annual one is a comma-separated header alone.
             delimiter = "|" if b"|" in data.partition(b"\n")[0] else ","
             return {"crr_outages": read_delimited(data, OUTAGES, label, delimiter=delimiter, quoting=False)}
     return {}

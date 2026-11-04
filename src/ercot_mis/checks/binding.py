@@ -119,11 +119,7 @@ def resolve(session, snapshot_id: str, net: Network, system: DcSystem, shadow: p
 
 
 def row_direction(substation: dict, kv: dict, f: int, t: int, from_station: str, to_station: str, from_kv: float, to_kv: float) -> float | None:
-    """+1 when a binding row's from-to runs with branch ``f``-``t``, -1 against it, None when its ends are not recognized.
-
-    A row names its ends by substation. Inside one substation the voltages tell them apart, to the tenth:
-    ERCOT uses the tenths digit of the base kV to tell bus sections of one level apart.
-    """
+    """+1 when a binding row reads the branch from ``f`` to ``t``, -1 against it, None when its ends are not recognized; a row names its ends by substation and base kV, whose tenths digit tells bus sections of one level apart (PRC-02)."""
     if substation[f] != substation[t]:
         ends = (substation[f], substation[t])
         return 1.0 if ends == (from_station, to_station) else -1.0 if ends == (to_station, from_station) else None
@@ -134,13 +130,7 @@ def row_direction(substation: dict, kv: dict, f: int, t: int, from_station: str,
 
 
 def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[list[tuple[int, float]], int]]:
-    """GTCs as signed DAM branch sets, borrowed from the CRR model of the same month (PRC-04).
-
-    The DAM package carries no GTC members; the CRR package does, under the codes the shadow
-    price file uses. Each member is translated through ``core.match_branch``, and its factor
-    re-signed when the DAM branch runs the other way (ends translated through ``core.match_bus``).
-    Returns ``{gtc code: ([(branch index, factor)], members lost)}``.
-    """
+    """``{gtc code: ([(branch index, factor)], members lost)}``: each GTC's members as signed DAM branches, borrowed from the CRR model of the same month through ``core.match_branch`` and re-signed through ``core.match_bus`` (PRC-04)."""
     day = snapshot_id.split(":")[1]
     crr_ids = session.core("snapshot").filter(pl.col("snapshot_id").str.starts_with(f"crr:monthly:{day[:7]}:")).sort("revision").collect()["snapshot_id"]
     if crr_ids.is_empty():

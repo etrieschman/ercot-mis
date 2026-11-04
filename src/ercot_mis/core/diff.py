@@ -1,26 +1,12 @@
-"""``core.diff_branch``, ``core.diff_settlement_point`` and ``core.diff_load``: how the two models' descriptions
-of one element differ.
+"""``core.diff_branch``, ``core.diff_settlement_point`` and ``core.diff_load``: the two models' descriptions of one element, side by side.
 
-``core.match_*`` records identity; this module records the differences between the
-two descriptions of one element, side by side and never smoothed over. One row per
-matched pair (``match_method`` carried along) with, for each side, the kind, the
-reactance, the voltage levels at the ends, the in-service flag and the ratings the
-model enforces, plus ``same_*`` verdicts:
-
-- ``same_reactance``: both magnitudes raised to the DAM floor and compared within the
-  matcher's tolerance (``core.match.reactance_agrees``);
-- ``same_kv``: the endpoints' voltage levels with the tenths digit dropped (both RAWs
-  use it to tell buses of one substation apart);
-- ``same_kind``: line versus transformer.
-
-CRR ratings are the monitored-element CSV block for one time of use (null where the
-CRR does not monitor the branch); DAM ratings are the RAW rate A and B.
-
-``diff_settlement_point`` compares, per settlement point name (identical in both
-models), the bus sets the two models put it on: the CRR buses are translated to DAM
-bus keys through ``core.match_bus`` and compared with the DAM buses, with the
-weight they share. ``same_buses`` is true when the translated CRR set equals the DAM
-set; ``n_crr_buses_unmatched`` says how much of the CRR side could not be translated.
+``core.match_*`` records identity; these tables record differences and never smooth them over.
+``diff_branch``: per matched pair, each side's kind, reactance, end voltages, service flag and
+enforced ratings, with ``same_kind``, ``same_reactance`` (``core.match.reactance_agrees``) and
+``same_kv`` (the tenths digit dropped). ``diff_settlement_point``: per settlement point in both
+models, the bus sets each model puts it on, the CRR side translated through ``core.match_bus``.
+``diff_load``: per matched pair of buses, each model's loads there. Details:
+docs/datasets/identity-and-matching.md.
 """
 
 from __future__ import annotations
@@ -104,15 +90,7 @@ LOAD_COLUMNS = ("crr_bus_key", "dam_bus_key", "match_method", "n_crr_loads", "n_
 
 
 def diff_loads(crr_loads: pl.DataFrame, dam_loads: pl.DataFrame, bus_matches: pl.DataFrame) -> pl.DataFrame:
-    """One row per bus that carries a load in either model (``core.load`` rows), the two sides next to each other.
-
-    The models share no load name (the CRR RAW names only the node), so loads are compared
-    where they sit: per pair of matched buses, how many loads each model has there, how
-    many are in service and their MW; for the DAM also the distribution factor in and out
-    of service and how many loads can roll over. A bus with loads that has no match keeps
-    its row with the other side null. Nothing is reconciled: a load in service on one
-    side only is what this table is for.
-    """
+    """One row per bus that carries a load in either model, the two sides next to each other through ``core.match_bus``; a bus with no match keeps its row with the other side null."""
     crr = crr_loads.group_by(pl.col("bus_key").alias("crr_bus_key")).agg(
         pl.len().cast(pl.UInt32).alias("n_crr_loads"), pl.col("is_in_service").sum().cast(pl.UInt32).alias("n_crr_in_service"),
         pl.col("mw").filter(pl.col("is_in_service")).sum().alias("crr_mw_in_service"), pl.col("mw").filter(~pl.col("is_in_service")).sum().alias("crr_mw_out_of_service"))

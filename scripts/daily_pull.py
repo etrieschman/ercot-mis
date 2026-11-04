@@ -1,32 +1,15 @@
-"""Daily pull: archive every EWS document before it rolls off, the public reports, build the layers, check prices and flows.
+"""The daily pull: fetch every product, build the raw and core layers, run the price and flow checks.
 
-EWS keeps nothing older than each product's display window (31 days for DAM network
-models, 365 for CRR models), so run this every day. It fetches pulled products, lists
-tracked EWS ones so their availability is recorded, then parses every new package into
-the raw layer and rebuilds core for it (packages already built are skipped by their
-cache key), then runs the price check on the newest days and the flow check on the newest
-day with both awards and a model (the disclosure's 60-day lag decides which). It exits non-zero
-if anything failed; failed documents and packages are retried on the next run.
+EWS keeps a document only for its product's display window, so this runs every day
+(launchd, ``scripts/launchd/``). A failed document or package is retried by the next run.
+The run does not keep the Mac awake; it writes its level to ``data/logs/last_run.json`` and
+sends a notification when the level is not ``ok``:
 
-The run does not keep the Mac awake. A missed or stalled pull is flagged instead, and
-the flag turns urgent only when EWS data could actually be lost:
-
-- missed: no run finished for a day and a half, the machine slept during the run
-  (wall time minus awake time), or something failed. A quiet notification.
-- urgent: some EWS product is within ``URGENT_DAYS`` of losing data. Either a document
-  ERCOT offers is not archived and its window is closing, or the product has not been
-  fetched cleanly for so long that documents posted since then are about to roll off.
-  The last clean fetch per product is kept in ``data/logs/ews_captured.json`` (``ercot_mis.pull``). The
-  notification's text is the command to run, ready to paste from Notification Center:
-  ``cd <repository> && uv run python scripts/urgent_pull.py``.
-  The check runs before the fetch too, so a run that then stalls still warns.
-
-The flags, the level and the days until the first possible loss go to
-``data/logs/last_run.json``. The Public API keeps years, so a gap there heals itself:
-every run looks back a month.
+- ``missed``: no run finished for ``MISSED_AFTER_HOURS``, the Mac slept during the run, or a step failed;
+- ``urgent``: an EWS product is within ``URGENT_DAYS`` of losing a document (``ercot_mis.pull.at_risk``);
+  the notification's text is the command to run, ``scripts/urgent_pull.py``.
 
 To capture only some DAM days, set ``DAM_OPERATING_DATES`` in ``ercot_mis/pull.py``.
-Schedule it with launchd: see scripts/launchd/.
 
     uv run python scripts/daily_pull.py
 """
@@ -52,7 +35,7 @@ FLOW_CHECK_DAYS = 1
 # No finished run for this long is a missed pull.
 MISSED_AFTER_HOURS = 36
 
-# Sleeping longer than this during a run is flagged: the run stalled with the network down.
+# Sleeping longer than this during a run is flagged.
 SLEPT_FLAG_MINUTES = 10
 
 # The fix an urgent notification names, runnable from any folder.
@@ -60,11 +43,7 @@ URGENT_COMMAND = f"cd {shlex.quote(str(Path(__file__).resolve().parents[1]))} &&
 
 
 def notify(title: str, text: str, subtitle: str | None = None) -> None:
-    """A macOS notification, so a failed run does not hide in a log file.
-
-    It stays in Notification Center; to keep it on screen until dismissed, set Script
-    Editor's notifications to Persistent (Alerts) in System Settings.
-    """
+    """Post a macOS notification; it stays in Notification Center (Script Editor's notifications set to Alerts keep it on screen)."""
     if sys.platform != "darwin":
         return
     script = f'display notification "{text}" with title "{title}"' + (f' subtitle "{subtitle}"' if subtitle else "")
@@ -76,7 +55,7 @@ def alert_urgent(risk: dict) -> None:
 
 
 def run_checks(mis: em.Session) -> int:
-    """The price check on the newest days with prices, the flow check on the newest day with awards; one log line per day."""
+    """Run the price check on the newest days with prices and the flow check on the newest day with awards, one log line each; the number of failures."""
     failed = 0
     for module, available, days in ((prices, prices.days_with_prices(mis), PRICE_CHECK_DAYS), (flows, flows.days_with_flows(mis), FLOW_CHECK_DAYS)):
         for day in available[-days:]:
@@ -91,7 +70,7 @@ def run_checks(mis: em.Session) -> int:
 
 def main() -> int:
     started = datetime.now(timezone.utc)
-    wall, awake = time.time(), time.monotonic()  # monotonic stops while the Mac sleeps
+    wall, awake = time.time(), time.monotonic()  # the monotonic clock stops while the Mac sleeps
     print(f"daily pull {started:%Y-%m-%d %H:%M} UTC", flush=True)
     failed, flags, risk, previous = 0, [], {}, {}
     with em.open() as mis:
@@ -107,7 +86,7 @@ def main() -> int:
         urgent_at_start = pull.is_urgent(risk)
         print(f"  before the fetch: {pull.risk_line(risk)}", flush=True)
         if urgent_at_start:
-            alert_urgent(risk)  # now, in case this run stalls too
+            alert_urgent(risk)  # before the fetch, in case this run stalls
         try:
             failed += pull.fetch_products(mis, em.PRODUCTS.values(), captured)
             pull.save_captured(mis, captured)
@@ -119,7 +98,7 @@ def main() -> int:
                 print(f"  at risk: FAILED {type(error).__name__}: {error}", flush=True)
             failed += pull.build_layers(mis)
             failed += run_checks(mis)
-        finally:  # the status file and the notification happen whatever broke above
+        finally:  # the status file and the notification are written whatever failed above
             slept = ((time.time() - wall) - (time.monotonic() - awake)) / 60
             if slept > SLEPT_FLAG_MINUTES:
                 flags.append(f"asleep {slept:.0f} min during the run")

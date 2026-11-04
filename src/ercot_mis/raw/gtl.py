@@ -1,14 +1,9 @@
-"""Generic Transmission Limits (NP3-766-M): one document per operating day.
+"""Generic transmission limits (NP3-766-M) as the ``gtl_hourly`` table: one workbook per operating day.
 
-ERCOT posts two document shapes under this product, both listed with an ``xls``
-format. The daily GTL workbook is really an xlsx: one sheet, ``Results``, one row
-per hour, a ``Time`` column and then two columns per GTC: the real-time limit under
-the GTC's name and the day-ahead limit under ``<name>\\nDAM``. The other shape is a
-genuine xls with a ``DC Limits`` sheet (CENACE DC tie limits); it is archived and
-not parsed here.
-
-The whole document is one member (there is no zip), so identity comes from the
-catalog's listing (``operating_date``), not from a member name.
+The workbook is an xlsx with one sheet, one row per hour and two columns per GTC: the real-time
+limit under the GTC's name and the day-ahead limit under the name plus ``DAM``. ERCOT posts a
+second shape under the same product, an xls of DC tie limits, which is archived and not parsed.
+The document is not a zip, so its day comes from the listing (docs/datasets/generic-transmission-limits.md).
 """
 
 from __future__ import annotations
@@ -29,7 +24,7 @@ _SHEET = "Results"
 
 
 def classify_document(path: str, data: bytes, operating_date: date | None = None) -> Member:
-    """The shape is in the bytes: the GTL workbook is a zip (xlsx), the DC-tie file is not. The listing's day is the rows' identity."""
+    """The member for the whole document: the GTL workbook (an xlsx, which is a zip) or the DC tie file (an xls), told apart by the bytes."""
     identity = {"operating_date": operating_date}
     if zipfile.is_zipfile(io.BytesIO(data)):
         return Member(path, "gtl_hourly", "xlsx", True, identity)
@@ -43,12 +38,7 @@ def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
 
 
 def parse_gtl(data: bytes, label: str = "GTL") -> pa.Table:
-    """Long table ``gtl_hourly``: (interval_start, interval_start_utc, delivery_date, hour_ending, gtc_name, market, limit_mw).
-
-    ``interval_start`` is the workbook's naive local timestamp and ``hour_ending`` its clock
-    hour plus one; ``interval_start_utc`` is the instant (``clock.local_timestamps_expr``),
-    which is what core joins on.
-    """
+    """The ``gtl_hourly`` table: one row per hour, GTC and market, with the workbook's naive local timestamp and its UTC instant (``clock.local_timestamps_expr``)."""
     try:
         frame = pl.read_excel(io.BytesIO(data), sheet_name=_SHEET, infer_schema_length=0)
     except Exception as error:

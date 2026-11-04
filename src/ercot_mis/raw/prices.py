@@ -1,26 +1,11 @@
-"""DAM prices and pricing inputs from the Public API archive.
+"""DAM prices and pricing inputs from the Public API archive, one table per product.
 
-Each archived document is a zip holding one CSV (one delivery date, all hours, except
-where noted). The products share the shape and differ in columns, so the header picks
-the table:
-
-- ``dam_shadow_prices`` (NP4-191-CD): one row per binding constraint and hour, with the
-  constraint's and the contingency's names, limit, flow, violation and shadow price;
-- ``dam_lmps`` (NP4-183-CD): one row per electrical bus and hour;
-- ``dam_settlement_point_prices`` (NP4-190-CD): one row per settlement point and hour;
-- ``dam_system_lambda`` (NP4-523-CD): the system price, one row per hour;
-- ``dam_deenergized_settlement_points`` (NP4-200-CD): settlement points with no
-  connection in the DAM base case, per hour;
-- ``dam_electrically_similar_settlement_points`` (NP4-158-SG): settlement points ERCOT
-  treats as one electrical location, per hour, grouped by ``group_index``;
-- ``heuristic_pricing_associations`` (NP4-231-CD): the electrical bus whose price a
-  de-energized bus takes, by priority, for DAM and RTM; no date in the rows (the
-  listing's posting time dates the document);
-- ``load_distribution_factors`` (NP4-159-CD): each load's share of its zone per hour,
-  posted for a period of weeks at a time (a large file).
-
-Raw keeps ERCOT's text for ``delivery_date`` (``MM/DD/YYYY``) and ``hour_ending``
-(``HH:00``, ``24:00`` for the last hour) and the ``dst_flag``; numbers are cast.
+Each document is a zip with one CSV, and the header picks the table: ``dam_shadow_prices``
+(NP4-191-CD), ``dam_lmps`` (NP4-183-CD), ``dam_settlement_point_prices`` (NP4-190-CD),
+``dam_system_lambda`` (NP4-523-CD), ``dam_deenergized_settlement_points`` (NP4-200-CD),
+``dam_electrically_similar_settlement_points`` (NP4-158-SG), ``heuristic_pricing_associations``
+(NP4-231-CD) and ``load_distribution_factors`` (NP4-159-CD). ERCOT's ``delivery_date``,
+``hour_ending`` and ``dst_flag`` stay text; numbers are cast (docs/datasets/dam-prices.md).
 """
 
 from __future__ import annotations
@@ -30,7 +15,7 @@ import pyarrow as pa
 
 from .table import Column, F, I, Member, classify_csv, parse_csv
 
-VERSION = 2  # 2: the always-null operating_date and hour identity columns are gone
+VERSION = 2
 
 _TIME = (Column("DeliveryDate"), Column("HourEnding"))
 _DST = Column("DSTFlag", name="dst_flag")

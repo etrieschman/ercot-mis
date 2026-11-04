@@ -1,1 +1,1 @@
-"""The core layer: tidy keyed tables shared by CRR and DAM (snapshot, bus, node, branch, ...)."""
+"""The core layer: tidy tables keyed by ``snapshot_id`` and shared by CRR and DAM (``bus``, ``node``, ``branch``, ``branch_rating``, ``contingency``, ``contingency_outage``, ``gtc``, ``gtc_member``, ``settlement_point``, ``settlement_point_bus``, ``load``, ``hourly_award``)."""

@@ -1,22 +1,15 @@
-"""DAM network model packages (NP4-500-SG): one operating day, one model per hour.
+"""DAM network model packages (NP4-500-SG) as the ``dam_*`` and ``psse_*`` tables: one operating day, one model per hour.
 
-Each package holds, per hour ``HHH`` (``001``-``024``; 23 on the short DST day, 25 on
-the long one, where the extra hour is the third): ``DAMmmddyyyy_HHH.RAW`` (PSS/E v30,
-blank-separated) and CSVs mapping the CIM model to that RAW, ``_Ctg_`` (contingencies),
-``_Gn_`` (generators), ``_Hb_`` (hub buses), ``_Ld_`` (loads), ``_Ln_`` (lines), ``_Sp_``
-(settlement points) and ``_Xf_`` (transformers). Once per day: ``_SpCtg`` (settlement
-points a contingency disconnects), ``_SpNb`` (non-biddable resource nodes) and a README.
-
-ERCOT's README states that the DAM solves a lossless DC power flow, that the RAW files
-already include scheduled outages, and that all bus shunt, load and generator MW/MVAr
-values in the RAW are zero.
+Per hour the package holds a PSS/E RAW and CSVs that map the CIM model to it (contingencies,
+generators, hub buses, loads, lines, settlement points, transformers); per day, the settlement
+points each contingency disconnects, the non-biddable resource nodes and a README. The README
+states that the DAM solves a lossless DC power flow, that the RAW includes scheduled outages,
+and that every load and generator MW in the RAW is zero (docs/datasets/dam-network-model.md).
 """
 
 from __future__ import annotations
 
-# Bump when the tables this parser produces change (columns, types, values). The raw
-# layer's cache key includes it, so every artifact built with an older version is rebuilt.
-VERSION = 1
+VERSION = 1  # bump when the tables change; every artifact built with an older version is rebuilt
 
 import re
 from datetime import date
@@ -64,7 +57,7 @@ CONTINGENCIES = (
     Column("PSS/E From Bus Number", I), Column("PSS/E To Bus Number", I), Column("PSS/E Ckt Id"),
     Column("From Station Name/PSS/E Bus Name"), Column("From PSS/E KV", F),
     Column("To Station Name/PSS/E Bus Name"), Column("To PSS/E KV", F),
-    # The split-bus number columns hold either a bus number or a sentence-like note, so they stay text.
+    # A split-bus number column holds a bus number or a note, so it stays text.
     Column("Split Bus (contingency) PSS/E Bus Number (From PSS/E Bus Number in case branches "
            "or PSS/E Bus number in case of Load and Generator)", name="split_bus_psse_bus_number"),
     Column("Split Bus (contingency) From Station Name/PSS/E Bus Name", name="split_bus_from_station_name_psse_bus_name"),
@@ -122,7 +115,7 @@ _CSV_COLUMNS = {
 
 
 def _member(path: str, kind: str, fmt: str, operating_date: date | None, hour: int | None) -> Member:
-    """``hour`` is the 1-based study hour; None for once-a-day files."""
+    """A DAM member; ``hour`` is the 1-based study hour, None for a once-a-day file."""
     return Member(path, kind, fmt, kind == "network_model" or kind in _CSV_COLUMNS, {"operating_date": operating_date, "hour": hour})
 
 
@@ -131,7 +124,7 @@ def _operating_date(mmddyyyy: str) -> date:
 
 
 def classify_member(path: str) -> Member | None:
-    """Describe a zip member of a DAM package from its name; None for folders."""
+    """The member for a zip entry of a DAM package, from its name; None for a folder."""
     if path.endswith("/"):
         return None
     file = path.rsplit("/", 1)[-1]
@@ -150,7 +143,7 @@ def classify_member(path: str) -> Member | None:
 
 
 def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
-    """Parse one member into raw tables; members without a parser return no tables."""
+    """The raw tables of one member; none for a member without a parser."""
     hour = member.identity["hour"]
     label = f"DAM {member.kind} hour {hour}" if hour else f"DAM {member.kind}"
     if member.kind == "network_model":

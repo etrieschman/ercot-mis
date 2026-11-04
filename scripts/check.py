@@ -1,4 +1,4 @@
-"""Run a check from ``ercot_mis.checks`` and write its report under ``data/reports/<check>/``.
+"""Run one check from ``ercot_mis.checks``; it writes its report under ``data/reports/<check>/`` and prints one line per day.
 
     uv run python scripts/check.py prices --day 2026-08-20      # every hour of a day
     uv run python scripts/check.py flows --day 2026-08-20
@@ -9,7 +9,7 @@
     uv run python scripts/check.py register                     # one measurement per row of docs/assumptions.md
     uv run python scripts/check.py identity                     # how CRR and DAM keys line up (latest month, latest DAM noon)
 
-Prints one line per day (counts and quantiles only, never names).
+The lines carry counts and quantiles, never names.
 """
 
 from __future__ import annotations

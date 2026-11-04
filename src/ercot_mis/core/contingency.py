@@ -1,20 +1,12 @@
-"""``core.contingency`` and ``core.contingency_outage``: what each contingency removes.
+"""``core.contingency`` and ``core.contingency_outage``: what each contingency of a snapshot removes.
 
-One ``core.contingency`` row per (snapshot, name) and one ``core.contingency_outage``
-row per element it acts on, in the model's own vocabulary resolved to core keys:
-
-- CRR rows name a LINE or XFMR by the same name ``core.branch`` uses for
-  ``branch_id`` (RAW comment, ``Autos`` name), with one action code.
-- DAM rows are Branch (resolved to ``branch_id`` by (from, to, ckt) in the same
-  hour), Load, Generator and SettlementPoint (resolved to a ``bus_key`` by the DAM
-  bus number, kept as ``bus_number``), and split-bus operations, which change topology rather than remove an
-  element and are kept as their own ``operation``. A split-bus row on a branch moves
-  one of its ends to a new bus section: the file holds the number of the end that
-  stays and a note for the one that moves, and ``split_end`` (``from`` or ``to``) says
-  which end moves (null for other rows, and when the file names both or neither).
-
-Unresolved references (a name or number with no branch or bus in the snapshot) keep
-null keys and set ``is_resolved`` false; nothing is dropped.
+One ``contingency`` row per name and one ``contingency_outage`` row per element it acts on,
+resolved to core keys. CRR rows name a line or transformer by its ``branch_id``. DAM rows name a
+branch (resolved by (from, to, ckt) in the hour), a load, a generator or a settlement point
+(resolved to a ``bus_key`` by ``bus_number``), or a split-bus operation, which moves one end of
+a branch to a new bus section; ``split_end`` says which end (NAM-09). A reference the snapshot
+cannot resolve keeps null keys and ``is_resolved`` false; nothing is dropped. Details:
+docs/datasets/dam-network-model.md and docs/datasets/crr-network-model.md.
 """
 
 from __future__ import annotations
@@ -34,6 +26,7 @@ _DAM_KINDS = {"BRANCH": "branch", "LOAD": "load", "GENERATOR": "generator", "SET
 
 
 def _summarize(outages: pl.DataFrame) -> pl.DataFrame:
+    """One ``core.contingency`` row per contingency: outage count, unresolved count, whether it splits a bus."""
     return (outages.group_by("contingency_id").agg(
         pl.len().alias("n_outages"), (~pl.col("is_resolved")).sum().alias("n_unresolved"),
         (pl.col("operation") == "split_bus").any().alias("has_split_bus"))
@@ -41,7 +34,7 @@ def _summarize(outages: pl.DataFrame) -> pl.DataFrame:
 
 
 def crr_contingencies(branches: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """From ``crr_contingencies`` (Contingency, DeviceName, DeviceType, Action)."""
+    """``core.contingency`` and ``core.contingency_outage`` for one CRR month from ``crr_contingencies``."""
     outages = (raw.select(pl.col("contingency").alias("contingency_id"),
                           pl.col("device_type").str.to_uppercase().replace_strict(_CRR_KINDS, default="unknown").alias("element_kind"),
                           pl.lit("outage").alias("operation"), pl.col("action"),
@@ -53,7 +46,7 @@ def crr_contingencies(branches: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.Dat
 
 
 def dam_contingencies(branches: pl.DataFrame, buses: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """From one hour's ``dam_contingencies`` CSV; ``buses`` is the hour's ``core.bus``."""
+    """``core.contingency`` and ``core.contingency_outage`` for one DAM hour from ``dam_contingencies``; ``buses`` is the hour's ``core.bus``."""
     # A row may name a branch in either direction; ``_reversed`` marks a row written against the RAW's from-to.
     keyed = branches.select(pl.col("from_bus_number").alias("psse_from_bus_number"), pl.col("to_bus_number").alias("psse_to_bus_number"),
                             pl.col("ckt").alias("_ckt"), "branch_id", pl.lit(False).alias("_reversed"))

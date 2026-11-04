@@ -1,8 +1,8 @@
 """How documents arrive: a listing recorded in the catalog, a document streamed into the store, a local file adopted.
 
-Each function takes the client and the data folder it needs and holds the catalog's writer
-only while it records a listing, a blob or an arrival, never across a download. ``Session``
-calls these with its own clients.
+Each function takes a client and the data folder and holds the catalog's writer only while it
+records a listing, a blob or an arrival, never across a download. ``Session`` calls them with
+its clients.
 """
 
 from __future__ import annotations
@@ -41,23 +41,23 @@ INGEST_SCHEMA = {
     "is_new_bytes": pl.Boolean,
 }
 
-# ERCOT names its downloads "man.<8-digit report type>.<participant>.<timestamp>.<name>".
+# ERCOT names a download "man.<8-digit report type>.<participant>.<timestamp>.<name>".
 ERCOT_NAME = re.compile(r"^man\.(\d{8})\.")
 
-# Errors a second attempt can fix: a stalled connection, a short read, a 5xx reply.
+# Errors a second attempt may fix: a stalled connection, a short read, a 5xx reply.
 TRANSIENT = (requests.RequestException, EwsError, ConnectionError, TimeoutError)
 
 
 class BudgetError(RuntimeError):
-    """A fetch would download more than ``max_gb`` allows; nothing was downloaded."""
+    """The fetch would download more than ``max_gb``; nothing was downloaded."""
 
 
 class DownloadError(RuntimeError):
-    """A download arrived incomplete or different from its listing; nothing was kept."""
+    """A download arrived shorter or longer than its listing says; nothing was kept."""
 
 
 def list_documents(client, spec: Product, data_dir: Path, since=None, until=None) -> pl.DataFrame:
-    """What ERCOT offers for a product now, recorded in the catalog; the catalog's rows for those documents, private columns included."""
+    """The documents ERCOT lists for ``spec`` now, recorded in the catalog and returned as the catalog's rows, private columns included."""
     docs = client.list_documents(spec, bound(since), bound(until))
     with writing(data_dir) as writer:
         writer.record_listing(spec, docs, listed_at=datetime.now(timezone.utc))
@@ -66,16 +66,10 @@ def list_documents(client, spec: Product, data_dir: Path, since=None, until=None
 
 def fetch(client, spec: Product, data_dir: Path, since: date | datetime | str | None = None, until: date | datetime | str | None = None, *,
           operating_dates: Iterable[date | str] | None = None, max_gb: float | None = None) -> pl.DataFrame:
-    """Download every listed document that is not archived yet.
+    """One row per listed document not yet archived: fetched, or failed with the error; a later call resumes.
 
-    Each document is committed on its own, so running again resumes an interrupted
-    fetch. A transient failure (stalled connection, short read, 5xx) is retried
-    within the run; a document that still fails is reported (``status == "failed"``)
-    without stopping the others, and is retried on the next run. ``operating_dates``
-    restricts the fetch to those listing days: for the DAM models (NP4-500-SG) the
-    listing's ``operating_date`` is the posting day, and the 24 models inside are for
-    the following day (``core.snapshot.operating_date``). ``max_gb`` refuses, before
-    downloading anything, a fetch larger than the budget.
+    ``operating_dates`` keeps only those listing days (for NP4-500-SG the listing day is the posting day; the
+    models inside are for the day after). ``max_gb`` refuses a larger fetch before downloading.
     """
     if not spec.is_fetched:
         raise ValueError(f"{spec.emil_id} is listed, not fetched: list() records its documents. Set is_fetched=True in products.py to download it.")
@@ -102,18 +96,15 @@ def fetch(client, spec: Product, data_dir: Path, since: date | datetime | str | 
             with writing(data_dir) as writer:
                 writer.add_source(blob.sha256, spec.emil_id, row["doc_id"], "fetch", row["file_name"])
             results.append({**outcome, "sha256": blob.sha256, "status": "fetched", "error": None})
-        except Exception as error:  # reported, and retried on the next run
+        except Exception as error:  # reported; the next call retries it
             results.append({**outcome, "sha256": None, "status": "failed", "error": f"{type(error).__name__}: {error}"})
     return pl.DataFrame(results, schema=FETCH_SCHEMA)
 
 
 def ingest(data_dir: Path, path: str | Path, product: str | int | None = None) -> pl.DataFrame:
-    """Adopt ERCOT documents downloaded outside ercot-mis, such as by the old notebook script.
+    """One row per ERCOT document adopted from ``path`` (a zip, or a folder's top-level zips).
 
-    ``path`` is a file or a folder. For a folder only its top-level zip files are taken,
-    since extracted copies are not documents. The product comes from ``product`` or from
-    ERCOT's file name (``man.<report type>.…``). Each file is linked to its listing by
-    name when the catalog has one, so call ``list()`` first while ERCOT still offers it.
+    The product comes from ``product`` or from ERCOT's file name; a file is linked to its listing when the catalog has one by that name.
     """
     path = Path(path).expanduser()
     files = [path] if path.is_file() else sorted(
@@ -133,7 +124,7 @@ def ingest(data_dir: Path, path: str | Path, product: str | int | None = None) -
 
 
 def archive(data_dir: Path, spec: Product, chunks: Iterable[bytes], suffix: str, expected_size: int | None = None) -> store.StoredBlob:
-    """Stream bytes into the archive and index them; the catalog is locked only for the index."""
+    """The blob stored for ``chunks``, indexed in the catalog; a download of the wrong size is discarded and raises ``DownloadError``."""
     blob = store.put(data_dir, spec.emil_id, chunks, suffix)
     if expected_size and blob.size_bytes != expected_size:
         if blob.created:
@@ -146,7 +137,7 @@ def archive(data_dir: Path, spec: Product, chunks: Iterable[bytes], suffix: str,
 
 
 def bound(value: date | datetime | str | None) -> datetime | None:
-    """A posting-time bound: dates are midnight ERCOT time, naive datetimes are ERCOT time."""
+    """A posting-time bound as a datetime: a date is midnight ERCOT time, a naive datetime is ERCOT time."""
     if value is None:
         return None
     if isinstance(value, str):
@@ -157,7 +148,7 @@ def bound(value: date | datetime | str | None) -> datetime | None:
 
 
 def as_date(value: date | str) -> date:
-    """An ISO date string, a date or a datetime as a date."""
+    """The date of an ISO date string, a date or a datetime."""
     if isinstance(value, datetime):
         return value.date()
     return value if isinstance(value, date) else date.fromisoformat(value)

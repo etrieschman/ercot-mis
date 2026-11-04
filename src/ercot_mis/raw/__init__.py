@@ -1,11 +1,9 @@
-"""The raw layer: ERCOT source files to typed Arrow tables, one table per source file.
+"""The raw layer: each ERCOT source file as one typed Arrow table.
 
-Parsers (``psse``, ``crr``, ``dam``) are pure functions of bytes: they rename columns
-to snake_case and set types, and change nothing else. No joins, no unit conversions,
-no dropped rows. Every parser checks the structure it expects (headers, field counts,
-section order) and raises ``ParseError`` naming what differs, so a format change at
-ERCOT fails loudly instead of producing quietly wrong tables. ``build`` writes the
-parsed tables to Parquet with provenance.
+A parser is a function of bytes. It renames columns to snake_case, sets types and changes
+nothing else: no joins, no unit conversions, no dropped rows. It checks the structure it
+expects (headers, field counts, section order) and raises ``ParseError`` naming the
+difference. ``build`` writes the tables to Parquet with the identity of their source.
 """
 
 from .table import ParseError, snake_case

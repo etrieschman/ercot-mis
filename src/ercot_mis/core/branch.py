@@ -1,16 +1,13 @@
-"""``core.branch`` and ``core.branch_rating``: lines and transformers per snapshot.
+"""``core.branch`` and ``core.branch_rating``: the lines and transformers of a snapshot, and their ratings from every source.
 
-A branch is identified across snapshots by ``branch_id``: the DAM ``Branch Name``, the
-CRR RAW line comment, or the CRR ``Autos`` name for transformers (with a
-``XF <from> <to> <ckt>`` fallback when the workbook has no row). Endpoints carry the
-snapshot's PSS/E numbers (``from_node``/``to_node``: CRR nodes; ``from_bus_number``/
-``to_bus_number``: DAM buses) and the stable ``bus_key`` of each end, so a CRR bus tie
-joins two nodes of one bus (equal endpoint keys) and is flagged ``is_tie``.
-
-Ratings are facts from two sources kept side by side in ``core.branch_rating``:
-``psse_raw`` (rate A/B/C from the RAW, one row per branch) and, for CRR,
-``crr_monitored`` (the monitored-element CSV, one row per time-of-use block). Nothing
-is derated or merged here.
+``branch_id`` identifies a branch across snapshots: the DAM ``Branch Name``, the CRR RAW line
+comment, or the CRR ``Autos`` name for transformers (``XF <from> <to> <ckt>`` when the workbook
+has no row). Each end carries the model's PSS/E number (``from_node``/``to_node`` for CRR nodes,
+``from_bus_number``/``to_bus_number`` for DAM buses) and its ``bus_key``; a CRR tie joins two
+nodes of one bus and is flagged ``is_tie`` (TOP-10). ``core.branch_rating`` keeps the RAW's rate
+A/B/C (``psse_raw``) and the CRR monitored-element CSV's ratings per time-of-use block
+(``crr_monitored``) side by side, unchanged (RAT-04). Details: docs/datasets/crr-network-model.md
+and docs/datasets/dam-network-model.md.
 """
 
 from __future__ import annotations
@@ -22,10 +19,10 @@ from .bus import TIE_REACTANCE, autos_by_key
 
 VERSION = 5  # bump when columns or identities change
 
-# ``is_name_reversed``: the branch's name lists its ends in the opposite order to the RAW's
-# (from, to). CRR line comments always follow the RAW; CRR transformer names follow the
-# ``Autos`` sheet, which is swapped relative to the RAW for a large minority. A CSV's
-# "From-To" flow direction refers to the name's order, so consumers flip the sign here.
+# ``is_name_reversed``: the branch's name lists its ends in the opposite order to the RAW's (from, to).
+# CRR line comments follow the RAW (NAM-01); CRR transformer names follow the ``Autos`` sheet, which is
+# swapped relative to the RAW for some transformers (NAM-02). A CSV's "From-To" flow direction refers
+# to the name's order, so consumers flip the sign where the name is reversed.
 BRANCH_COLUMNS = ("branch_id", "kind", "from_node", "to_node", "from_bus_number", "to_bus_number", "ckt", "from_bus_key", "to_bus_key",
                   "is_in_service", "is_tie", "is_name_reversed", "r_pu", "x_pu", "b_pu", "tap_ratio", "angle_deg",
                   "is_monitored", "is_secured", "is_temporary")
@@ -67,10 +64,10 @@ def _raw_parts(psse_branch: pl.DataFrame, psse_transformer: pl.DataFrame) -> pl.
 
 
 def _check_transformer_conventions(psse_transformer: pl.DataFrame) -> None:
-    """RAT-01: the DC model reads a transformer as a reactance and a tap ratio, which holds only under PSS/E's
-    plain conventions: winding voltages as turns ratios (``CW = 1``), impedance on the system base (``CZ = 1``) and
-    no phase shift (``ang1 = 0``). A RAW that breaks one of them fails the build here, loudly, instead of being
-    modelled as if it did not; the message carries counts, never names."""
+    """RAT-01: a transformer is read as a reactance and a tap ratio, which holds under PSS/E's plain conventions only:
+    ``CW = 1`` (winding voltages as turns ratios), ``CZ = 1`` (impedance on the system base) and ``ang1 = 0`` (no phase
+    shift). A RAW that breaks one fails the build; the message carries counts, never names.
+    """
     checks = {"cw": pl.col("cw") != 1, "cz": pl.col("cz") != 1, "ang1": pl.col("ang1").fill_null(0.0) != 0.0}
     bad = {name: int(psse_transformer.filter(expr).height) for name, expr in checks.items()}
     if any(bad.values()):
@@ -104,13 +101,10 @@ def crr_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
                  autos: pl.DataFrame, monitored: pl.DataFrame, mapping_lines: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """``core.branch`` and ``core.branch_rating`` for one CRR month; ``nodes`` is the month's ``core.node``.
 
-    ``is_temporary`` marks the branches the mapping workbook labels as temporary split-bus
-    topology added for outages (its operations equipment code says so in words): ERCOT put
-    them in this model for an outage, they are not part of the standing network.
-
-    Lines are named by the RAW comment, transformers by ``Autos`` (from, to, ckt).
-    ``is_monitored`` is whether the monitored-element CSV lists the branch; CRR has no
-    secured flag, so ``is_secured`` equals ``is_monitored``.
+    Lines are named by the RAW comment, transformers by the ``Autos`` sheet on (from, to, ckt). ``is_monitored``
+    is whether the monitored-element CSV lists the branch, and ``is_secured`` equals it, since the CRR has no
+    secured flag. ``is_temporary`` marks the branches the mapping workbook labels as temporary split-bus
+    topology added for an outage.
     """
     auto_names = autos_by_key(autos).rename({"name": "auto_name", "from_node": "from_number", "to_node": "to_number"})
     frame = (_raw_parts(psse_branch, psse_transformer)

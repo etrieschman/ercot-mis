@@ -1,20 +1,9 @@
-"""Settlement point mappings in ERCOT's electrical-bus vocabulary (NP4-160-SG, NP3-220-SG).
+"""ERCOT's settlement point mappings (NP4-160-SG, NP3-220-SG) as the ``sp_*``, ``hub_buses`` and ``electrical_buses`` tables.
 
-The price files name electrical buses, not the RAW's nodes. These two public EWS
-products carry the mapping ERCOT itself publishes, as zips of CSVs; the header picks
-the table:
-
-- ``sp_electrical_bus_mapping`` (NP4-160-SG): one row per electrical bus with its node
-  name, PSS/E name and number, voltage level, substation, load zone, resource node and
-  hub, where it belongs to one;
-- ``sp_resource_node_units``, ``sp_noie_mapping``, ``sp_ccp_resource_names``,
-  ``sp_hub_and_dc_tie_names`` (NP4-160-SG): the smaller lists in the same package;
-- ``hub_buses`` (NP3-220-SG): the electrical buses that make up each hub, with their kV;
-- ``electrical_buses`` (NP3-220-SG): the full list of electrical bus names.
-
-Both products are posted whole, without an operating date; the listing's posting time
-dates a document. ERCOT's one misspelt header is kept as the raw column
-``logical_resource_node_name``.
+The price files name electrical buses, ERCOT's word for a pricing point. These two products
+map every electrical bus to its PSS/E name and number, voltage level, substation, load zone,
+resource node and hub, and list each hub's electrical buses. A document is a zip of CSVs and
+the header picks the table; the listing's posting time dates it (docs/datasets/settlement-point-mappings.md).
 """
 
 from __future__ import annotations
@@ -24,7 +13,7 @@ import pyarrow as pa
 
 from .table import Column, F, I, Member, classify_csv, parse_csv
 
-VERSION = 2  # 2: the always-null operating_date and hour identity columns are gone
+VERSION = 2
 
 TABLES: dict[str, tuple[Column, ...]] = {
     "sp_electrical_bus_mapping": (

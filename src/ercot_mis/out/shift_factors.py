@@ -1,14 +1,10 @@
 """Shift factors on an assembled :class:`~ercot_mis.out.network.Network`: the one place they are computed.
 
-``DcSystem`` factorizes the DC model once (``B theta = q`` with ERCOT's slack removed)
-and answers flows and shift-factor rows from that factorization. ``DcSystem.outaged``
-gives the same network under a contingency, by removing branches and moving split-bus
-ends and factorizing again, which is exact for any number of outaged branches and
-needs no special case when the contingency cuts part of the network off: what stays
-connected to the slack is solved, and buses cut off get a shift factor of zero.
-
-Every check that needs a shift factor goes through this module. It needs ``numpy``
-and ``scipy``, which the rest of the package does not: install the ``shift-factors`` extra.
+``DcSystem`` factorizes the DC model once (``B theta = q`` with the slack removed) and answers
+flows and shift-factor rows from that factorization. ``outaged`` gives the network under a
+contingency by removing branches, moving split-bus ends and factorizing again; buses cut off
+from the slack get a shift factor of zero. Needs ``numpy`` and ``scipy`` (the ``shift-factors``
+extra).
 """
 
 from __future__ import annotations
@@ -25,7 +21,7 @@ from .network import Network
 
 
 class DcSystem:
-    """Sparse DC power flow on a :class:`Network`."""
+    """Sparse DC power flow on a :class:`Network`: one factorization, flows and shift factors from it."""
 
     def __init__(self, net: Network):
         b = net.branches
@@ -67,12 +63,9 @@ class DcSystem:
 
 
     def outaged(self, branch_idx, splits=()) -> DcSystem:
-        """This network under a contingency.
-
-        ``branch_idx`` are removed. ``splits`` lists ``(branch index, "from" or "to")``: a
-        split-bus row moves that end of the branch from its bus to a new bus section, and
-        the branches a contingency moves off the same bus stay joined to each other there.
-        ``n_islanded`` counts the buses the contingency cuts off from the slack.
+        """This network under a contingency: ``branch_idx`` removed, and each ``(branch index, "from" or "to")`` in
+        ``splits`` moving that end of the branch to a new bus section (branches moved off one bus stay joined there).
+        ``n_islanded`` counts the buses cut off from the slack.
         """
         other = object.__new__(DcSystem)
         other.n, other.m, other.slack = self.n, self.m, self.slack

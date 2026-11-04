@@ -120,9 +120,9 @@ class CoreTables:
 def _bus_rows(core: CoreTables, dam: bool, contract_ties: bool) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Step 1: one row per bus of the model handed to the solver, and the map from the PSS/E numbers its branches carry to ``bus_id``.
 
-    DAM, and CRR with ties contracted: the rows of ``core.bus``. CRR with ties kept (ERCOT's auction topology):
-    one bus per node, ``<bus_key>@<node_number>`` for the nodes of a tie group, the bus key alone otherwise.
-    DAM branches carry bus numbers; CRR branches carry node numbers, which ``core.node`` maps to their bus.
+    DAM, and CRR with ties contracted: the rows of ``core.bus``. CRR with ties kept (ERCOT's auction topology,
+    TOP-01): one bus per node, ``<bus_key>@<node_number>`` for the nodes of a tie group, the bus key alone
+    otherwise. DAM branches carry bus numbers; CRR branches carry node numbers, which ``core.node`` maps to a bus.
     """
     buses = core.bus.select(pl.col("bus_key").alias("bus_id"), "bus_key", "raw_name", "substation", "kv", pl.col("bus_type").alias("_type"),
                             "n_nodes", pl.lit(None, pl.Int64).alias("node_number"), "bus_number")
@@ -263,11 +263,7 @@ def _contingencies(core: CoreTables, branches: pl.DataFrame) -> tuple[pl.DataFra
 
 
 def _gtcs(core: CoreTables, kept: pl.DataFrame, branches: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Step 5: each GTC's members with factors signed in the RAW's from-to.
-
-    The CSV's flow direction refers to the member's name, which runs the other way for some
-    CRR transformers (``is_name_reversed``).
-    """
+    """Step 5: each GTC's members with their factors signed in the RAW's from-to; the CSV's direction refers to the member's name, which some CRR transformers list the other way (``is_name_reversed``, NAM-02, NAM-03)."""
     reversed_names = kept.select("branch_id", pl.col("is_name_reversed").fill_null(False))
     sign = (pl.when(flag(pl.col("flow_direction"), "TO")).then(-1.0).otherwise(1.0)
             * pl.when(pl.col("is_name_reversed")).then(-1.0).otherwise(1.0))
@@ -284,10 +280,7 @@ def _gtcs(core: CoreTables, kept: pl.DataFrame, branches: pl.DataFrame) -> tuple
 
 
 def _settlement_points(core: CoreTables, bus_rows: pl.DataFrame, buses: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Step 6: each settlement point's weights on the kept buses, summing to one; the weight that fell on dropped buses is recorded.
-
-    A weight is given per ``bus_key``; when the key names several rows (a CRR tie group with ties kept) it is spread equally over them (SP-06).
-    """
+    """Step 6: each settlement point's weights on the kept buses, summing to one, and the weight that fell on dropped buses; a weight on a ``bus_key`` several rows share (a CRR tie group with ties kept) is spread equally over them (SP-06)."""
     members = bus_rows.group_by("bus_key").agg(pl.col("bus_id"))
     rows = (core.settlement_point_bus.filter(pl.col("is_resolved")).select("settlement_point_id", "bus_key", "weight")
             .join(members, on="bus_key", how="left").explode("bus_id", empty_as_null=True)

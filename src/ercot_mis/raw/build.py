@@ -1,17 +1,11 @@
-"""The raw layer: parsed rows from archived packages, written once, with provenance.
+"""The raw build: every archived package parsed into Parquet, one file per package and table, each row carrying its source.
 
-One Parquet artifact per (archived package, table) at
-``raw/<table>/emil_id=<EMIL>/<blob sha256[:16]>.parquet``. Every row carries the
-identity of its source: ``emil_id``, ``doc_id``, ``blob_sha256``, ``member_sha256``,
-``member_path``, plus the package metadata parsed from member names (CRR: auction,
-term, sequence, month, time_of_use; DAM: operating_date, hour).
-
-An artifact's key is a hash of the parser versions (``VERSION`` in each parser
-module, bumped when its output changes), the package version, the package bytes and
-the table name. If the key is in the catalog and the file exists, the package is
-skipped; bump a version and every artifact it produced is rebuilt.
-Parsing happens in worker processes (a DAM day is 24 models, ~12 s serial); the
-catalog is written by the main process only.
+A file lives at ``raw/<table>/emil_id=<EMIL>/<blob sha256[:16]>.parquet``. Every row carries
+``emil_id``, ``doc_id``, ``blob_sha256``, ``member_sha256``, ``member_path`` and what the member's
+name says (CRR: auction, term, sequence, month, time_of_use; DAM: operating_date, hour). A file's
+key hashes the parser versions, the package bytes and the table name: a key in the catalog with
+its file in place is skipped, and a version bump rebuilds every file it produced. Workers parse;
+the main process alone writes the catalog (CLAUDE.md, "Provenance").
 """
 
 from __future__ import annotations
@@ -35,14 +29,14 @@ from . import crr, dam, disclosure, gtl, mappings, prices, psse, table
 LAYER = "raw"
 COMPRESSION = "zstd"
 NONE = "<none>"  # the artifact row of a package that yields no table (a document shape the parser archives but does not read)
-# The parser of each product with a raw layer, in build order. Each module has ``VERSION``, ``classify_member`` and ``parse_member``.
+# The parser of each product, in build order; each module has VERSION, classify_member and parse_member.
 PARSERS = {"NP7-801-M": crr, "NP7-800-M": crr, "NP4-500-SG": dam, "NP3-766-M": gtl,
            "NP4-191-CD": prices, "NP4-183-CD": prices, "NP4-190-CD": prices, "NP4-523-CD": prices, "NP4-200-CD": prices, "NP4-158-SG": prices,
            "NP4-231-CD": prices, "NP4-159-CD": prices, "NP4-160-SG": mappings, "NP3-220-SG": mappings, "NP3-966-ER": disclosure}
 
 
 def parser_id(emil_id: str) -> str:
-    """Identity of the code that produces a product's raw tables: package and parser versions."""
+    """The identity of the code behind a product's raw tables: the package version and every parser version."""
     from .. import __version__
 
     if emil_id not in PARSERS:
@@ -56,13 +50,13 @@ def artifact_key(parser: str, blob_sha256: str, table: str) -> str:
 
 
 def artifact_path(layer: str, table: str, emil_id: str, blob_sha256: str) -> Path:
-    """Where a package's table lives in a layer, relative to the data folder; hive-style so readers get ``emil_id`` for free."""
+    """Where a package's table lives in a layer, relative to the data folder; the hive folder gives readers ``emil_id``."""
     return Path(layer) / table / f"emil_id={emil_id}" / f"{blob_sha256[:16]}.parquet"
 
 
 @dataclass(frozen=True)
 class Written:
-    """One artifact written by a worker, not yet registered in the catalog."""
+    """One file a worker wrote, not yet registered in the catalog."""
 
     table: str
     tmp_path: Path
@@ -79,14 +73,13 @@ class PackageResult:
     error: str | None = None
 
 
-# Identity columns are typed by name, not by value, so a null (monthly ``sequence``,
-# a daily file's ``hour``) does not change the column type between packages.
+# Identity columns are typed by name so a null (a monthly package's sequence, a daily file's hour) keeps the type.
 IDENTITY_TYPES = {"sequence": pa.int64(), "hour": pa.int64(), "month": pa.date32(), "operating_date": pa.date32()}
 VERSION = 2  # bump when identity columns or the artifact layout change
 
 
 def _identity_columns(table: pa.Table, values: dict) -> pa.Table:
-    """Prepend identity columns; a column the file already has (DAM ``hour``) is kept."""
+    """The table with the identity columns in front; a column the file already has (the DAM ``hour``) is kept."""
     for name, value in reversed(list(values.items())):
         if name in table.column_names:
             continue
@@ -96,11 +89,9 @@ def _identity_columns(table: pa.Table, values: dict) -> pa.Table:
 
 def parse_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str,
                   members: dict[str, str], operating_date=None) -> dict[str, tuple[pa.Table, list[str]]]:
-    """Parse every parsed member of a package into per-table Arrow tables with identity columns.
+    """Every table of one package, as ``{table: (rows with identity columns, the member hashes behind them)}``.
 
-    ``members`` maps member path to member sha256 (from the catalog). Returns
-    ``{table: (rows, member hashes that contributed)}``. A document that is not a zip
-    (the GTL workbook) is parsed whole; its identity is the listing's ``operating_date``.
+    ``members`` maps member path to member sha256. A document that is not a zip (the GTL workbook) is parsed whole.
     """
     module = PARSERS[emil_id]
     package = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob_sha256}
@@ -115,7 +106,7 @@ def parse_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str
 
 
 def _parsed_members(path: Path, module, members: dict[str, str], operating_date, blob_sha256: str):
-    """(member, bytes, member sha256) for each member a parser reads: the zip's files, or the whole document."""
+    """(member, bytes, member sha256) for every member a parser reads: the zip's files, or the whole document."""
     if module is gtl:
         data = path.read_bytes()
         member = gtl.classify_document("<document>", data, operating_date)
@@ -131,7 +122,7 @@ def _parsed_members(path: Path, module, members: dict[str, str], operating_date,
 
 def build_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str,
                   members: dict[str, str], tmp_dir: Path, operating_date=None) -> PackageResult:
-    """Worker entry point: parse one package and write each table to a temporary Parquet file."""
+    """One package parsed and each table written to a temporary Parquet file, or the error; runs in a worker."""
     started = time.perf_counter()
     try:
         tables = parse_package(path, emil_id, doc_id, blob_sha256, members, operating_date)
@@ -147,16 +138,13 @@ def build_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str
 
 
 def build(session, product: str | int, *, workers: int | None = None, limit: int | None = None) -> list[dict]:
-    """Write the raw tables of every archived package of a product that is not built yet.
-
-    Returns one record per package: ``status`` is ``built``, ``skipped`` or ``failed``.
-    """
+    """One record per archived package of a product, ``status`` built, skipped or failed; a skipped package's tables are already in place."""
     spec: Product = get_product(product)
     parser = parser_id(spec.emil_id)
     packages = session.catalog.packages(spec.emil_id)
     if limit is not None:
         packages = packages[:limit]
-    # A package is built when every table it has in the catalog was written by this parser and its file is in place.
+    # A package is built when this parser wrote every table the catalog has for it and each file is in place.
     built = {blob: rows for (blob,), rows in session.catalog.artifacts(LAYER).partition_by("blob_sha256", as_dict=True).items()}
     todo, results = [], []
     for package in packages:

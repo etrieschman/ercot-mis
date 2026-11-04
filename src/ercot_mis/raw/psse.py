@@ -1,31 +1,16 @@
-"""PSS/E version 30 RAW files, in both dialects ERCOT publishes.
+"""PSS/E version 30 RAW files as the ``psse_*`` tables, in both dialects ERCOT publishes.
 
-**CRR network models** (exported by PSS/ODMS) separate fields with commas, close each
-section with ``0 / END OF <X> DATA, BEGIN <Y> DATA``, follow most records with a
-``/*[...]*/`` comment holding the element's ERCOT name, and use CRLF line endings.
-
-**DAM network models** (written by the DAM study) separate fields with blanks, close
-each section with a bare ``0``, carry no comments, and omit the VSC DC section.
-
-Field layouts are the same, so one tokenizer reads both: a token is a single-quoted
-string or a run of characters other than blanks, commas and quotes, and ``/`` outside
-quotes starts a comment. Section names come from the ``END OF`` comments when present,
-and otherwise from v30 section order.
-
-Output tables are ``psse_case``, ``psse_bus``, ``psse_load``, ``psse_generator``,
-``psse_branch``, ``psse_transformer``, ``psse_area``, ``psse_switched_shunt``,
-``psse_impedance_correction``, ``psse_zone`` and ``psse_owner``. Column names follow
-the PSS/E manual (``i``, ``j``, ``ckt``, ``ratea``...), quoted strings are trimmed of
-PSS/E's padding, and every table except ``psse_case`` ends with ``comment``. Sections
-ERCOT leaves empty (DC lines, FACTS devices, multi-section lines, inter-area
-transfers) and 3-winding transformers raise ``ParseError`` if they ever hold records.
+The CRR model's RAW separates fields with commas, ends each section with an ``END OF``
+comment and names each element in a trailing comment; the DAM model's RAW separates fields
+with blanks, ends each section with a bare ``0`` and carries no comments. One tokenizer
+reads both. Column names follow the PSS/E manual and every table but ``psse_case`` ends with
+``comment``. A section ERCOT leaves empty, or a three-winding transformer, raises
+``ParseError`` if it ever holds records (docs/datasets/psse-raw.md).
 """
 
 from __future__ import annotations
 
-# Bump when the tables this parser produces change (columns, types, values). The raw
-# layer's cache key includes it, so every artifact built with an older version is rebuilt.
-VERSION = 1
+VERSION = 1  # bump when the tables change; every artifact built with an older version is rebuilt
 
 import re
 from dataclasses import dataclass
@@ -102,7 +87,7 @@ class PsseCase:
 
 
 def parse_raw(data: bytes, label: str = "RAW") -> PsseCase:
-    """Parse a PSS/E v30 RAW file in either ERCOT dialect."""
+    """The ``psse_*`` tables of a RAW file in either dialect, with the dialect and the line count per section."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:

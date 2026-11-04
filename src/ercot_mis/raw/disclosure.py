@@ -1,15 +1,10 @@
-"""60-Day DAM Disclosure (NP3-966-ER): what every market participant offered, bid and was awarded, 60 days later.
+"""The 60-day DAM disclosure (NP3-966-ER) as the ``dam_60d_*`` tables: what every participant offered, bid and was awarded.
 
-One document per operating day: a zip of CSVs named ``60d_DAM_<table>-DD-MON-YY.csv``,
-each one delivery date, all hours. The awards are the inputs to the flow check: the
-cleared generation, storage and energy-only offer awards, energy bid awards and
-point-to-point obligation awards that the DAM dispatched through its network. The
-offer and bid curves and the ancillary service tables are parsed too; they are the
-generation stack. The file name's date is the ``operating_date``; the header picks the
-table, so a column ERCOT adds or renames is noticed, not guessed around.
-
-Numbers (MW, prices, awards, limits, costs) are cast; identifiers (QSE, resource and
-settlement point names, offer, bid and CRR IDs, flags and indicators) stay text.
+One document per operating day, a zip of CSVs, each one table for one delivery date. The awards
+(generation, storage, energy-only offers, energy bids, point-to-point obligations) are the
+inputs to ``core.hourly_award``; the offer and bid curves and the ancillary service tables are
+parsed too. The file name's date is the ``operating_date`` and the header picks the table.
+Numbers are cast; identifiers and flags stay text (docs/datasets/dam-disclosure.md).
 """
 
 from __future__ import annotations
@@ -21,7 +16,7 @@ import pyarrow as pa
 
 from .table import Column, F, Member, extension, read_delimited, table_for_header
 
-VERSION = 3  # 3: the always-null operating_date and hour identity columns are gone
+VERSION = 3
 
 TABLES: dict[str, tuple[Column, ...]] = {
     "dam_60d_qse_self_arranged_as": (
@@ -209,7 +204,7 @@ _MEMBER = re.compile(r"(?:^|/)60d_DAM_(?P<stem>.+)-(?P<day>\d\d-[A-Za-z]{3}-\d\d
 
 
 def classify_member(path: str) -> Member | None:
-    """``kind`` is the file's stem (the report it holds); the day in its name is its rows' ``operating_date``."""
+    """The member for a zip entry; ``kind`` is the file's stem (the report it holds) and the day in its name is the rows' ``operating_date``."""
     if path.endswith("/"):
         return None
     fmt = extension(path)
@@ -218,8 +213,7 @@ def classify_member(path: str) -> Member | None:
     return Member(path, match.group("stem") if match else "unknown", fmt, fmt == "csv" and day is not None, {"operating_date": day})
 
 
-# Two files share one header (the storage resource table is the generation table's layout for energy
-# storage resources); the member's stem decides between them, and the header is still checked.
+# The storage and generation resource tables share one header; the member's stem decides between them.
 _SAME_HEADER = {"ESR_Data": "dam_60d_esr_data", "Gen_Resource_Data": "dam_60d_gen_resource_data"}
 
 

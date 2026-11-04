@@ -1,10 +1,9 @@
-"""The daily pull's bookkeeping: what to fetch, what to build, and what a missed pull would lose.
+"""The daily pull's steps: fetch every product, build the layers, and say what a missed pull would lose.
 
-EWS keeps nothing older than each product's display window (31 days for DAM network models,
-365 for CRR models), so a pull runs every day (``scripts/daily_pull.py``) and an urgent one
-when data is at risk (``scripts/urgent_pull.py``). Both are written from these functions.
+EWS keeps a document only for its product's display window, so ``scripts/daily_pull.py`` runs
+every day and ``scripts/urgent_pull.py`` when data is at risk; both call these functions.
 ``at_risk`` reads the catalog and ``ews_captured.json`` (the last clean fetch per windowed
-product) and says how many EWS documents are unarchived and how soon the first could be lost.
+product) and says how many EWS documents are unarchived and how soon the first is lost.
 """
 
 from __future__ import annotations
@@ -20,21 +19,19 @@ from .products import PRODUCTS, Product
 from .raw.build import PARSERS
 from .session import Session
 
-# DAM network models are ~29 MB a day (~10 GB a year). None captures every day;
-# a set of dates captures only those.
+# None captures every DAM day; a set of dates captures only those.
 DAM_OPERATING_DATES: set[date] | None = None
 
-# Every pulled Public API product, over this many days back; older days are backfilled
-# by hand with ``fetch(product, since=...)``. A month covers any gap short of losing EWS data.
+# How far back each run lists a Public API product; older days are backfilled by hand with ``fetch(product, since=...)``.
 PUBLIC_API_LOOKBACK_DAYS = 31
 
-# Per-product ceiling for one run; a first run over a full window stays well under it.
+# The most one run may download for one product.
 MAX_GB = 5
 
-# EWS data this close to rolling off makes the flag urgent.
+# EWS data this close to rolling off makes the run's flag urgent.
 URGENT_DAYS = 7
 
-# What a step may raise and the run reports: a polars panic (a Rust panic) is not an Exception.
+# What a step may raise and the run reports; a polars panic is not an Exception.
 FAILURES = (Exception, pl.exceptions.PanicException)
 
 # The last clean fetch per windowed EWS product, under the data folder.
@@ -42,16 +39,12 @@ CAPTURED_FILE = Path("logs") / "ews_captured.json"
 
 
 def windowed_products() -> list[Product]:
-    """Pulled EWS products with a display window: the only data a missed pull can lose."""
+    """The fetched EWS products with a display window: the only data a missed pull loses."""
     return [spec for spec in PRODUCTS.values() if spec.source == "ews" and spec.is_fetched and spec.display_days]
 
 
 def load_captured(mis: Session) -> dict[str, datetime]:
-    """When each windowed EWS product was last fetched without a failure.
-
-    A product missing from the file (the first run with it) starts from its newest
-    listing in the catalog, which is as good: a listing shows everything then offered.
-    """
+    """When each windowed EWS product was last fetched without a failure; a product new to the file starts from its newest listing."""
     path = mis.data_dir / CAPTURED_FILE
     saved = json.loads(path.read_text()) if path.is_file() else {}
     captured = {}
@@ -72,15 +65,14 @@ def save_captured(mis: Session, captured: dict[str, datetime]) -> None:
 
 
 def fetch_products(mis: Session, specs, captured: dict[str, datetime]) -> int:
-    """Fetch pulled products and list tracked ones, one log line each; returns the failure count.
+    """Fetch the fetched products and list the rest, one log line each; the number of failures.
 
-    A windowed EWS product fetched without a failure gets its start time in ``captured``.
+    A windowed EWS product fetched without a failure records the fetch's start time in ``captured``.
     """
     failed = 0
     for spec in specs:
         if spec.source == "public_api" and not spec.is_fetched:
-            continue  # tracked Public API products are not listed daily; the archive keeps them for years
-        # The Public API keeps years of history; a daily run looks back a month.
+            continue  # the Public API archive keeps years, so an unfetched public product is not listed daily
         since = None if spec.source == "ews" else date.today() - timedelta(days=PUBLIC_API_LOOKBACK_DAYS)
         began, began_at = time.monotonic(), datetime.now(timezone.utc)
         try:
@@ -90,7 +82,7 @@ def fetch_products(mis: Session, specs, captured: dict[str, datetime]) -> int:
                 continue
             dates = DAM_OPERATING_DATES if spec.emil_id == "NP4-500-SG" else None
             result = mis.fetch(spec.emil_id, since, operating_dates=dates, max_gb=MAX_GB)
-        except FAILURES as error:  # one product's failure must not stop the others
+        except FAILURES as error:
             failed += 1
             print(f"  {spec.emil_id}: FAILED {type(error).__name__}: {error}", flush=True)
             continue
@@ -106,7 +98,7 @@ def fetch_products(mis: Session, specs, captured: dict[str, datetime]) -> int:
 
 
 def build_layers(mis: Session) -> int:
-    """Raw tables for every archived package with a parser, then core; returns the failure count."""
+    """Build the raw tables of every product with a parser, then core; the number of failures."""
     failed = 0
     for emil_id in PARSERS:
         try:
@@ -126,7 +118,7 @@ def build_layers(mis: Session) -> int:
 
 
 def report(label: str, result: pl.DataFrame) -> int:
-    """One line per build: packages built, skipped and failed, then each failure's message."""
+    """Print a build's counts (built, skipped, failed) and each failure's message; the number of failures."""
     counts = {status: n for status, n in result.group_by("status").len().rows()}
     built = result.filter(pl.col("status") == "built")
     print(f"  {label}: built {counts.get('built', 0)} ({int(built['rows'].sum() or 0):,} rows, "
@@ -137,12 +129,9 @@ def report(label: str, result: pl.DataFrame) -> int:
 
 
 def at_risk(mis: Session, captured: dict[str, datetime], now: datetime | None = None) -> dict:
-    """What a missed pull could lose, from the catalog and ``captured`` alone (no EWS calls).
+    """The unarchived EWS documents and the days until the first is lost, from the catalog and ``captured`` alone.
 
-    Two clocks per windowed product: an unarchived document still inside its window rolls
-    off a window after its posting; anything posted since the last clean fetch is unseen,
-    and the oldest of it rolls off a window after that fetch. ``days_until_loss`` is the
-    nearest of all of them. A document skipped by ``DAM_OPERATING_DATES`` counts.
+    An unarchived document rolls off a window after its posting; anything posted since the last clean fetch rolls off a window after that fetch.
     """
     now = now or datetime.now(timezone.utc)
     unarchived, nearest, product = 0, None, None

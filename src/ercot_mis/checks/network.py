@@ -57,6 +57,7 @@ def contraction(session, snapshot_id: str, sample_size: int = 200) -> dict:
 
 
 def run(session, crr_id: str, dam_id: str) -> dict:
+    """Both solves for a CRR model and a DAM hour; writes the report."""
     result = {"crr": crr_id, "dam": dam_id, "sections": {
         "CRR, ERCOT topology": solve(session.network(crr_id)),
         "CRR, contracted": solve(session.network(crr_id, Options(contract_ties=True))),

@@ -1,14 +1,10 @@
-"""The flow check: do the DAM's own awards, pushed through our network, give the flows ERCOT reports?
+"""The flow check: the DAM's awards pushed through the network against the flows ERCOT reports (FLW-01, FLW-02).
 
-For one DAM hour: the net injection per settlement point from the 60-Day DAM Disclosure
-(``session.injections``, INJ-01) is spread onto buses by the network's settlement point
-weights and solved as DC flows, in the base case and under each binding contingency. Then:
-
-- **binding rows** (FLW-02): our flow at each constraint of NP4-191-CD, in the row's
-  direction and under its contingency, against the flow ERCOT computed there;
-- **limits**: base-case flow on every branch the network enforces, against its limit;
-- **placement** (FLW-01): the MW the network cannot place, and the MW the slack absorbs.
-  Both should be zero; when they are not, every flow is off by up to that much.
+For one DAM hour, the net injection per settlement point (``session.injections``, INJ-01) is spread
+onto buses by the network's settlement point weights and solved as DC flows, in the base case and
+under each binding contingency. The report holds our flow at every binding row of NP4-191-CD against
+ERCOT's, the base-case loading of every enforced branch against its limit, and the MW the network
+could not place or the slack absorbed.
 """
 
 from __future__ import annotations

@@ -1,21 +1,13 @@
-"""``core.match_branch``: which CRR branch is which DAM branch.
+"""``core.match_branch``, ``core.match_bus`` and ``core.match_contingency``: which CRR element is which DAM element, with the method that decided.
 
-The CRR mapping workbook gives every CRR line and transformer an ``Operations_Name``
-(the Network Operations Model name). DAM names its branches with that name plus
-DAM's own circuit designator (one or two characters), so a match is found in this
-order, and the first method that succeeds is recorded as ``match_method``:
-
-1. ``exact``: the names are equal once punctuation and case are ignored;
-2. ``ops+ckt``: the DAM name is the operations name followed by the CRR circuit id;
-3. ``prefix``: exactly one DAM name is the operations name followed by at most two
-   characters;
-4. ``prefix+x``: several DAM names fit, but exactly one of those not already matched
-   to another CRR branch has the same reactance (see ``reactance_agrees``);
-5. ``unmatched``: the CRR branch has no operations name, a placeholder, or several
-   DAM candidates (``n_candidates`` says how many fit the prefix).
-
-Every CRR branch appears once; DAM branches nothing matched appear with a null CRR
-side. Differences are never smoothed over: a match records identity only.
+Branches (MAT-01, MAT-02): the CRR mapping workbook's ``Operations_Name`` against the DAM
+``Branch Name``, in order: ``exact`` (punctuation and case ignored), ``ops+ckt`` (the name plus
+the CRR circuit id), ``prefix`` (exactly one DAM name extends it by at most two characters),
+``prefix+x`` (several do, and one unclaimed candidate has the same reactance), else
+``unmatched`` with ``n_candidates``. Buses (MAT-03): a settlement point both models place on one
+bus, then the votes of matched branch ends. Contingencies (MAT-04): by name, then by the
+translated member set. Every CRR element appears once; unmatched DAM elements appear with a
+null CRR side (MAT-05). Details: docs/datasets/identity-and-matching.md.
 """
 
 from __future__ import annotations
@@ -50,11 +42,7 @@ REACTANCE_TOLERANCE = 0.01  # relative; measured on real packages by checks/iden
 
 
 def reactance_agrees(crr_x: pl.Expr, dam_x: pl.Expr, tolerance: float = REACTANCE_TOLERANCE) -> pl.Expr:
-    """Whether two reactances describe the same element, allowing for the DAM floor.
-
-    Both magnitudes are raised to ``DAM_REACTANCE_FLOOR`` before the relative difference
-    is taken, so a CRR tie matched to a DAM branch at the floor counts as agreeing.
-    """
+    """Whether two reactances describe the same element: both magnitudes raised to ``DAM_REACTANCE_FLOOR``, then compared within ``tolerance``."""
     a = pl.max_horizontal(crr_x.abs(), pl.lit(DAM_REACTANCE_FLOOR))
     b = pl.max_horizontal(dam_x.abs(), pl.lit(DAM_REACTANCE_FLOOR))
     return (a - b).abs() <= tolerance * pl.max_horizontal(a, b)
@@ -139,18 +127,11 @@ def match_buses(crr_buses: pl.DataFrame, dam_buses: pl.DataFrame, crr_branch: pl
                 branch_matches: pl.DataFrame) -> pl.DataFrame:
     """One row per CRR bus with its DAM bus, plus unmatched DAM buses; both sides are ``core.bus`` rows.
 
-    Methods, first that succeeds wins:
-
-    1. ``settlement_point``: settlement point names attached to exactly one bus on
-       each side (zones and hubs attach to many CRR buses and are skipped) vote for a
-       (CRR bus, DAM bus) pair; a pair is accepted when every point on either bus
-       agrees on it, so several resource nodes on one bus count as one match with
-       ``n_votes`` points behind it;
-    2. ``branch_endpoints``: over the matched branches, count how often a CRR bus
-       and a DAM bus sit at the same end (either orientation); accept a pair when it
-       is the top vote for both buses and either has at least two votes or both buses
-       have a single matched branch;
-    3. ``unmatched``, with the number of competing candidates.
+    ``settlement_point``: a settlement point attached to exactly one bus on each side votes for the pair,
+    accepted when every such point on either bus agrees (``n_votes``). ``branch_endpoints``: over matched
+    branches, the (CRR bus, DAM bus) pair at the same end is accepted when it is the top vote for both buses
+    and has two votes or both buses have a single matched branch. A bus whose top vote ties stays
+    ``unmatched`` with its ``n_candidates``.
     """
     crr_keys = crr_buses.select(pl.col("bus_key").alias("crr_bus_key")).unique()
     dam_keys = dam_buses.select(pl.col("bus_key").alias("dam_bus_key")).unique()
@@ -214,12 +195,10 @@ CONTINGENCY_COLUMNS = ("crr_contingency_id", "dam_contingency_id", "match_method
 def match_contingencies(crr_outages: pl.DataFrame, dam_outages: pl.DataFrame, branch_matches: pl.DataFrame) -> pl.DataFrame:
     """One row per CRR contingency with its DAM contingency, plus unmatched DAM contingencies.
 
-    CRR outages are translated into DAM branch ids through ``branch_matches`` before any
-    comparison. Methods, first that succeeds wins: ``name`` (same name, case and
-    whitespace ignored), then ``members`` (the translated CRR branch set equals exactly
-    one DAM contingency's branch set), else ``unmatched``. Every matched pair records
-    how many branches each side outages and how many they share, and how many DAM rows
-    are loads, generators or settlement points, which CRR never lists.
+    CRR outages are translated to DAM branch ids through ``branch_matches`` first. ``name``: the same name,
+    case and whitespace ignored; ``members``: the translated branch set equals exactly one DAM contingency's.
+    Each pair records both sides' branch counts, the shared count, the DAM rows that are loads, generators
+    or settlement points, and ``has_split_bus``.
     """
     translate = branch_matches.filter(pl.col("match_method") != "unmatched").select("crr_branch_id", "dam_branch_id")
     crr_dam = (crr_outages.filter(pl.col("branch_id").is_not_null())

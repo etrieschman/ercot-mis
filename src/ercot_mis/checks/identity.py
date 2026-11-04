@@ -7,10 +7,8 @@ For one monthly CRR model and one DAM hour, sections of counts, never names:
 - Bus identity: how stable the equipment-based bus keys are, and the CRR ties (TOP-10).
 - Matching and coverage: how ``core.match_*`` and ``core.coverage`` do on the pair (MAT-01 to MAT-04).
 
-The raw-file counts that settled the key design in 2026-09 are recorded in
-``docs/datasets/identity-and-matching.md``; core now carries those facts as columns.
-
-The dataset notes say what these measure; the numbers live in ``data/reports/identity/``.
+docs/datasets/identity-and-matching.md says what each section measures; the numbers live in
+``data/reports/identity/``.
 """
 
 from __future__ import annotations

@@ -1,23 +1,11 @@
-"""``core.hourly_award``: every energy award the day-ahead market made, as a signed MW at a settlement point.
+"""``core.hourly_award``: every energy award of a DAM operating day as a signed MW at a settlement point.
 
-Built from the 60-Day DAM Disclosure (``raw.dam_60d_*``), one package per operating day.
-A row is one award: the hour (``interval_start_utc`` and ERCOT's ``delivery_date`` and
-``hour_ending``), the settlement point, the award's ``kind`` and its ``mw`` signed as an
-injection into the grid (INJ-01):
-
-- ``generation`` and ``storage``: a resource's awarded quantity at its resource node
-  (storage charging is a negative award in the file and stays negative);
-- ``energy_only_offer``: positive, at its settlement point;
-- ``energy_bid``: a purchase; the file already writes bid awards as negative MW and they
-  are kept as written (adding a sign of our own doubled them, measured on the first days);
-- ``ptp_obligation_source`` / ``ptp_obligation_sink``: a point-to-point obligation (bid or
-  linked to an option) is an injection at its source and the same withdrawal at its sink.
-
-Summed over a settlement point and hour this is the DAM's net injection, ``q``
-(``out.injection``). Summed over the system it should balance to zero within the
-market's tolerance (INJ-02), which ``checks/injections.py`` measures. The files
-carry no DST flag, so on the long day the repeated hour is read as its first occurrence
-(NAM-08).
+Columns: ``interval_start_utc``, ERCOT's ``delivery_date`` and ``hour_ending``, ``settlement_point``,
+``kind`` (``generation``, ``storage``, ``energy_only_offer``, ``energy_bid``, ``ptp_obligation_source``,
+``ptp_obligation_sink``), ``mw`` signed as an injection into the grid, ``source_id``, ``doc_id``.
+Source: the 60-Day DAM Disclosure (NP3-966-ER), one package per operating day. INJ-01 fixes the
+signs, INJ-02 the hourly balance (``checks/injections.py``), NAM-08 the hour instant. Details:
+docs/datasets/dam-disclosure.md.
 """
 
 from __future__ import annotations
@@ -34,6 +22,7 @@ COLUMNS = ("interval_start_utc", "delivery_date", "hour_ending", "settlement_poi
 
 
 def _rows(frame: pl.DataFrame, point: str, mw: str, kind: str, source_id: str, sign: float = 1.0) -> pl.DataFrame:
+    """One award table as (hour, ``settlement_point``, ``kind``, signed ``mw``, ``source_id``) rows; zero and null awards are dropped."""
     return frame.select(
         pl.col("delivery_date").cast(pl.String), pl.col("hour_ending").cast(pl.String),
         pl.col(point).cast(pl.String).alias("settlement_point"), pl.lit(kind).alias("kind"),
@@ -43,7 +32,7 @@ def _rows(frame: pl.DataFrame, point: str, mw: str, kind: str, source_id: str, s
 
 def hourly_awards(gen: pl.DataFrame, esr: pl.DataFrame, energy_only_offers: pl.DataFrame, energy_bids: pl.DataFrame,
                   ptp_bids: pl.DataFrame, ptp_options: pl.DataFrame, doc_id: str | None = None) -> pl.DataFrame:
-    """One frame of signed awards from the six award tables of one disclosure day, tagged with its document."""
+    """One frame of signed awards from the six award tables of one disclosure day, tagged with its document (INJ-01)."""
     parts = [
         _rows(gen, "settlement_point_name", "awarded_quantity", "generation", "resource_name"),
         _rows(esr, "settlement_point_name", "awarded_quantity", "storage", "resource_name"),

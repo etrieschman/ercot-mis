@@ -1,23 +1,11 @@
-"""``core.load``: every load of a model, where it sits and whether it is in service.
+"""``core.load``: every load of a snapshot, where it sits and whether it is in service.
 
-Loads are where the two models most often disagree without saying so: a load out for
-a long outage, a temporary one added on a split bus, a distribution factor moved to
-another load. Core records each model's loads as it gives them; comparing the two is
-``core.diff_load``'s job, and nothing is changed here.
-
-One row per load per snapshot:
-
-- ``load_id``: the DAM's load name; for CRR, whose RAW names only the bus, the bus
-  name and the PSS/E load id (``<bus name>:<id>``, with ``#<bus number>`` when two
-  buses share a name);
-- ``node_number`` (CRR) or ``bus_number`` (DAM), ``psse_load_id`` and ``bus_key``: where it is attached;
-- ``is_in_service`` and ``mw`` from the RAW record (status and constant-power MW);
-- DAM only, from the ``Ld`` file: ``load_zone``, ``weather_zone``, ``is_ercot_load``,
-  ``is_conforming``, ``mw_ldf`` (the distribution factor the zone price is weighted
-  by), ``is_rollover_capable`` and ``n_rollover_targets`` (the loads this one's share
-  moves to when it is out).
-
-The CRR model has no per-load zone or factor; its zone weights are per bus, in
+Columns: ``load_id`` (the DAM load name; for CRR ``<node name>:<load id>``, with ``#<node number>``
+when two nodes share a name), ``node_number`` (CRR) or ``bus_number`` (DAM), ``psse_load_id``,
+``bus_key``, ``is_in_service`` and ``mw`` from the RAW record, and from the DAM ``Ld`` file
+``load_zone``, ``weather_zone``, ``is_ercot_load``, ``is_conforming``, ``mw_ldf``,
+``is_rollover_capable`` and ``n_rollover_targets``. Each model's loads are kept as given;
+``core.diff_load`` compares them. The CRR model's zone weights are per bus, in
 ``core.settlement_point_bus``.
 """
 
@@ -36,7 +24,7 @@ _DAM_ONLY = {"load_zone": pl.String, "weather_zone": pl.String, "is_ercot_load":
 
 
 def crr_loads(nodes: pl.DataFrame, psse_load: pl.DataFrame) -> pl.DataFrame:
-    """From one month's ``psse_load``; the RAW comment is ``<bus number> <bus name> <load id> <owner>``."""
+    """``core.load`` for one CRR month from ``psse_load``; the RAW comment is ``<node number> <node name> <load id> <owner>``."""
     to_node = nodes.select("node_number", "bus_key")
     tokens = pl.col("comment").str.strip_chars().str.split(" ")
     bus_name = tokens.list.slice(1, tokens.list.len() - 3).list.join(" ")
@@ -44,7 +32,7 @@ def crr_loads(nodes: pl.DataFrame, psse_load: pl.DataFrame) -> pl.DataFrame:
                              pl.col("i").cast(pl.Int64).alias("node_number"), pl.col("id").cast(pl.String).str.strip_chars().alias("psse_load_id"),
                              (pl.col("status") == 1).alias("is_in_service"), pl.col("pl").cast(pl.Float64).alias("mw"))
             .join(to_node, on="node_number", how="left")
-            # Two buses can share a name; those loads get the bus number as well.
+            # Two nodes can share a name; those loads get the node number as well.
             .with_columns(pl.when(pl.len().over("load_id") > 1).then(pl.col("load_id") + "#" + pl.col("node_number").cast(pl.String))
                           .otherwise(pl.col("load_id")).alias("load_id"))
             .with_columns([pl.lit(None, dtype).alias(name) for name, dtype in _DAM_ONLY.items()] + [pl.lit(None, pl.Int64).alias("bus_number")])

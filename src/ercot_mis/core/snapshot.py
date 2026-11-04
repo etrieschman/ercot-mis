@@ -1,10 +1,10 @@
-"""``core.snapshot``: one row per network model, with the IDs the core layer is keyed by.
+"""``core.snapshot``: one row per network model, with the ids the core layer is keyed by.
 
-``dam:2026-10-14:he07:r1``, ``crr:monthly:2026-10:r1``,
-``crr:annual:2029.1st6:seq6:2029-01:r2``. The revision ``r<n>`` orders packages that
-describe the same logical model by posting time: a DAM operating day, a CRR month, an
-annual term and sequence (``_Upd`` packages are revisions). A DAM hour also carries
-``interval_start_utc`` (``clock.study_hour_start``), the instant every hourly join uses.
+``dam:2026-10-14:he07:r1``, ``crr:monthly:2026-10:r1``, ``crr:annual:2029.1st6:seq6:2029-01:r2``.
+The revision ``r<n>`` orders the packages that describe one model (a DAM operating day, a CRR
+month, an annual term and sequence; ``_Upd`` packages are revisions) by posting time (TOP-11). A
+DAM hour also carries ``interval_start_utc`` (``clock.study_hour_start``), the instant every
+hourly join uses (NAM-08).
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ def is_dam(snapshot_id: str) -> bool:
 
 
 def logical(emil_id: str, member_paths: list[str]) -> Logical | None:
+    """What a package describes, from its member names; None when no member names a model."""
     if emil_id == DAM_PRODUCT:
         days = {m.identity["operating_date"] for n in member_paths if (m := dam.classify_member(n)) and m.identity["operating_date"]}
         return Logical("dam", (min(days),), (), min(days)) if days else None

@@ -1,16 +1,10 @@
-"""The price identity: do our shift factors rebuild ERCOT's DAM prices?
+"""The price identity (PRC-01): do the shift factors rebuild ERCOT's DAM settlement point prices?
 
-The DAM has no loss term, so at every node (PRC-01)
-
-    price = system price - sum over binding rows of (shadow price x shift factor)
-
-ERCOT publishes the binding rows with their shadow prices (NP4-191-CD), the settlement
-point prices (NP4-190-CD) and the system price (NP4-523-CD). For one DAM hour this check
-rebuilds every settlement point's price from those and our network, and reports what is
-left: the residual. It is zero everywhere when the network, the names and the contingency
-definitions are right. A row the network cannot apply lowers ``share_of_shadow_price_used``;
-the residual tests the model only when that share is one. Nothing about limits is tested
-here; that is the flow check.
+The DAM has no loss term, so at every bus the price is the system price minus, over the binding
+rows, the shadow price times the shift factor. ERCOT publishes the binding rows (NP4-191-CD), the
+settlement point prices (NP4-190-CD) and the system price (NP4-523-CD). For one DAM hour this
+check rebuilds every settlement point's price and reports the residual; a row the network cannot
+apply lowers ``share_of_shadow_price_used``. The flow check tests the limits.
 """
 
 from __future__ import annotations

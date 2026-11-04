@@ -1,4 +1,4 @@
-"""ercot-mis: fetch, cache and standardize ERCOT MIS data locally, with provenance."""
+"""ercot-mis: fetch, archive and standardize ERCOT MIS data locally; every table records the ERCOT document it came from."""
 
 from pathlib import Path
 
@@ -30,11 +30,7 @@ __all__ = [
 
 
 def open(data_dir: str | Path | None = None) -> Session:  # em.open() is the API; it shadows the builtin on purpose
-    """Open the local data folder, creating it with owner-only permissions if needed.
-
-    Resolution order: ``data_dir``, then ``$ERCOT_MIS_DATA``, then ``data/`` in this
-    repository. Warns if the folder is inside a cloud-synced location.
-    """
+    """A ``Session`` on the data folder: ``data_dir``, else ``$ERCOT_MIS_DATA``, else ``data/`` in this repository; created owner-only if missing."""
     path = resolve_data_dir(data_dir)
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     secure_permissions(path)

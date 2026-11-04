@@ -41,6 +41,7 @@ def days(session) -> list[date]:
 
 
 def run(session, day: date) -> dict:
+    """One day's balance; writes its report."""
     result = check_day(session, day)
     write_report(session, "injections", str(day), result)
     return result

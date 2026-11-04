@@ -1,13 +1,9 @@
-"""Build the core layer from raw.
+"""Build the core layer from raw: ``core/snapshot.parquet``, one file per table in ``TABLES`` per package, and ``hourly_award`` per disclosure day.
 
-``core/snapshot.parquet`` lists every network model. Then, per archived package, one file
-per table in ``TABLES`` at ``core/<table>/emil_id=<EMIL>/<blob16>.parquet``, and per 60-day
-disclosure day one ``hourly_award`` file. Tables are computed per snapshot (a DAM hour, a
-CRR month) from the package's raw tables and stacked with ``snapshot_id`` first.
-
-Each file is registered in the catalog like a raw artifact. Its key covers the code
-(``core_id``), everything else that shapes it (``package_inputs``) and the package bytes,
-so a package is rebuilt exactly when one of those changes.
+Tables are computed per snapshot (a DAM hour, a CRR month) from the package's raw tables and
+stacked with ``snapshot_id`` first. Every file is registered in the catalog under a key over the
+code (``core_id``), the other inputs (``package_inputs``) and the package bytes, so a package is
+rebuilt exactly when one of them changes.
 """
 
 from __future__ import annotations
@@ -209,7 +205,7 @@ IDENTITY = ("emil_id", "doc_id", "blob_sha256", "member_sha256", "member_path") 
 
 
 def _raw(session, table: str, emil_id: str, blob_sha256: str) -> pl.DataFrame | None:
-    """One raw table of one package without its identity columns (a DAM package is ~200 MB in memory this way, ~500 with them)."""
+    """One raw table of one package without its identity columns, which no core builder reads."""
     path = session.data_dir / raw_build.artifact_path(raw_build.LAYER, table, emil_id, blob_sha256)
     if not path.is_file():
         return None

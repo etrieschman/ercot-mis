@@ -1,13 +1,9 @@
-"""The catalog: what ERCOT has listed, what is archived, and how it arrived.
+"""The catalog: what ERCOT listed, what is archived, how it arrived, and every file a build wrote.
 
-One DuckDB file in the data folder. Rows are inserted or refreshed, never deleted,
-so the catalog is also the history of what ERCOT offered and when. That matters
-because EWS forgets everything older than a product's display window.
-
-DuckDB lets one process write a file while nobody else has it open. Readers open
-``read_only=True`` and writers keep their connection only as long as the write, so
-a scheduled pull and a notebook seldom collide; when they do, opening waits and
-retries for a short while before failing.
+One DuckDB file in the data folder. Rows are inserted or refreshed, never deleted, so the
+catalog is also the record of what ERCOT offered and when. DuckDB lets one process hold the
+file at a time, so readers open it read-only per call and writers hold it only for the write;
+an open that meets a lock waits and retries (CLAUDE.md, "Provenance").
 """
 
 from __future__ import annotations
@@ -31,7 +27,7 @@ if TYPE_CHECKING:
     from .store import Member, StoredBlob
 
 SCHEMA = (
-    # Every document a source has listed, refreshed each time it is listed again.
+    # Every document a source has listed, refreshed each time it is listed.
     """CREATE TABLE IF NOT EXISTS remote_doc (
         emil_id VARCHAR NOT NULL,
         doc_id VARCHAR NOT NULL,
@@ -66,7 +62,7 @@ SCHEMA = (
         size_bytes BIGINT NOT NULL,
         PRIMARY KEY (blob_sha256, member_path)
     )""",
-    # One row per arrival: the same bytes can be ingested once and fetched later.
+    # One row per arrival; the same bytes can arrive by ingest and later by fetch.
     """CREATE TABLE IF NOT EXISTS archive_source (
         sha256 VARCHAR NOT NULL,
         emil_id VARCHAR NOT NULL,
@@ -84,7 +80,7 @@ SCHEMA = (
         finished_at TIMESTAMPTZ,
         failed INTEGER
     )""",
-    # One row per written file; the key changes whenever the parser or the input does.
+    # One row per written file; the key changes when the parser or the input changes.
     """CREATE TABLE IF NOT EXISTS artifact (
         artifact_key VARCHAR PRIMARY KEY,
         layer VARCHAR NOT NULL,
@@ -111,12 +107,12 @@ TABLES = {re.search(r"EXISTS (\w+)", statement).group(1) for statement in SCHEMA
 
 
 def posting_order(posted_at: datetime | None, tiebreak: str) -> tuple:
-    """Sort key for revisions of one document: ERCOT's posting time, oldest first; an undated one counts as oldest (TOP-11)."""
+    """The sort key of a posting: ERCOT's posting time, oldest first, an undated one first of all (TOP-11)."""
     return (posted_at is not None, posted_at or datetime.min.replace(tzinfo=timezone.utc), len(tiebreak), tiebreak)
 
 
 def _connect(path: Path, read_only: bool) -> duckdb.DuckDBPyConnection:
-    """Open the file, waiting out another process's lock for a while."""
+    """A connection to the file, after waiting out another process's lock for up to about a minute."""
     for wait in (*LOCK_WAITS, None):
         try:
             return duckdb.connect(str(path), read_only=read_only)
@@ -139,7 +135,7 @@ LOCK_WAITS = (1, 2, 5, 10, 20, 30)
 
 CATALOG_FILE = "catalog.duckdb"
 
-# Catalog files this process has checked for every table; a read-only open checks each file once.
+# Catalog files this process has checked for every table; a read-only open checks a file once.
 _CHECKED: set[Path] = set()
 
 
@@ -149,7 +145,7 @@ class Catalog:
         self.read_only = read_only
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         if read_only and self.path not in _CHECKED and (not self.path.is_file() or self._missing_tables()):
-            Catalog(self.path).close()  # create the file, or tables a newer version added
+            Catalog(self.path).close()  # create the file, or the tables a newer version added
         self.con = _connect(self.path, read_only)
         _CHECKED.add(self.path)
         self.con.execute("SET TimeZone = 'UTC'")
@@ -167,11 +163,11 @@ class Catalog:
         return not TABLES <= present
 
     def query(self, sql: str, params: list | None = None) -> list[tuple]:
-        """Ad hoc SQL on the catalog; returns the rows."""
+        """The rows of an ad hoc SQL query."""
         return self.con.execute(sql, params or []).fetchall()
 
     def latest_doc(self, emil_id: str, doc_ids: Iterable[str]) -> str:
-        """Of ``doc_ids``, the one ERCOT posted last; an undated one counts as oldest (TOP-11)."""
+        """The one of ``doc_ids`` ERCOT posted last (TOP-11)."""
         doc_ids = list(doc_ids)
         posted = dict(self.documents(emil_id, doc_ids).select("doc_id", "posted_at").rows())
         return max(doc_ids, key=lambda d: posting_order(posted.get(d), d))
@@ -180,7 +176,7 @@ class Catalog:
         self.con.close()
 
     def record_listing(self, product: Product, docs: Iterable[RemoteDoc], listed_at: datetime) -> None:
-        """Insert newly listed documents and refresh the ones seen before."""
+        """Insert the documents listed for the first time and refresh the rest."""
         unique = {d.doc_id: d for d in docs if d.doc_id}
         if not unique:
             return
@@ -205,7 +201,7 @@ class Catalog:
         )
 
     def documents(self, emil_id: str, doc_ids: Iterable[str] | None = None) -> pl.DataFrame:
-        """Catalogued documents for a product, with whether (and as which bytes) each is archived."""
+        """A product's listed documents, each with ``is_archived`` and the ``sha256`` of its bytes."""
         filters, params = ["d.emil_id = $emil_id"], {"emil_id": emil_id}
         if doc_ids is not None:
             ids = list(doc_ids)
@@ -235,7 +231,7 @@ class Catalog:
         return self.con.execute("SELECT 1 FROM archive_blob WHERE sha256 = ?", [sha256]).fetchone() is not None
 
     def add_blob(self, blob: StoredBlob, product: Product, members: list[Member]) -> None:
-        """Record archived bytes and their zip members in one transaction."""
+        """Record a blob and its zip members in one transaction."""
         self.con.begin()
         try:
             self.con.execute(
@@ -261,7 +257,7 @@ class Catalog:
         method: str,
         original_name: str | None,
     ) -> None:
-        """Record how archived bytes arrived; an identical arrival is recorded once."""
+        """Record how a blob arrived (fetch or ingest, and from which listing); an identical arrival is recorded once."""
         self.con.execute(
             """INSERT INTO archive_source
                SELECT $sha256, $emil_id, $doc_id, $method, $original_name, $stored_at
@@ -276,11 +272,7 @@ class Catalog:
         )
 
     def doc_id_for_name(self, emil_id: str, name: str) -> str | None:
-        """The listed document a local file name belongs to, if exactly one matches.
-
-        Matches ERCOT's name as listed, with or without ``.zip``, and the sanitized form
-        the old notebook script saved files under.
-        """
+        """The one listed document a local file name belongs to, or None; the name may lack ``.zip`` or have its punctuation replaced."""
         stem = name[:-4] if name.lower().endswith(".zip") else name
         rows = self.con.execute(
             """SELECT DISTINCT doc_id FROM remote_doc
@@ -294,7 +286,7 @@ class Catalog:
     # ------------------------------------------------------------- provenance
 
     def packages(self, emil_id: str) -> list[dict]:
-        """Archived packages of a product, newest posting first, each with its member hashes."""
+        """A product's archived packages, newest posting first, each with its document id, posting time, operating date and member hashes."""
         rows = self.con.execute(
             """SELECT b.sha256, b.path, any_value(s.doc_id) AS doc_id, max(d.posted_at) AS posted_at,
                       try_cast(any_value(d.operating_date) AS DATE) AS operating_date,
@@ -317,7 +309,7 @@ class Catalog:
         return {k for (k,) in self.con.execute("SELECT artifact_key FROM artifact WHERE layer = ?", [layer]).fetchall()}
 
     def artifacts(self, layer: str) -> pl.DataFrame:
-        """Every written file of a layer, oldest first."""
+        """Every file a build wrote in a layer, oldest first."""
         return self.con.execute("SELECT * FROM artifact WHERE layer = $layer ORDER BY written_at", {"layer": layer}).pl()
 
     def start_run(self, command: str) -> str:
@@ -331,13 +323,13 @@ class Catalog:
                          [datetime.now(timezone.utc), failed, run_id])
 
     def add_artifacts(self, run_id: str, layer: str, emil_id: str, blob_sha256: str, parser: str, placed: list) -> None:
-        """Register written files and their member lineage; replaces earlier rows for the same key."""
+        """Register a build's files and the zip members behind each; an earlier row for the same file is replaced."""
         self.con.begin()
         try:
             for key, artifact, rel in placed:
                 self.con.execute("DELETE FROM lineage WHERE artifact_key = ?", [key])
                 self.con.execute("DELETE FROM artifact WHERE artifact_key = ?", [key])
-                # A parser change gives a new key for the same (blob, table); drop the stale row too.
+                # A parser change gives the same (blob, table) a new key; the row under the old key goes.
                 self.con.execute("DELETE FROM artifact WHERE layer = ? AND blob_sha256 = ? AND table_name = ?",
                                  [layer, blob_sha256, artifact.table])
                 self.con.execute("INSERT INTO artifact VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -354,7 +346,7 @@ class Catalog:
 
 @contextmanager
 def writing(data_dir: Path) -> Iterator[Catalog]:
-    """The writable catalog, held only for the duration of the block."""
+    """The writable catalog, open only inside the block."""
     writer = Catalog(Path(data_dir) / CATALOG_FILE)
     try:
         yield writer
@@ -363,12 +355,9 @@ def writing(data_dir: Path) -> Iterator[Catalog]:
 
 
 class ReadOnlyCatalog:
-    """Read-only catalog access that opens a connection per call and closes it before returning.
+    """Every ``Catalog`` method, each call on its own read-only connection that closes before returning.
 
-    DuckDB allows one process at a time on the file, writer or readers, so a session that
-    kept a read-only connection open (a notebook left running) would block the daily
-    pull's writes. Every method of :class:`Catalog` is available; each call is its own
-    short connection, and results are plain frames and lists, never live cursors.
+    A notebook that kept a connection open would block the daily pull's writes.
     """
 
     read_only = True
