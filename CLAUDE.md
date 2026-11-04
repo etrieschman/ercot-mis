@@ -295,78 +295,41 @@ measurements live in the scripts that make them and the dated reports under
 
 ## Pick up here (next session)
 
-State at the end of 2026-10-28 (the repo moved to a new Mac that day). Scope unchanged since 2026-10-01: **an impeccable fetcher
+State at the end of 2026-11-04. Scope unchanged since 2026-10-01: **an impeccable fetcher
 for the network models and their inputs; research (ftr_align cases) is on hold.** Rules
-confirmed by the user on 2026-10-06, on top of the three from 2026-10-01 (strict
-vocabulary; the register is for choices and `diff_*` for discrepancies; models are tested
-against what cleared without re-clearing):
+confirmed by the user on 2026-11-04, on top of those from 2026-10-01, 2026-10-06 and
+2026-10-28 (strict vocabulary; the register is for choices and `diff_*` for discrepancies;
+models are tested against what cleared without re-clearing; definitions come from ERCOT's
+documents; no PDF parsing yet; checks are reports; a notebook cell, not a page; no statistics
+in the code; protocol first, always; every register row names its measurement; legibility):
 
-- **Definitions come from the ERCOT document that publishes them.** Inferring a
-  constraint's members from price residuals is a diagnostic, never a source; the
-  hand-kept member file is no longer read. **No PDF parsing yet**: NP3-770-M (one text
-  PDF per GTC, six to nine pages, member lines readable) is the standing to-do, not a task.
-- **The checks are reports.** No pass/fail threshold until the user says so; the aim is
-  to keep closing the gap.
-- **Explaining the repo means a notebook cell, not a markdown page.** `demo/tour.ipynb`
-  walks through every call against its own gitignored `demo/data/`; the guard refuses
-  a notebook with outputs (`nbstripout` before committing).
-- **No statistics in the code.** Core tables follow ERCOT's files and the protocols; the
-  check scripts compare directly (counts, differences, their sizes) and never fit,
-  regress or correlate. Correlations and fits are for exploring a question by hand,
-  never for deciding what the code does.
-- **Protocol first, always** (2026-10-28, "critical"). Before picking any rule or weight,
-  find ERCOT's own rule (Protocols, READMEs) and ERCOT's data for it, scanning every raw
-  table. Only when that data is not published may we pick, and the pick is a `forced`
-  register row whose check names the script that confirms it (SP-05 is the example).
-- **Every register row names a script or test that measures it** (`checks/register.py`
-  for rows no other check covers; `scripts/check.py register`).
-- **Legibility** (2026-10-28): the package reads layer by layer (`tests/test_layers.py`);
-  no one-line helper unless it is used everywhere; short declarative docstrings;
-  `~/dev/flexload` is the reference style (dense lines, no auto-formatter).
+- **Plain language in chat.** No metaphors, no loose labels. A decision is stated as the
+  thing, what is wrong with it, the choices, the pick. The user could not follow the first
+  version of today's proposals.
+- **Node and bus, tightened.** A node is a point of a node-breaker model (one CRR RAW
+  record); a bus is a point of a bus-branch model (one DAM RAW record, or the CRR nodes that
+  closed breakers join). `core.bus` holds both models, `core.node` is CRR-only, `out.network`
+  rows are buses. The column tuples in code are the schema; no markdown rename tables.
+- **An option exists only if a check varies it.** Everything else is ERCOT's practice, fixed
+  in code and named in the register. `Options` is `contract_ties` and `time_of_use`. Never
+  call an option a "switch".
+- **The yardstick is `~/dev/flexload`:** modules import one way, one name per rule, records
+  without behavior, no wrapper layer, no helper used once, short declarative docstrings.
 
-Done on 2026-10-28 (all on `main`): the flow check; combined-cycle trains placed from the
-`Gn` file (SP-05); four faithfulness fixes (match cache key, undated GTL postings, split-bus
-end orientation, reposted disclosure days); the checks moved into `ercot_mis/checks/` with
-one binding-row resolver and one runner (`scripts/check.py`); core and network builders in
-named steps; dead code out; a measurement for every register row. Refactors were proven
-output-identical by diffing reports and recomputed packages before and after.
-
-Built on 2026-10-06 (all on `main`): seven more products parsed (system lambda,
-de-energized points, electrically similar points, heuristic bus mapping, load
-distribution factors; ERCOT's settlement point and hub mappings; the 60-day disclosure
-with all 17 tables); split-bus rows carried by `core.contingency_outage.split_end` and
-`out.network` (NAM-09 verified); DAM hub weights per Protocols 3.5.2 (equal per Hub
-Bus, then per energized bus; average hubs from the four regional hubs; SP-01 stated);
-the price check uses the published system lambda, reports the residual by settlement
-point kind, renormalizes hub and zone weights per constraint over energized buses
-(PRC-03 stated: Protocols 4.6.1.2, 3.5.2, 4.5.1(8)), and counts de-energized points and
-electrically-similar groups; PRC-06 (no shift factor cutoff) measured; the daily pull
-runs the price check on the newest two days, pulls every Public API product with a
-31-day lookback and logs the at-risk line; `core.coverage` counts what each model
-carries (viewer side panel, identity report); the viewer's limit column is the
-network's enforced limit.
-
-What the 2026-09-30 reports say now (`data/reports/prices/`; the pre-change copies are
-in `prices_before_2026-10-06/`): hours without a GTC miss reproduce every settlement
-point within about a dollar and hubs to the cent; hours where the evening GTC binds are
-worse than before because the inferred members are gone, which is the honest state until
-NP3-770-M is parsed. Zone misses grow with GTC shadow price too.
-
-**Adversarial audit of 2026-10-06 (afternoon)**, four reviews (faithfulness, correctness and
-efficiency, readability, register truthfulness), the confirmed findings fixed the same day:
-hourly facts join on `interval_start_utc` (the long day of 2026-11-01 would have shifted
-every GTC limit by an hour; `clock.py`, NAM-08); the core cache key covers the raw parser,
-the GTL document, the crosswalk and the snapshot ids; the session holds no catalog
-connection (a notebook left open no longer blocks the pull); no-table documents are
-recorded instead of being re-parsed daily; core temporaries live in `core/.partial/`;
-unknown posting times sort oldest and revisions are picked by number (TOP-11); the price
-check has a fixed sign (PRC-01), records a binding row under a contingency our model lacks
-as a discrepancy (RAT-10), flags partial contingencies, counts binding rows by limit flags
-(RAT-09 measured: all secured and limited) and compares ERCOT's cut-off lists with ours
-(NAM-07); load zone weights apply the `Ld` file's rollover (SP-02; under one percent of
-zone MW); the register's overstated rows say what was actually checked and eight missing
-decisions have rows; node and bus are used consistently in code and docs; the
-README and the network note are current. Done the same evening: injections and the hourly balance (INJ-01, INJ-02), the published load distribution factors against the model's (SP-02 verified), the transformer guard and tap test (RAT-01 guarded, RAT-11 measured), the network cache removed, the identity script's loop, duplicate rating rows counted, `model_kind` renamed. What remains is in the numbered list below.
+Done on 2026-11-04 (all on `main`, one commit per step; every refactor proven by hashing the
+core tables, the raw tables and one price-check hour before and after, except where the
+schema changed on purpose): the daily pull's one failure (a polars panic on a day ERCOT did
+not post; panics now count as failures; `build_core` records seconds); match and diff tables
+kept in memory per session instead of on disk (the cache folders were deleted); `sources/`
+and `archive/` flattened into `ews`, `public_api`, `store`, `catalog`; `fetch.py` holds
+listing, fetching and ingesting and `pull.py` the daily pull's bookkeeping, so `Session` is a
+hub; `Product.is_fetched` replaces `take`; one record for every package member, one parser
+table, one artifact path, one union-find, one branch-resolution join, one flag parser, one
+quantiles function, one place for the newest pair and a day's hours; `Options` trimmed to
+two; the identity check keeps only the sections the register cites; the register's
+measurements are plain functions in one table; dead code and single-caller parameters gone;
+the node/bus redesign with a full core rebuild (the price check for 2026-11-04 and the flow
+check for 2026-09-05 reproduce the pull log's lines).
 
 First, check health (2 min):
 - `cat data/logs/last_run.json`: `level` is `ok`, `missed` (flags say why: no run for a
@@ -376,13 +339,22 @@ First, check health (2 min):
   on purpose (decided 2026-10-28): missed pulls are flagged, not prevented.
 - `tail -40 data/logs/daily_pull.log`: `failed 0`;
   the new lines are `previous run finished ... days ago`, `at risk: ...` and one
-  `price check <day>: ...` and `flow check <day>: ...` lines. **The 2026-10-29 run is the
-  first launchd run on the new Mac: confirm it appears in the log.**
+  `price check <day>: ...` and `flow check <day>: ...` lines. The job is scheduled for 07:00
+  but the Mac is asleep then, so launchd runs it on wake, about 10:00 local; the start times
+  in the log show it.
 - `launchctl list | grep ercot-mis`: last exit code 0.
 - The user may schedule a daily wake (`sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00`); not done.
 
 Then, in order:
 
+0. **Legibility leftovers from the 2026-11-04 reviews**: module docstrings that re-teach the
+   domain (`settlement_point`, `load`, `diff`, `match`, `award`, `ews`, `daily_pull`) cut to a
+   few lines that point at the dataset note; guards that only a test fixture can hit
+   (`"col" in frame.columns`, `generators is None`) replaced by required inputs and full
+   fixtures; `_keys`/`_finish` renamed for what they return; `diff.py` booleans get `is_`;
+   the three pasted `VERSION` comments; `checks/prices.check_hour` (132 lines) as one function
+   per measurement; `settlement_point_bus` rows sort by source now, and two builds still
+   differ by a float summation order of about 1e-17 in `weight`.
 1. **Flow check, follow-ups** (`checks/flows.py`, runs daily on the newest day with
    awards): base-case binding rows reproduce ERCOT's flow; contingency rows miss by a few MW
    at the median, with a long tail; a GTC with an incomplete borrowed member list misses by
