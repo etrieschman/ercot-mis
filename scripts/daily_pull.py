@@ -93,7 +93,7 @@ def notify(title: str, text: str, subtitle: str | None = None) -> None:
 
 def windowed_products() -> list[Product]:
     """Pulled EWS products with a display window: the only data a missed pull can lose."""
-    return [spec for spec in em.PRODUCTS.values() if spec.source == "ews" and spec.take == "pull" and spec.display_days]
+    return [spec for spec in em.PRODUCTS.values() if spec.source == "ews" and spec.is_fetched and spec.display_days]
 
 
 def _captured_path(mis: em.Session) -> Path:
@@ -132,13 +132,13 @@ def fetch_products(mis: em.Session, specs, captured: dict[str, datetime]) -> int
     """
     failed = 0
     for spec in specs:
-        if spec.source == "public_api" and spec.take == "track":
+        if spec.source == "public_api" and not spec.is_fetched:
             continue  # tracked Public API products are not listed daily; the archive keeps them for years
         # The Public API keeps years of history; a daily run looks back a month.
         since = None if spec.source == "ews" else date.today() - timedelta(days=PUBLIC_API_LOOKBACK_DAYS)
         began, began_at = time.monotonic(), datetime.now(timezone.utc)
         try:
-            if spec.take == "track":
+            if not spec.is_fetched:
                 listed = mis.list(spec.emil_id)
                 print(f"  {spec.emil_id}: tracked, {listed.height} listed, {time.monotonic() - began:.0f}s", flush=True)
                 continue

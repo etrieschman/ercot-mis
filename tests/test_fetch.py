@@ -117,7 +117,7 @@ def test_operating_dates_select_days(tmp_path, payloads):
 
 
 def test_tracked_products_are_listed_not_fetched(tmp_path):
-    with _mis(tmp_path, FakeSource([])) as mis, pytest.raises(ValueError, match="tracked, not pulled"):
+    with _mis(tmp_path, FakeSource([])) as mis, pytest.raises(ValueError, match="listed, not fetched"):
         mis.fetch("SYS-608-CD")
 
 

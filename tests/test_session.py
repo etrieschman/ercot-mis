@@ -72,6 +72,6 @@ def test_probe_refuses_public_api_products(tmp_path):
 
 def test_product_lookup():
     assert get_product(12354).emil_id == "SYS-608-CD"
-    assert get_product("12354").take == "track"
+    assert get_product("12354").is_fetched is False
     with pytest.raises(KeyError, match="Unknown product"):
         get_product("NP0-000")

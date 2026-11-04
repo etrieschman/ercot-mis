@@ -270,11 +270,8 @@ class Session:
         downloading anything, a fetch larger than the budget.
         """
         spec = get_product(product)
-        if spec.take != "pull":
-            raise ValueError(
-                f"{spec.emil_id} is tracked, not pulled: list() records its documents. "
-                "Set take='pull' in products.py to download it."
-            )
+        if not spec.is_fetched:
+            raise ValueError(f"{spec.emil_id} is listed, not fetched: list() records its documents. Set is_fetched=True in products.py to download it.")
         wanted = self._list(spec, since, until).filter(~pl.col("is_archived"))
         if operating_dates is not None:
             days = sorted({_as_date(d).isoformat() for d in operating_dates})
