@@ -62,6 +62,7 @@ from dataclasses import asdict, dataclass, field
 import polars as pl
 
 from ..core.node import components
+from ..core.snapshot import is_dam
 from ..raw.table import flag
 
 INF = math.inf
@@ -69,10 +70,7 @@ INF = math.inf
 # The row of docs/assumptions.md behind every option and every reason an element is
 # dropped. tests/test_register.py fails when one is missing here or from the register.
 REGISTER_ROWS = {
-    "option": {
-        "contract_ties": "TOP-01", "rating_source": "RAT-04", "time_of_use": "RAT-06", "limits": "RAT-09",
-        "contingency_rating": "RAT-04", "keep_out_of_service": "TOP-03", "drop_empty_contingencies": "RAT-10",
-    },
+    "option": {"contract_ties": "TOP-01", "time_of_use": "RAT-06"},
     "dropped_branches": {"out_of_service": "TOP-03", "contracted_tie": "TOP-01", "loop": "TOP-01", "island": "TOP-05"},
     "dropped_nodes": {"isolated": "TOP-05", "island": "TOP-05"},
     "dropped_contingencies": {"empty": "RAT-10"},
@@ -81,32 +79,15 @@ REGISTER_ROWS = {
 
 @dataclass(frozen=True)
 class Options:
-    """The judgment calls, each defaulting to ERCOT practice for the model at hand."""
+    """The two judgment calls a check varies; every other rule of the assembly is ERCOT's practice, fixed in code and named in docs/assumptions.md."""
 
     contract_ties: bool = False
-    """CRR: one row per bus (nodes joined by in-service bus ties) instead of one per node (an
-    analysis choice; ERCOT solves with the ties and enforces the monitored ones). No effect on DAM."""
-
-    rating_source: str | None = None
-    """``"crr_monitored"`` (the CRR CSV; the CRR default) or ``"psse_raw"`` (RAW rates;
-    the DAM default). None picks the model's default."""
+    """CRR: one row per bus (nodes joined by in-service bus ties) instead of one per node. ERCOT's CRR auction solves
+    with the ties as branches and enforces the monitored ones (TOP-01); ``checks/network.py`` measures the cost of
+    contracting. No effect on DAM."""
 
     time_of_use: str = "PeakWD"
-    """The CRR CSV block to take limits from; the CRR RAW is the PeakWD model."""
-
-    limits: str = "enforced"
-    """Which branches get finite limits: ``"enforced"`` (CRR monitored, DAM secured),
-    ``"monitored"`` (DAM: monitored or secured), ``"all"`` (every branch with a rating)."""
-
-    contingency_rating: str = "emergency"
-    """``"emergency"`` (rate B / EmergencyRating) or ``"base"`` under contingencies."""
-
-    keep_out_of_service: bool = False
-    """Keep branches the RAW marks out of service (they still count as topology)."""
-
-    drop_empty_contingencies: bool = True
-    """Drop contingencies that remove no branch of the network (listed in
-    ``dropped_contingencies``); with False they stay, flagged ``is_empty``."""
+    """The CRR monitored-element CSV block the limits come from; the CRR RAW is the PeakWD model (RAT-06)."""
 
 
 @dataclass(frozen=True)
@@ -207,24 +188,15 @@ def _node_ids(node: pl.DataFrame, contract_ties: bool) -> pl.DataFrame:
 
 def _limits(branch: pl.DataFrame, ratings: pl.DataFrame, options: Options, dam: bool) -> pl.DataFrame:
     """Add ``base_limit_mw``, ``contingency_limit_mw`` and ``is_limited``."""
-    source = options.rating_source or ("psse_raw" if dam else "crr_monitored")
+    source = "psse_raw" if dam else "crr_monitored"  # the model's own ratings: RAW rate A/B for DAM, the monitored CSV for CRR (RAT-04)
     rows = ratings.filter(pl.col("rating_source") == source)
     if source == "crr_monitored":
         rows = rows.filter(pl.col("time_of_use") == options.time_of_use)
         if rows.is_empty() and not ratings.filter(pl.col("rating_source") == source).is_empty():
             raise ValueError(f"no crr_monitored ratings for time_of_use={options.time_of_use!r}")
     rows = rows.select("branch_id", "base_mw", "emergency_mw").unique(subset=["branch_id"], keep="first")
-    if options.limits == "enforced":
-        enforced = pl.col("is_secured")
-    elif options.limits == "monitored":
-        enforced = pl.col("is_secured") | pl.col("is_monitored")
-    elif options.limits == "all":
-        enforced = pl.lit(True)
-    else:
-        raise ValueError(f"limits must be 'enforced', 'monitored' or 'all', not {options.limits!r}")
-    if options.contingency_rating not in ("emergency", "base"):
-        raise ValueError(f"contingency_rating must be 'emergency' or 'base', not {options.contingency_rating!r}")
-    post = pl.col("emergency_mw") if options.contingency_rating == "emergency" else pl.col("base_mw")
+    enforced = pl.col("is_secured")  # the branches ERCOT enforces: CRR monitored, DAM secured (RAT-08)
+    post = pl.col("emergency_mw")  # the post-contingency limit is rate B / EmergencyRating (RAT-04)
     # A PSS/E rating of zero means "no limit"; so does a branch the CSV does not list.
     usable = pl.col("base_mw").is_not_null() & (pl.col("base_mw") > 0)
     return (branch.join(rows, on="branch_id", how="left")
@@ -239,10 +211,10 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
     """Assemble one snapshot's :class:`Network` from its core tables, in the steps the module docstring lists."""
     options = options or Options()
     node_rows = _node_ids(core.node, options.contract_ties)
-    kept, dropped_branches, dropped_nodes = _main_component(core.branch, node_rows, options)
+    kept, dropped_branches, dropped_nodes = _main_component(core.branch, node_rows)
     nodes, slack, slack_source = _nodes(node_rows, kept, dropped_nodes)
-    branches = _branches(kept, core.branch_rating, nodes, options, dam=snapshot_id.startswith("dam:"))
-    contingencies, dropped_contingencies = _contingencies(core, branches, options)
+    branches = _branches(kept, core.branch_rating, nodes, options, dam=is_dam(snapshot_id))
+    contingencies, dropped_contingencies = _contingencies(core, branches)
     gtcs, gtc_members = _gtcs(core, kept, branches)
     settlement_points, settlement_point_nodes = _settlement_points(core, node_rows, nodes, options)
     for name, frame in (("dropped_branches", dropped_branches), ("dropped_nodes", dropped_nodes), ("dropped_contingencies", dropped_contingencies)):
@@ -253,12 +225,12 @@ def build_network(snapshot_id: str, core: CoreTables, options: Options | None = 
                    settlement_points, settlement_point_nodes, dropped_branches, dropped_nodes, dropped_contingencies)
 
 
-def _main_component(branch: pl.DataFrame, node_rows: pl.DataFrame, options: Options) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+def _main_component(branch: pl.DataFrame, node_rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Step 2: the branches kept, the branches dropped and the nodes dropped, each with its reason."""
     node_of = node_rows.select("node_number", "node_id")
     branch = (branch.join(node_of.rename({"node_number": "from_node", "node_id": "from_node_id"}), on="from_node", how="left")
               .join(node_of.rename({"node_number": "to_node", "node_id": "to_node_id"}), on="to_node", how="left"))
-    branch = branch.with_columns(pl.when(~pl.col("is_in_service") & ~pl.lit(options.keep_out_of_service)).then(pl.lit("out_of_service"))
+    branch = branch.with_columns(pl.when(~pl.col("is_in_service")).then(pl.lit("out_of_service"))  # TOP-03
                                  .when((pl.col("from_node_id") == pl.col("to_node_id")) & pl.col("is_tie")).then(pl.lit("contracted_tie"))
                                  .when(pl.col("from_node_id") == pl.col("to_node_id")).then(pl.lit("loop"))
                                  .otherwise(None).alias("reason"))
@@ -311,7 +283,7 @@ def _branches(kept: pl.DataFrame, ratings: pl.DataFrame, nodes: pl.DataFrame, op
                     "base_limit_mw", "contingency_limit_mw", "is_limited", "is_monitored", "is_secured"))
 
 
-def _contingencies(core: CoreTables, branches: pl.DataFrame, options: Options) -> tuple[pl.DataFrame, pl.DataFrame]:
+def _contingencies(core: CoreTables, branches: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Step 4: every contingency as the indexes of the branches it removes, plus the branch ends its split-bus rows move (NAM-09)."""
     outages = core.contingency_outage.join(branches.select("branch_id", pl.col("index").alias("branch_index")), on="branch_id", how="left")
     if "split_end" not in outages.columns:
@@ -340,11 +312,8 @@ def _contingencies(core: CoreTables, branches: pl.DataFrame, options: Options) -
                      .select("contingency_id", "branch_ids", "branch_indexes", "n_outages", "n_dropped", "n_unresolved", "n_other_rows",
                              "has_split_bus", "split_branch_indexes", "split_ends", "n_split_unapplied", "is_empty")
                      .sort("contingency_id"))
-    empty = contingencies.filter(pl.col("is_empty")) if options.drop_empty_contingencies else contingencies.clear()
-    dropped = empty.select("contingency_id", pl.lit("empty").alias("reason"), "n_dropped", "n_unresolved", "n_other_rows")
-    if options.drop_empty_contingencies:
-        contingencies = contingencies.filter(~pl.col("is_empty"))
-    return contingencies, dropped
+    dropped = contingencies.filter(pl.col("is_empty")).select("contingency_id", pl.lit("empty").alias("reason"), "n_dropped", "n_unresolved", "n_other_rows")
+    return contingencies.filter(~pl.col("is_empty")), dropped  # RAT-10
 
 
 def _gtcs(core: CoreTables, kept: pl.DataFrame, branches: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:

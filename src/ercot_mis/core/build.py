@@ -26,7 +26,6 @@ from ..raw import build as raw_build
 from . import award, branch, contingency, gtc, load, node, settlement_point, snapshot
 
 LAYER = "core"
-DAM_PRODUCT = snapshot.DAM_PRODUCT
 GTL_PRODUCT = "NP3-766-M"
 
 # Bump when the set of tables or how they are assembled changes.
@@ -69,7 +68,7 @@ def build(session, *, limit: int | None = None) -> list[dict]:
         record = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob, "status": "skipped", "tables": len(TABLES), "rows": None,
                   "seconds": 0.0, "error": None}
         package = snaps.filter(pl.col("blob_sha256") == blob)
-        gtl = gtl_days.get(package["operating_date"][0], (pl.DataFrame(schema=GTL_SCHEMA), None)) if emil_id == DAM_PRODUCT else None
+        gtl = gtl_days.get(package["operating_date"][0], (pl.DataFrame(schema=GTL_SCHEMA), None)) if emil_id == snapshot.DAM_PRODUCT else None
         identity = f"{core_id()}|{package_inputs(session, emil_id, package, gtl[1] if gtl else None)}"
         keys = {t: raw_build.artifact_key(identity, blob, t) for t in TABLES}
         none_key = raw_build.artifact_key(identity, blob, raw_build.NONE)
@@ -108,7 +107,7 @@ def package_inputs(session, emil_id: str, snaps: pl.DataFrame, gtl_blob: str | N
     (a revision renumbering rebuilds the rows that carry them).
     """
     parts = [raw_build.parser_id(emil_id)]
-    if emil_id == DAM_PRODUCT:
+    if emil_id == snapshot.DAM_PRODUCT:
         parts.append(f"gtl={gtl_blob[:16] if gtl_blob else 'none'}")
     crosswalk = session.data_dir / gtc.OVERRIDES
     parts.append(f"xwalk={hashlib.sha256(crosswalk.read_bytes()).hexdigest()[:16] if crosswalk.is_file() else 'none'}")
@@ -132,7 +131,7 @@ def latest_gtl_by_day(session) -> dict[date, tuple[pl.DataFrame, str]]:
 
 def package_tables(session, emil_id: str, blob_sha256: str, snaps: pl.DataFrame, gtl: pl.DataFrame | None = None) -> dict[str, pl.DataFrame]:
     """Core tables for every snapshot of one package, from its raw tables (``gtl``: the day's GTL rows, DAM only)."""
-    is_dam = emil_id == DAM_PRODUCT
+    is_dam = emil_id == snapshot.DAM_PRODUCT
     raw = {t: _raw(session, t, emil_id, blob_sha256) for t in (DAM_TABLES if is_dam else CRR_TABLES)}
     missing = [t for t, v in raw.items() if v is None]
     if missing:
@@ -162,9 +161,7 @@ def _dam_snapshot(r: dict[str, pl.DataFrame], gtl: pl.DataFrame, crosswalk: pl.D
     contingencies, outages = contingency.dam_contingencies(branches, nodes, r["dam_contingencies"])
     gtcs, members = gtc.dam_gtcs(gtl, crosswalk)
     points, point_buses = settlement_point.dam_settlement_points(nodes, r["dam_settlement_points"], r["dam_hub_buses"], r["dam_loads"], r["dam_generators"])
-    return {"node": nodes, "branch": branches, "branch_rating": ratings, "contingency": contingencies, "contingency_outage": outages,
-            "gtc": gtcs, "gtc_member": members, "settlement_point": points, "settlement_point_bus": point_buses,
-            "load": load.dam_loads(nodes, r["psse_load"], r["dam_loads"])}
+    return dict(zip(TABLES, (nodes, branches, ratings, contingencies, outages, gtcs, members, points, point_buses, load.dam_loads(nodes, r["psse_load"], r["dam_loads"]))))
 
 
 def _crr_snapshot(r: dict[str, pl.DataFrame]) -> dict[str, pl.DataFrame]:
@@ -175,9 +172,7 @@ def _crr_snapshot(r: dict[str, pl.DataFrame]) -> dict[str, pl.DataFrame]:
     contingencies, outages = contingency.crr_contingencies(branches, r["crr_contingencies"])
     gtcs, members = gtc.crr_gtcs(branches, r["crr_non_thermal_constraints"])
     points, point_buses = settlement_point.crr_settlement_points(nodes, r["crr_sources_and_sinks"])
-    return {"node": nodes, "branch": branches, "branch_rating": ratings, "contingency": contingencies, "contingency_outage": outages,
-            "gtc": gtcs, "gtc_member": members, "settlement_point": points, "settlement_point_bus": point_buses,
-            "load": load.crr_loads(nodes, r["psse_load"])}
+    return dict(zip(TABLES, (nodes, branches, ratings, contingencies, outages, gtcs, members, points, point_buses, load.crr_loads(nodes, r["psse_load"]))))
 
 
 def build_awards(session, existing: set[str], tmp_dir: Path, run_id: str) -> list[dict]:

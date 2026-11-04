@@ -64,13 +64,13 @@ class PublicApiClient:
         return "PublicApiClient()"
 
     @classmethod
-    def from_secrets(cls, **kwargs) -> PublicApiClient:
+    def from_secrets(cls) -> PublicApiClient:
         names = ("ERCOT_PUBLIC_API_USERNAME", "ERCOT_PUBLIC_API_PASSWORD", "ERCOT_PUBLIC_API_SUBSCRIPTION_KEY")
         values = [load_secret(name) for name in names]
         missing = [name for name, value in zip(names, values) if not value]
         if missing:
             raise ConfigError(f"Missing {', '.join(missing)}: set them in .env or the Keychain (see README, Credentials).")
-        return cls(*values, **kwargs)
+        return cls(*values)
 
     # ------------------------------------------------------------------ the Source interface
 
@@ -97,8 +97,9 @@ class PublicApiClient:
 
     # ------------------------------------------------------------------ transport
 
-    def token(self, now: datetime | None = None) -> str:
-        now = now or datetime.now(timezone.utc)
+    def token(self) -> str:
+        """A valid ID token: the one in hand while it lasts, else a new one."""
+        now = datetime.now(timezone.utc)
         if self._token is None or self._token_at is None or now - self._token_at > TOKEN_LIFETIME:
             response = self.session.post(TOKEN_URL, timeout=self.timeout, data={
                 "grant_type": "password", "username": self._username, "password": self._password,

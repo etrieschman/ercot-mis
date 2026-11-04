@@ -29,7 +29,7 @@ __all__ = [
 ]
 
 
-def open(data_dir: str | Path | None = None) -> Session:  # noqa: A001 - em.open() is the API
+def open(data_dir: str | Path | None = None) -> Session:  # em.open() is the API; it shadows the builtin on purpose
     """Open the local data folder, creating it with owner-only permissions if needed.
 
     Resolution order: ``data_dir``, then ``$ERCOT_MIS_DATA``, then ``data/`` in this

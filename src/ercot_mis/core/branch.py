@@ -79,16 +79,15 @@ def _check_transformer_conventions(psse_transformer: pl.DataFrame) -> None:
         raise ValueError(f"transformer conventions the DC model assumes do not hold (rows breaking each): {bad}; see RAT-01 in docs/assumptions.md")
 
 
-def _finish(frame: pl.DataFrame, tie_reactance: float) -> tuple[pl.DataFrame, pl.DataFrame]:
-    frame = frame.with_columns(((pl.col("kind") == "line") & (pl.col("x_pu").abs() <= tie_reactance)).alias("is_tie"))
+def _finish(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    frame = frame.with_columns(((pl.col("kind") == "line") & (pl.col("x_pu").abs() <= TIE_REACTANCE)).alias("is_tie"))
     ratings = frame.select("branch_id", pl.lit("psse_raw").alias("rating_source"), pl.lit(None, pl.String).alias("time_of_use"),
                            "base_mw", "emergency_mw", "rate_c_mw")
     return frame.select(BRANCH_COLUMNS).sort("kind", "from_node", "to_node", "ckt"), ratings
 
 
 def dam_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transformer: pl.DataFrame,
-                 dam_lines: pl.DataFrame, dam_transformers: pl.DataFrame,
-                 tie_reactance: float = TIE_REACTANCE) -> tuple[pl.DataFrame, pl.DataFrame]:
+                 dam_lines: pl.DataFrame, dam_transformers: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """``core.branch`` and ``core.branch_rating`` for one DAM hour."""
     named = pl.concat([
         frame.select(pl.col("psse_from_bus_number").alias("from_node"), pl.col("psse_to_bus_number").alias("to_node"),
@@ -97,12 +96,11 @@ def dam_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
                      (flag(pl.col("monitored_and_secured"), "Y")).alias("is_secured"))
         for frame in (dam_lines, dam_transformers)])
     frame = _with_endpoints(_raw_parts(psse_branch, psse_transformer).join(named, on=["from_node", "to_node", "ckt"], how="left"), nodes)
-    return _finish(frame.with_columns(pl.lit(False).alias("is_name_reversed"), pl.lit(False).alias("is_temporary")), tie_reactance)
+    return _finish(frame.with_columns(pl.lit(False).alias("is_name_reversed"), pl.lit(False).alias("is_temporary")))
 
 
 def crr_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transformer: pl.DataFrame,
-                 autos: pl.DataFrame, monitored: pl.DataFrame, mapping_lines: pl.DataFrame | None = None,
-                 tie_reactance: float = TIE_REACTANCE) -> tuple[pl.DataFrame, pl.DataFrame]:
+                 autos: pl.DataFrame, monitored: pl.DataFrame, mapping_lines: pl.DataFrame | None = None) -> tuple[pl.DataFrame, pl.DataFrame]:
     """``core.branch`` and ``core.branch_rating`` for one CRR month.
 
     ``is_temporary`` marks the branches the mapping workbook labels as temporary split-bus
@@ -127,7 +125,7 @@ def crr_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
                  .select(pl.col("crr_tag").alias("branch_id")).unique().with_columns(pl.lit(True).alias("is_temporary"))
                  if mapping_lines is not None else pl.DataFrame(schema={"branch_id": pl.String, "is_temporary": pl.Boolean}))
     frame = frame.join(temporary, on="branch_id", how="left").with_columns(pl.col("is_temporary").fill_null(False))
-    branch, raw_ratings = _finish(frame, tie_reactance)
+    branch, raw_ratings = _finish(frame)
     csv_ratings = monitored.select(pl.col("device_name").alias("branch_id"), pl.lit("crr_monitored").alias("rating_source"),
                                    "time_of_use", pl.col("base_case_rating").alias("base_mw"),
                                    pl.col("emergency_rating").alias("emergency_mw"), pl.lit(None, pl.Float64).alias("rate_c_mw"))

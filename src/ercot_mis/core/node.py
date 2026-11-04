@@ -121,9 +121,9 @@ def components(nodes, edges) -> dict:
     return {n: find(n) for n in parent}
 
 
-def tie_groups(branch: pl.DataFrame, tie_reactance: float = TIE_REACTANCE) -> pl.DataFrame:
-    """(node_number, tie_group) for every node on an in-service branch with |x| <= tie_reactance; the group is its smallest node number."""
-    ties = branch.filter((pl.col("x").abs() <= tie_reactance) & (pl.col("st") == 1)).select("i", "j").rows()
+def tie_groups(branch: pl.DataFrame) -> pl.DataFrame:
+    """(node_number, tie_group) for every node on an in-service branch with |x| <= TIE_REACTANCE; the group is its smallest node number."""
+    ties = branch.filter((pl.col("x").abs() <= TIE_REACTANCE) & (pl.col("st") == 1)).select("i", "j").rows()
     groups = components({n for pair in ties for n in pair}, ties)
     members = sorted(groups)
     return pl.DataFrame({"node_number": members, "tie_group": [groups[n] for n in members]}, schema={"node_number": pl.Int64, "tie_group": pl.Int64})
@@ -142,7 +142,7 @@ def autos_by_key(autos: pl.DataFrame) -> pl.DataFrame:
 
 
 def crr_nodes(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame, autos: pl.DataFrame,
-              sources_sinks: pl.DataFrame, tie_reactance: float = TIE_REACTANCE) -> pl.DataFrame:
+              sources_sinks: pl.DataFrame) -> pl.DataFrame:
     """One row per node (one RAW record) of a CRR model, with the ``bus_key`` of the bus its closed breakers join it to.
 
     Inputs are ``psse_bus``, ``psse_branch``, ``psse_transformer``, ``crr_mapping_autos``
@@ -151,14 +151,14 @@ def crr_nodes(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame
     whose ``BusName`` is "<number> <name>". Buses in one tie group share ``bus_key`` and
     ``tie_group`` (the smallest member number).
     """
-    groups = tie_groups(branch, tie_reactance)
+    groups = tie_groups(branch)
     nodes = (bus.select(pl.col("i").alias("node_number"), pl.col("name").map_elements(_norm, return_dtype=pl.String).alias("raw_name"),
                         pl.col("basekv").alias("kv"), pl.col("ide").alias("node_type"))
              .join(groups.rename({"tie_group": "bus_group"}), on="node_number", how="left")
              .with_columns(pl.col("bus_group").fill_null(pl.col("node_number"))))
     to_group = nodes.select("node_number", "bus_group")
 
-    lines = branch.filter(pl.col("x").abs() > tie_reactance).select("i", "j", pl.col("comment").alias("name"))
+    lines = branch.filter(pl.col("x").abs() > TIE_REACTANCE).select("i", "j", pl.col("comment").alias("name"))
     xf = (transformer.select("i", "j", pl.col("ckt").str.strip_chars().alias("ckt"))
           .join(autos_by_key(autos).rename({"from_node": "i", "to_node": "j"}), on=["i", "j", "ckt"], how="left"))
     xf = xf.with_columns(pl.coalesce(pl.col("name"), pl.format("XF {} {} {}", "i", "j", "ckt")).alias("name"))

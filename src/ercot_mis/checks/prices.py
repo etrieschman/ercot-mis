@@ -104,7 +104,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
               .join(net.settlement_points.select("settlement_point_id", "kind", "weight_dropped"), on="settlement_point_id"))
     observed = points["price"].to_numpy()
     # PRC-01: price = system price - congestion. Before the system price was pulled, it was the median.
-    offset = lambda c: system_price if system_price is not None else np.median(observed + c)  # noqa: E731
+    offset = lambda c: system_price if system_price is not None else np.median(observed + c)
     residual = observed + points["c"].to_numpy() - offset(points["c"].to_numpy())
     resid = np.abs(residual)
     plain = np.abs(observed + points["c_plain"].to_numpy() - offset(points["c_plain"].to_numpy()))

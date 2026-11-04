@@ -280,10 +280,8 @@ class Session:
     def network(self, snapshot_id: str, options=None):
         """One snapshot as a DC model reads it: ``out.network``, assembled from the core tables on every call.
 
-        ``options`` is an ``ercot_mis.out.network.Options`` (or keyword-free defaults):
-        tie contraction, rating source and time-of-use block, which branches get
-        limits, the post-contingency rating. See ``ercot_mis.out.network``. Assembly
-        takes well under a second; reading a saved copy took longer, so none is kept.
+        ``options`` is an ``ercot_mis.out.network.Options``: tie contraction and the CRR time-of-use block; every other
+        rule is ERCOT's practice. Assembly takes well under a second; reading a saved copy took longer, so none is kept.
         """
         return out.build_network(snapshot_id, out.core_tables(self, snapshot_id), options or out.Options())
 

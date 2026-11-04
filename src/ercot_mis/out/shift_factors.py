@@ -65,7 +65,6 @@ class DcSystem:
         rows[self.keep] = self.lu.solve(rhs, trans="T")
         return rows[:self.n].T
 
-    ptdf_rows = shift_factors
 
     def outaged(self, branch_idx, splits=()) -> DcSystem:
         """This network under a contingency.

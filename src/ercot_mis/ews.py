@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 ENDPOINT = "https://misapi.ercot.com/NodalAPI/EWS/"
+TIMEOUT = 300  # seconds per call; a 30 MB download on a slow day
 CHUNK = 1 << 20
 
 # All EWS operations accept the same RequestMessage; the Noun selects the
@@ -257,17 +258,9 @@ def _parse_time(text: str) -> datetime | None:
 class EwsClient:
     """Lists documents over EWS with an ERCOT API certificate."""
 
-    def __init__(
-        self,
-        identity: Identity,
-        endpoint: str = ENDPOINT,
-        timeout: float = 300,
-        session: requests.Session | None = None,
-    ):
+    def __init__(self, identity: Identity):
         self.identity = identity
-        self.endpoint = endpoint
-        self.timeout = timeout
-        self.session = session or requests.Session()
+        self.session = requests.Session()
 
     def list_documents(
         self,
@@ -289,7 +282,7 @@ class EwsClient:
         with self.session.get(
             url,
             cert=(str(self.identity.cert), str(self.identity.key)),
-            timeout=self.timeout,
+            timeout=TIMEOUT,
             stream=True,
         ) as response:
             if response.status_code != 200:
@@ -309,12 +302,12 @@ class EwsClient:
         envelope = build_request(self.identity.duns, self.identity.api_user, report_type_id, start, end)
         body = sign(envelope, self.identity.cert, self.identity.key)
         response = self.session.post(
-            self.endpoint,
+            ENDPOINT,
             data=body,
             headers={"Content-Type": "text/xml; charset=utf-8", "SOAPAction": SOAP_ACTION},
             # Presented again for mutual TLS; sign() already put it inside the message.
             cert=(str(self.identity.cert), str(self.identity.key)),
-            timeout=self.timeout,
+            timeout=TIMEOUT,
         )
         if response.status_code >= 502:
             raise _ServerError(f"HTTP {response.status_code}")

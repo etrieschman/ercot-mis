@@ -44,7 +44,6 @@ class Binding:
 class Resolved:
     bindings: list[Binding]
     systems: dict[str, DcSystem]  # one per contingency solved
-    gtcs: dict[str, tuple[list[tuple[int, float]], int]]
 
 
 def hour_rows(session, table: str, start_utc: datetime) -> pl.DataFrame:
@@ -116,7 +115,7 @@ def resolve(session, snapshot_id: str, net: Network, system: DcSystem, shadow: p
                 row.system = post
                 row.outcome = ("used_contingency_partial" if contingency in partial else "used_contingency_islanding" if post.n_islanded
                                else "used_contingency_split_bus" if contingency in splits else "used_contingency")
-    return Resolved(bindings, systems, gtcs)
+    return Resolved(bindings, systems)
 
 
 def row_direction(substation: dict, kv: dict, f: int, t: int, from_station: str, to_station: str, from_kv: float, to_kv: float) -> float | None:
@@ -150,7 +149,7 @@ def borrowed_gtcs(session, snapshot_id: str, net: Network) -> dict[str, tuple[li
     crr = _network(session, crr_id)
     pairs = session.match_branches(crr_id, snapshot_id).drop_nulls(["crr_branch_id", "dam_branch_id"]).select("crr_branch_id", "dam_branch_id")
     bus_of = dict(session.match_buses(crr_id, snapshot_id).drop_nulls(["crr_bus_key", "dam_bus_key"]).select("crr_bus_key", "dam_bus_key").rows())
-    bus = lambda e: e.str.split("@").list.first().replace_strict(bus_of, default=None, return_dtype=pl.String)  # noqa: E731
+    bus = lambda e: e.str.split("@").list.first().replace_strict(bus_of, default=None, return_dtype=pl.String)
     rows = (crr.gtc_members.join(crr.branches.select("branch_id", bus(pl.col("from_node_id")).alias("cf"), bus(pl.col("to_node_id")).alias("ct")), on="branch_id", how="left")
             .join(pairs, left_on="branch_id", right_on="crr_branch_id", how="left")
             .join(net.branches.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("index").alias("j"), pl.col("from_node_id").alias("df"), pl.col("to_node_id").alias("dt")),

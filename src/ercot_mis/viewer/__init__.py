@@ -26,21 +26,14 @@ from pathlib import Path
 import polars as pl
 
 from ..core import coverage
+from ..core.snapshot import is_dam
 
 TEMPLATE = Path(__file__).with_name("template.html")
 
 
-def _is_dam(snapshot_id: str) -> bool:
-    return snapshot_id.startswith("dam:")
-
-
-def _rows(session, table: str, snapshot_id: str) -> pl.DataFrame:
-    return session.core_rows(table, snapshot_id)
-
-
 def crr_substations(session, crr_id: str, dam_id: str, node: pl.DataFrame, branch: pl.DataFrame) -> dict[int, str]:
     """A substation name for every CRR bus (see the module docstring)."""
-    dam_station = dict(_rows(session, "node", dam_id).select("bus_key", "substation").rows())
+    dam_station = dict(session.core_rows("node", dam_id).select("bus_key", "substation").rows())
     matched = {c: dam_station.get(d) for c, d in session.match_buses(crr_id, dam_id).drop_nulls(["crr_bus_key",
                                                                                                  "dam_bus_key"]).select("crr_bus_key", "dam_bus_key").rows()}
     substation = {bus: matched[key] for bus, key in node.select("node_number", "bus_key").rows() if matched.get(key)}
@@ -57,8 +50,8 @@ def crr_substations(session, crr_id: str, dam_id: str, node: pl.DataFrame, branc
     # Then along matched lines: when one end of a CRR line is placed and its DAM line joins that
     # substation to another, the other end is in the other substation. This places buses the node match
     # left undecided between several DAM buses of one substation.
-    dam_bus_station = dict(_rows(session, "node", dam_id).select("node_number", "substation").rows())
-    dam_ends = {i: (dam_bus_station.get(f), dam_bus_station.get(t)) for i, f, t in _rows(session, "branch", dam_id).select("branch_id",
+    dam_bus_station = dict(session.core_rows("node", dam_id).select("node_number", "substation").rows())
+    dam_ends = {i: (dam_bus_station.get(f), dam_bus_station.get(t)) for i, f, t in session.core_rows("branch", dam_id).select("branch_id",
                                                                                                                            "from_node", "to_node").rows()}
     crr_ends = dict((i, (f, t)) for i, f, t in branch.select("branch_id", "from_node", "to_node").rows())
     pairs = [(crr_ends[c], dam_ends[d]) for c, d in session.match_branches(crr_id, dam_id).drop_nulls(["crr_branch_id", "dam_branch_id"])
@@ -90,10 +83,10 @@ def crr_substations(session, crr_id: str, dam_id: str, node: pl.DataFrame, branc
 
 def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
     """One snapshot as the page reads it: buses, branches with limits, loads, attached names."""
-    node, branch, load = (_rows(session, t, snapshot_id) for t in ("node", "branch", "load"))
+    node, branch, load = (session.core_rows(t, snapshot_id) for t in ("node", "branch", "load"))
     if node.is_empty():
         raise KeyError(f"no core rows for {snapshot_id!r}; run build_core()")
-    dam = _is_dam(snapshot_id)
+    dam = is_dam(snapshot_id)
     if dam:
         substation = dict(node.select("node_number", "substation").rows())
     else:
@@ -101,14 +94,14 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
             raise ValueError("a CRR snapshot needs reference_dam (a DAM snapshot to take substation names from)")
         substation = crr_substations(session, snapshot_id, reference_dam, node, branch)
     source = "psse_raw" if dam else "crr_monitored"
-    rating = _rows(session, "branch_rating", snapshot_id).filter(pl.col("rating_source") == source)
+    rating = session.core_rows("branch_rating", snapshot_id).filter(pl.col("rating_source") == source)
     if not dam:
         rating = rating.filter(pl.col("time_of_use") == "PeakWD")
     rating = rating.select("branch_id", "base_mw", "emergency_mw").unique(subset=["branch_id"], keep="first")
-    raw = _rows(session, "branch_rating", snapshot_id).filter(pl.col("rating_source") == "psse_raw").select(
+    raw = session.core_rows("branch_rating", snapshot_id).filter(pl.col("rating_source") == "psse_raw").select(
         "branch_id", pl.col("base_mw").alias("rate_a"), pl.col("emergency_mw").alias("rate_b")).unique(subset=["branch_id"], keep="first")
     branch = branch.join(rating, on="branch_id", how="left").join(raw, on="branch_id", how="left")
-    outages = _rows(session, "contingency_outage", snapshot_id)
+    outages = session.core_rows("contingency_outage", snapshot_id)
     ctg = outages.filter(pl.col("branch_id").is_not_null()).group_by("branch_id").agg(pl.col("contingency_id").unique().sort().alias("ctg"))
     branch = branch.join(ctg, on="branch_id", how="left")
     # The enforced limit is the network's (out.network applies the register's rating choices); a branch the
@@ -119,9 +112,9 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
     branch = branch.join(limits, on="branch_id", how="left")
 
     # Settlement points by node: resource nodes and DC ties sit on a bus; hubs and load zones are sets of buses.
-    point_bus, point_rows = _rows(session, "settlement_point_bus", snapshot_id), _rows(session, "settlement_point", snapshot_id)
+    point_bus, point_rows = session.core_rows("settlement_point_bus", snapshot_id), session.core_rows("settlement_point", snapshot_id)
     points = point_bus.filter(pl.col("is_resolved")).join(point_rows.select("settlement_point_id", "kind"), on="settlement_point_id")
-    counts = coverage.snapshot_coverage(node, branch, _rows(session, "branch_rating", snapshot_id), load, point_rows, point_bus, outages, enforced)
+    counts = coverage.snapshot_coverage(node, branch, session.core_rows("branch_rating", snapshot_id), load, point_rows, point_bus, outages, enforced)
     if not dam:
         counts["nodes_with_substation"] = sum(1 for name in substation.values() if not name.startswith("~"))
     on_node: dict[str, list[str]] = {}
@@ -156,18 +149,18 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
 def comparison(session, left: str, right: str) -> dict:
     """Per branch id of each side: the other side's id (or null) and whether reactance and service agree."""
     out = {"left": {}, "right": {}}
-    if _is_dam(left) != _is_dam(right):
-        crr, dam = (right, left) if _is_dam(left) else (left, right)
+    if is_dam(left) != is_dam(right):
+        crr, dam = (right, left) if is_dam(left) else (left, right)
         pairs = session.diff_branches(crr, dam).select("crr_branch_id", "dam_branch_id", "same_reactance", "crr_in_service", "dam_in_service").rows()
         for c, d, same_x, c_on, d_on in pairs:
             same = bool(same_x) and c_on == d_on
-            a, b = (d, c) if _is_dam(left) else (c, d)
+            a, b = (d, c) if is_dam(left) else (c, d)
             out["left"][a], out["right"][b] = {"other": b, "same": same}, {"other": a, "same": same}
         return out
     # Same vocabulary on both sides: branch ids are the key.
     cols = ("branch_id", "x_pu", "is_in_service")
-    a = dict((i, (x, on)) for i, x, on in _rows(session, "branch", left).select(cols).rows())
-    b = dict((i, (x, on)) for i, x, on in _rows(session, "branch", right).select(cols).rows())
+    a = dict((i, (x, on)) for i, x, on in session.core_rows("branch", left).select(cols).rows())
+    b = dict((i, (x, on)) for i, x, on in session.core_rows("branch", right).select(cols).rows())
     for i in a.keys() & b.keys():
         same = a[i] == b[i]
         out["left"][i] = out["right"][i] = {"other": i, "same": same}
@@ -178,15 +171,15 @@ def build(session, left: str, right: str | None = None, *, reference_dam: str | 
     """Write the viewer for one snapshot or a pair; returns the file's path (inside the data folder)."""
     ids = [left] + ([right] if right else [])
     if reference_dam is None:
-        dams = [i for i in ids if _is_dam(i)]
+        dams = [i for i in ids if is_dam(i)]
         if dams:
             reference_dam = dams[0]
         else:
             reference_dam = session.newest()[1]
     data = {"models": [model(session, i, reference_dam) for i in ids], "reference_dam": reference_dam,
             "compare": comparison(session, left, right) if right else None, "pair_coverage": None}
-    if right and _is_dam(left) != _is_dam(right):
-        crr, dam = (right, left) if _is_dam(left) else (left, right)
+    if right and is_dam(left) != is_dam(right):
+        crr, dam = (right, left) if is_dam(left) else (left, right)
         data["pair_coverage"] = coverage.pair_coverage(session.match_branches(crr, dam), session.match_buses(crr, dam), session.match_contingencies(crr, dam))
     html = TEMPLATE.read_text().replace("/*DATA*/null", json.dumps(data, separators=(",", ":")).replace("</", "<\\/"))
     if path is None:

@@ -316,9 +316,9 @@ class Catalog:
     def artifact_keys(self, layer: str) -> set[str]:
         return {k for (k,) in self.con.execute("SELECT artifact_key FROM artifact WHERE layer = ?", [layer]).fetchall()}
 
-    def artifacts(self, layer: str | None = None) -> pl.DataFrame:
-        query = "SELECT * FROM artifact" + ("" if layer is None else " WHERE layer = $layer") + " ORDER BY written_at"
-        return self.con.execute(query, {"layer": layer} if layer else {}).pl()
+    def artifacts(self, layer: str) -> pl.DataFrame:
+        """Every written file of a layer, oldest first."""
+        return self.con.execute("SELECT * FROM artifact WHERE layer = $layer ORDER BY written_at", {"layer": layer}).pl()
 
     def start_run(self, command: str) -> str:
         run_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S}-{os.urandom(3).hex()}"

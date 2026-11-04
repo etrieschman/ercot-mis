@@ -33,6 +33,11 @@ class Logical:
     day: date | None  # DAM operating day
 
 
+def is_dam(snapshot_id: str) -> bool:
+    """Whether a snapshot id names a DAM hour (``dam:<day>:he<hh>:r<n>``) rather than a CRR model."""
+    return snapshot_id.startswith("dam:")
+
+
 def logical(emil_id: str, member_paths: list[str]) -> Logical | None:
     if emil_id == DAM_PRODUCT:
         days = {m.identity["operating_date"] for n in member_paths if (m := dam.classify_member(n)) and m.identity["operating_date"]}

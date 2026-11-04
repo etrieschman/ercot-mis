@@ -40,9 +40,6 @@ AVERAGE_HUB_MEMBERS = ("HB_NORTH", "HB_SOUTH", "HB_HOUSTON", "HB_WEST")
 SP_COLUMNS = ("settlement_point_id", "kind", "type_text", "n_buses", "n_unresolved", "weight_sum_raw")
 BUS_COLUMNS = ("settlement_point_id", "bus_key", "weight", "raw_weight", "source", "node_number", "is_resolved")
 
-_EMPTY_NODES = {"settlement_point_id": pl.String, "bus_key": pl.String, "weight": pl.Float64, "raw_weight": pl.Float64,
-                "source": pl.String, "node_number": pl.Int64, "is_resolved": pl.Boolean}
-
 
 def _kind_from_name(name: pl.Expr) -> pl.Expr:
     """ERCOT's naming: ``HB_`` hubs, ``LZ_`` load zones, ``DC`` DC ties, else a resource node."""
@@ -198,8 +195,3 @@ def _dam_zones(loads: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
                                                                       pl.lit("dam_loads_rollover").alias("source"))
     return pl.concat([zones, rolled])
 
-
-def no_settlement_points() -> tuple[pl.DataFrame, pl.DataFrame]:
-    points = pl.DataFrame(schema={"settlement_point_id": pl.String, "kind": pl.String, "type_text": pl.String, "n_buses": pl.UInt32,
-                                  "n_unresolved": pl.UInt32, "weight_sum_raw": pl.Float64})
-    return points, pl.DataFrame(schema=_EMPTY_NODES)

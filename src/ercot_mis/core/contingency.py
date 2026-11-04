@@ -61,7 +61,7 @@ def dam_contingencies(branches: pl.DataFrame, nodes: pl.DataFrame, raw: pl.DataF
                                           pl.col("psse_from_bus_number").alias("psse_to_bus_number"), "_ckt", "branch_id",
                                           pl.lit(True).alias("_reversed"))]).unique(subset=["psse_from_bus_number", "psse_to_bus_number", "_ckt", "branch_id"], keep="first")
     bus_keys = nodes.select("node_number", "bus_key")
-    number = lambda c: pl.col(c).cast(pl.String).str.strip_chars().cast(pl.Int64, strict=False)  # noqa: E731
+    number = lambda c: pl.col(c).cast(pl.String).str.strip_chars().cast(pl.Int64, strict=False)
     moves_from, moves_to = number("split_bus_psse_bus_number").is_null(), number("split_bus_psse_to_bus_number").is_null()
     frame = (raw.with_columns(pl.col("equipment_type").str.to_uppercase().str.replace_all(r"[^A-Z]", "").replace_strict(_DAM_KINDS, default="unknown").alias("element_kind"),
                               pl.when(pl.col("contingency_operation").str.to_uppercase().str.contains("SPLIT")).then(pl.lit("split_bus")).otherwise(pl.lit("outage")).alias("operation"),

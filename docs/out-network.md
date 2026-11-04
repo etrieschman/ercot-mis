@@ -42,7 +42,7 @@ and its contingency keys from `branch_indexes`.
   of service in that month's RAW (the most common case), it is a breaker or switch
   that contraction folded into a bus, or the RAW does not know the name. Removing an
   absent element constrains nothing beyond the base case, so the contingency is
-  dropped (`drop_empty_contingencies`) and listed in `dropped_contingencies` with its
+  dropped and listed in `dropped_contingencies` with its
   counts, the same way dropped branches and nodes are.
 - **The audit travels with the network.** `dropped_branches`, `dropped_nodes` and
   `dropped_contingencies` are frames on the `Network`, and `summary()` gives the
@@ -62,17 +62,18 @@ and its contingency keys from `branch_indexes`.
   finds the part cut off from the slack when it solves a contingency and reports it
   (`n_islanded`, `connected`); the network itself keeps every contingency.
 
-## Options (judgment calls)
+## Options (the judgment calls a check varies)
 
 | option | default | meaning |
 |---|---|---|
 | `contract_ties` | `False` | ERCOT's topology: one row per model node, and CRR ties are branches at their RAW reactance, monitored ones with their breaker ratings. With `True`, one row per bus (nodes joined by in-service ties); the ties and any real branch in parallel with a tie group are dropped (`contracted_tie`, `loop`) and their limits with them. The cost of contraction is measured by `checks/network.py`. Tie members keep their group key in their id (`<key>@<bus>`). No effect on DAM. |
-| `rating_source` | model default | `crr_monitored` (CRR CSV, per time-of-use block) or `psse_raw` (RAW rate A/B). CRR defaults to the CSV, DAM to the RAW. |
 | `time_of_use` | `PeakWD` | The CRR CSV block; the CRR RAW is the PeakWD model. |
-| `limits` | `enforced` | Which branches get finite limits: `enforced` (CRR monitored, DAM secured), `monitored` (DAM monitored or secured), `all`. |
-| `contingency_rating` | `emergency` | Post-contingency limit: `emergency` (rate B / EmergencyRating) or `base`. |
-| `keep_out_of_service` | `False` | Keep branches the RAW marks out of service. |
-| `drop_empty_contingencies` | `True` | Drop a contingency that removes no branch and moves no bus section (RAT-10); with `False` it stays, flagged `is_empty`. |
+
+Everything else the assembly decides is ERCOT's practice and is fixed in code: the
+rating source is the model's own (CRR monitored CSV, DAM RAW rate A/B; RAT-04), limits
+go to the branches ERCOT enforces (CRR monitored, DAM secured; RAT-08), the
+post-contingency limit is rate B (RAT-04), out-of-service branches are not part of the
+model (TOP-03) and empty contingencies are dropped and listed (RAT-10).
 
 Every assumption behind these conventions, with its status, is in
 [docs/assumptions.md](assumptions.md).

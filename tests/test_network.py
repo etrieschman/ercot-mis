@@ -87,13 +87,12 @@ def test_crr_limits_come_from_the_monitored_csv_block_and_unmonitored_is_unlimit
         build_network("crr:monthly:2026-10:r1", _core(), Options(time_of_use="Nope"))
 
 
-def test_raw_ratings_treat_zero_as_unlimited_and_limits_option_widens():
-    net = build_network("dam:2026-09-25:he12:r1", _core(), Options(limits="all"))
-    lim = {r["branch_id"]: (r["base_limit_mw"], r["contingency_limit_mw"]) for r in net.branches.to_dicts()}
-    assert lim["L1"] == (100.0, 110.0) and lim["L2"] == (200.0, 220.0)
-    assert lim["L3"] == (math.inf, math.inf)  # rate A = 0
-    base = build_network("dam:2026-09-25:he12:r1", _core(), Options(limits="all", contingency_rating="base"))
-    assert base.branches.filter(pl.col("branch_id") == "L1")["contingency_limit_mw"][0] == 100.0
+def test_raw_ratings_limit_secured_branches_and_treat_zero_as_unlimited():
+    net = build_network("dam:2026-09-25:he12:r1", _core())
+    lim = {r["branch_id"]: (r["base_limit_mw"], r["contingency_limit_mw"], r["is_limited"]) for r in net.branches.to_dicts()}
+    assert lim["L1"] == (100.0, 110.0, True)  # secured: rate A, then rate B under a contingency
+    assert lim["L2"] == (math.inf, math.inf, False)  # not secured
+    assert lim["L3"] == (math.inf, math.inf, False)  # rate A = 0
 
 
 def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons():
@@ -112,9 +111,6 @@ def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons
     assert dropped["C2"]["reason"] == "empty" and dropped["C2"]["n_unresolved"] == 1
     assert dropped["C3"]["reason"] == "empty" and dropped["C3"]["n_dropped"] == 1  # X is out of service
     assert net.summary()["dropped_contingencies"] == {"empty": 2}
-    kept = build_network("crr:monthly:2026-10:r1", _core(), Options(contract_ties=True, drop_empty_contingencies=False))
-    assert kept.contingencies.height == 5 and kept.contingencies.filter(pl.col("is_empty"))["contingency_id"].to_list() == ["C2", "C3"]
-    assert kept.dropped_contingencies.is_empty()
 
 
 def test_slack_falls_back_to_the_busiest_node_when_no_swing_bus_survives():

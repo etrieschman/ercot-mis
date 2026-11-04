@@ -66,13 +66,13 @@ SECRET_VARIABLES = (
 )
 
 
-def keychain_secret(name: str, service: str = KEYCHAIN_SERVICE) -> str | None:
+def keychain_secret(name: str) -> str | None:
     """A generic password from the macOS Keychain (account ``name``), or None."""
     if sys.platform != "darwin":
         return None
     try:
         result = subprocess.run(
-            ["security", "find-generic-password", "-s", service, "-a", name, "-w"],
+            ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name, "-w"],
             capture_output=True, text=True, timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
