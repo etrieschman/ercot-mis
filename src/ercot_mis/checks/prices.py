@@ -15,7 +15,7 @@ here; that is the flow check.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 
 import numpy as np
 import polars as pl
@@ -23,7 +23,7 @@ from scipy import sparse
 
 from ..core.match import name_key
 from ..out.shift_factors import DcSystem
-from . import write_report
+from . import delivery_days, histogram, modelled_days, quantiles, write_report
 from .binding import BASE_CASE, hour_rows, resolve
 
 RESIDUAL_BINS = [-1e9, -20, -10, -5, -2, -1, -0.1, 0.1, 1, 2, 5, 10, 20, 1e9]
@@ -116,14 +116,13 @@ def check_hour(session, snapshot_id: str) -> dict | None:
               "max_nodes_islanded_by_a_contingency": max((s.n_islanded for s in resolved.systems.values()), default=0),
               "priced_points_published": prices.height, "points_compared": points.height,
               "price_spread_published": round(float(observed.max() - observed.min()), 2),
-              "residual": _quantiles(residual)}
+              "residual": quantiles(residual, 3, within=(0.01, 1.0))}
     result["residual_when_every_row_applied"] = result["residual"] if share == 1.0 else None
     result["binding_rows_by_limit_flags"] = dict(sorted(by_flags.items()))
     result["system_price"] = {"source": "published" if system_price is not None else "fitted_median",
                               "fitted_median_minus_published": round(float(np.median(observed + points["c"].to_numpy()) - system_price),
                                                                      3) if system_price is not None else None}
-    hist, edges = np.histogram(residual, bins=RESIDUAL_BINS)
-    result["residual_histogram"] = {f"<{e:g}": int(h) for h, e in zip(hist, edges[1:])}
+    result["residual_histogram"] = histogram(residual, RESIDUAL_BINS)
     by_kind = points.with_columns(pl.Series("r", resid)).group_by("kind").agg(
         pl.len().alias("n"), pl.col("r").median().round(3).alias("p50_abs"), pl.col("r").quantile(0.9).round(3).alias("p90_abs"),
         pl.col("r").max().round(2).alias("max_abs"), (pl.col("r") <= 1.0).sum().alias("within_1.00")).sort("kind")
@@ -132,7 +131,7 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     # SP-05: combined-cycle trains on one bus need no weights; on several, each in-service unit takes an equal share.
     trains = session.core_rows("settlement_point", snapshot_id).filter(pl.col("type_text") == "Logical Resource Node").select("settlement_point_id", "n_buses")
     on_buses = points.select("settlement_point_id").with_row_index("i").join(trains, on="settlement_point_id")
-    result["logical_resource_nodes"] = {label: _summary(resid[group["i"].to_numpy()], within=0.01)
+    result["logical_resource_nodes"] = {label: quantiles(resid[group["i"].to_numpy()], 3, within=(0.01,))
                                         for label, group in (("one_bus", on_buses.filter(pl.col("n_buses") == 1)), ("several_buses",
                                                                                                                     on_buses.filter(pl.col("n_buses") > 1)))}
 
@@ -176,34 +175,14 @@ def _renormalized(W: sparse.csr_matrix, connected: np.ndarray | None) -> sparse.
     return sparse.diags(np.divide(1.0, kept, out=np.zeros_like(kept), where=kept > 0)) @ Wc
 
 
-def _quantiles(values: np.ndarray) -> dict:
-    a = np.abs(values)
-    return {"p50_abs": round(float(np.quantile(a, 0.5)), 3), "p90_abs": round(float(np.quantile(a, 0.9)), 3),
-            "p99_abs": round(float(np.quantile(a, 0.99)), 3), "max_abs": round(float(a.max()), 2),
-            "within_0.01": int((a <= 0.01).sum()), "within_1.00": int((a <= 1.0).sum())}
-
-
-def _summary(values: np.ndarray, within: float) -> dict:
-    return {"n": int(values.size), "p50_abs": round(float(np.median(values)), 3) if values.size else None,
-            "max_abs": round(float(values.max()), 2) if values.size else None, f"within_{within}": int((values <= within).sum())}
-
-
-def hour_ids(session, day: date) -> list[str]:
-    """The latest revision of every DAM hour of one operating day."""
-    snaps = session.core("snapshot").filter((pl.col("model_kind") == "dam") & (pl.col("operating_date") == day)).collect()
-    return snaps.sort("hour", "revision").unique(subset=["hour"], keep="last").sort("hour")["snapshot_id"].to_list()
-
-
 def days_with_prices(session) -> list[date]:
     """Operating days with both a DAM model and archived shadow prices, oldest first."""
-    posted = {datetime.strptime(d, "%m/%d/%Y").date() for d in session.raw("dam_shadow_prices").select("delivery_date").unique().collect()["delivery_date"]}
-    modelled = set(session.core("snapshot").filter(pl.col("model_kind") == "dam").select("operating_date").unique().collect()["operating_date"])
-    return sorted(posted & modelled)
+    return sorted(delivery_days(session.raw("dam_shadow_prices")) & modelled_days(session))
 
 
 def run(session, day: date) -> list[dict]:
     """Every hour of one day; writes ``data/reports/prices/<snapshot>.json`` per hour with prices."""
-    results = [r for sid in hour_ids(session, day) if (r := check_hour(session, sid)) is not None]
+    results = [r for sid in session.hour_ids(day) if (r := check_hour(session, sid)) is not None]
     for r in results:
         write_report(session, "prices", r["snapshot_id"], r)
     return results

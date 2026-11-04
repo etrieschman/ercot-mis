@@ -13,10 +13,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import polars as pl
+from ..raw.table import flag
 
 from ..core.match import DAM_REACTANCE_FLOOR, name_key, placeholder_name
 from ..out.network import Network, Options
 from . import write_report
+from .binding import hour_rows
 
 MEASURES: dict[str, Callable[[Models], dict]] = {}
 
@@ -51,17 +53,9 @@ class Models:
         return self.session.raw_rows(table, snapshot_id)
 
 
-def newest(session) -> tuple[str, str]:
-    """Hour 12 of the newest DAM day and the newest monthly CRR model, latest revisions."""
-    snaps = session.core("snapshot").collect()
-    dam = snaps.filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision")["snapshot_id"][-1]
-    crr = snaps.filter(pl.col("model_kind") == "crr_monthly").sort("month", "revision")["snapshot_id"][-1]
-    return dam, crr
-
-
 def run(session, dam: str | None = None, crr: str | None = None) -> dict[str, dict]:
     """Every measurement; writes ``data/reports/register/<dam>__<crr>.json``."""
-    default_dam, default_crr = newest(session)
+    default_crr, default_dam = session.newest()
     models = Models(session, dam or default_dam, crr or default_crr)
     done: dict[Callable, dict] = {}
     results = {}
@@ -202,7 +196,6 @@ def enforced_set(m: Models) -> dict:
     """Every limited branch under every contingency, against the rows that actually bound in the DAM hour."""
     net = m.network(m.dam)
     snap = m.session.snapshot(m.dam)
-    from .binding import hour_rows  # the checks' own reader of ERCOT's hourly reports
     bound = hour_rows(m.session, "dam_shadow_prices", snap["interval_start_utc"])
     return {"limited_branches": int(net.branches["is_limited"].sum()), "contingencies": net.contingencies.height, "binding_rows_published": bound.height}
 
@@ -318,7 +311,7 @@ def load_status(m: Models) -> dict:
     raw = m.raw("psse_load", m.dam).select(pl.col("i").cast(pl.Int64).alias("bus"), pl.col("id").str.strip_chars().alias("id"),
                                            (pl.col("status") == 1).alias("raw_in"))
     csv = m.raw("dam_loads", m.dam).select(pl.col("psse_bus_number").cast(pl.Int64).alias("bus"), pl.col("psse_load_id").str.strip_chars().alias("id"),
-                                           pl.col("load_status").str.to_uppercase().str.starts_with("IN").alias("csv_in"))
+                                           flag(pl.col("load_status"), "IN").alias("csv_in"))
     both = raw.join(csv, on=["bus", "id"])
     return {"loads_in_both": both.height, "status_differs": int((both["raw_in"] != both["csv_in"]).sum())}
 

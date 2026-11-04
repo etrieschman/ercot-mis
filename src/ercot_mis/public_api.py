@@ -25,7 +25,7 @@ import requests
 
 from .clock import TZ
 from .config import ConfigError, load_secret
-from .ews import RemoteDoc, retrying
+from .ews import CHUNK, RemoteDoc, retrying
 from .products import Product
 
 TOKEN_URL = "https://ercotb2c.b2clogin.com/ercotb2c.onmicrosoft.com/B2C_1_PUBAPI-ROPC-FLOW/oauth2/v2.0/token"
@@ -36,7 +36,6 @@ ARCHIVE_URL = "https://api.ercot.com/api/public-reports/archive"
 TOKEN_LIFETIME = timedelta(minutes=55)  # ERCOT's tokens last an hour
 PAGE_SIZE = 1000
 MIN_INTERVAL = 2.1  # seconds between calls: the API allows 30 a minute
-CHUNK = 1 << 20
 
 
 class PublicApiError(RuntimeError):

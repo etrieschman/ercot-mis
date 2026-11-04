@@ -35,25 +35,19 @@ from . import crr, dam, disclosure, gtl, mappings, prices, psse, table
 LAYER = "raw"
 COMPRESSION = "zstd"
 NONE = "<none>"  # the artifact row of a package that yields no table (a document shape the parser archives but does not read)
-_MODULES = {"NP7-801-M": (crr,), "NP7-800-M": (crr,), "NP4-500-SG": (dam,), "NP3-766-M": (gtl,),
-            "NP4-191-CD": (prices,), "NP4-183-CD": (prices,), "NP4-190-CD": (prices,),
-            "NP4-523-CD": (prices,), "NP4-200-CD": (prices,), "NP4-158-SG": (prices,), "NP4-231-CD": (prices,), "NP4-159-CD": (prices,),
-            "NP4-160-SG": (mappings,), "NP3-220-SG": (mappings,), "NP3-966-ER": (disclosure,)}
-
-
-def parsed_products() -> tuple[str, ...]:
-    """The EMIL IDs that have a raw-layer parser, in build order."""
-    return tuple(_MODULES)
+# The parser of each product with a raw layer, in build order. Each module has ``VERSION``, ``classify_member`` and ``parse_member``.
+PARSERS = {"NP7-801-M": crr, "NP7-800-M": crr, "NP4-500-SG": dam, "NP3-766-M": gtl,
+           "NP4-191-CD": prices, "NP4-183-CD": prices, "NP4-190-CD": prices, "NP4-523-CD": prices, "NP4-200-CD": prices, "NP4-158-SG": prices,
+           "NP4-231-CD": prices, "NP4-159-CD": prices, "NP4-160-SG": mappings, "NP3-220-SG": mappings, "NP3-966-ER": disclosure}
 
 
 def parser_id(emil_id: str) -> str:
     """Identity of the code that produces a product's raw tables: package and parser versions."""
     from .. import __version__
 
-    modules = _MODULES.get(emil_id)
-    if modules is None:
+    if emil_id not in PARSERS:
         raise ValueError(f"{emil_id} has no raw-layer parser")
-    parts = [f"ercot-mis={__version__}", f"build={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (table, psse, *modules)]
+    parts = [f"ercot-mis={__version__}", f"build={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (table, psse, PARSERS[emil_id])]
     return "|".join(parts)
 
 
@@ -61,9 +55,9 @@ def artifact_key(parser: str, blob_sha256: str, table: str) -> str:
     return hashlib.sha256(f"{parser}|{blob_sha256}|{table}".encode()).hexdigest()
 
 
-def artifact_path(table: str, emil_id: str, blob_sha256: str) -> Path:
-    """Relative to the data folder; hive-style so readers get ``emil_id`` for free."""
-    return Path(LAYER) / table / f"emil_id={emil_id}" / f"{blob_sha256[:16]}.parquet"
+def artifact_path(layer: str, table: str, emil_id: str, blob_sha256: str) -> Path:
+    """Where a package's table lives in a layer, relative to the data folder; hive-style so readers get ``emil_id`` for free."""
+    return Path(layer) / table / f"emil_id={emil_id}" / f"{blob_sha256[:16]}.parquet"
 
 
 @dataclass(frozen=True)
@@ -108,35 +102,31 @@ def parse_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str
     ``{table: (rows, member hashes that contributed)}``. A document that is not a zip
     (the GTL workbook) is parsed whole; its identity is the listing's ``operating_date``.
     """
-    module = _MODULES[emil_id][0]
+    module = PARSERS[emil_id]
+    package = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob_sha256}
     parts: dict[str, list[pa.Table]] = {}
     sources: dict[str, list[str]] = {}
+    for member, data, member_sha256 in _parsed_members(path, module, members, operating_date, blob_sha256):
+        identity = {**package, "member_sha256": member_sha256, "member_path": member.path, **member.identity}
+        for table_name, rows in module.parse_member(member, data).items():
+            parts.setdefault(table_name, []).append(_identity_columns(rows, identity))
+            sources.setdefault(table_name, []).append(member_sha256 or "")
+    return {table_name: (pa.concat_tables(chunks, promote_options="default"), sources[table_name]) for table_name, chunks in parts.items()}
+
+
+def _parsed_members(path: Path, module, members: dict[str, str], operating_date, blob_sha256: str):
+    """(member, bytes, member sha256) for each member a parser reads: the zip's files, or the whole document."""
     if module is gtl:
         data = path.read_bytes()
-        member = gtl.classify_document(path.name, data)
+        member = gtl.classify_document("<document>", data, operating_date)
         if member.is_parsed:
-            identity = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob_sha256, "member_sha256": blob_sha256,
-                        "member_path": "<document>", "operating_date": operating_date}
-            table_ = gtl.parse_gtl(data, f"GTL {operating_date}")
-            parts["gtl_hourly"] = [_identity_columns(table_, identity)]
-            sources["gtl_hourly"] = [blob_sha256]
-        return {table: (pa.concat_tables(chunks, promote_options="default"), sources[table]) for table, chunks in parts.items()}
+            yield member, data, blob_sha256
+        return
     with zipfile.ZipFile(path) as package:
         for name in package.namelist():
             member = module.classify_member(name)
-            if member is None or not member.is_parsed:
-                continue
-            identity = {"emil_id": emil_id, "doc_id": doc_id, "blob_sha256": blob_sha256,
-                        "member_sha256": members.get(name), "member_path": name}
-            if module is crr:
-                identity.update(auction=member.auction, term=member.term, sequence=member.sequence,
-                                month=member.month, time_of_use=member.time_of_use)
-            else:
-                identity.update(operating_date=member.operating_date, hour=member.hour)
-            for table, rows in module.parse_member(member, package.read(name)).items():
-                parts.setdefault(table, []).append(_identity_columns(rows, identity))
-                sources.setdefault(table, []).append(members.get(name) or "")
-    return {table: (pa.concat_tables(chunks, promote_options="default"), sources[table]) for table, chunks in parts.items()}
+            if member is not None and member.is_parsed:
+                yield member, package.read(name), members.get(name)
 
 
 def build_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str,
@@ -146,11 +136,11 @@ def build_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str
     try:
         tables = parse_package(path, emil_id, doc_id, blob_sha256, members, operating_date)
         written = []
-        for table, (rows, sources) in tables.items():
+        for table_name, (rows, sources) in tables.items():
             handle, tmp = tempfile.mkstemp(dir=tmp_dir, suffix=".parquet")
             os.close(handle)
             pq.write_table(rows, tmp, compression=COMPRESSION)
-            written.append(Written(table, Path(tmp), rows.num_rows, Path(tmp).stat().st_size, tuple(sorted(set(sources)))))
+            written.append(Written(table_name, Path(tmp), rows.num_rows, Path(tmp).stat().st_size, tuple(sorted(set(sources)))))
     except (Exception, PanicException) as error:  # a polars panic is not an Exception; reported per package; other packages continue
         return PackageResult(blob_sha256, (), time.perf_counter() - started, f"{type(error).__name__}: {error}")
     return PackageResult(blob_sha256, tuple(written), time.perf_counter() - started)
@@ -197,7 +187,7 @@ def build(session, product: str | int, *, workers: int | None = None, limit: int
             if not result.artifacts:  # nothing to read in this document: remember that, or it is parsed again every run
                 placed.append((artifact_key(parser, result.blob_sha256, NONE), Written(NONE, Path(NONE), 0, 0, ()), Path(NONE)))
             for artifact in result.artifacts:
-                rel = artifact_path(artifact.table, spec.emil_id, result.blob_sha256)
+                rel = artifact_path(LAYER, artifact.table, spec.emil_id, result.blob_sha256)
                 dest = session.data_dir / rel
                 dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 os.chmod(artifact.tmp_path, 0o600)

@@ -73,7 +73,7 @@ def build(session, *, limit: int | None = None) -> list[dict]:
         identity = f"{core_id()}|{package_inputs(session, emil_id, package, gtl[1] if gtl else None)}"
         keys = {t: raw_build.artifact_key(identity, blob, t) for t in TABLES}
         none_key = raw_build.artifact_key(identity, blob, raw_build.NONE)
-        rels = {t: Path(LAYER) / t / f"emil_id={emil_id}" / f"{blob[:16]}.parquet" for t in TABLES}
+        rels = {t: raw_build.artifact_path(LAYER, t, emil_id, blob) for t in TABLES}
         if none_key in existing or (set(keys.values()) <= existing and all((session.data_dir / rel).is_file() for rel in rels.values())):
             results.append(record)
             continue
@@ -188,7 +188,7 @@ def build_awards(session, existing: set[str], tmp_dir: Path, run_id: str) -> lis
     for package in session.catalog.packages(product):
         blob = package["sha256"]
         key = raw_build.artifact_key(identity, blob, "hourly_award")
-        rel = Path(LAYER) / "hourly_award" / f"emil_id={product}" / f"{blob[:16]}.parquet"
+        rel = raw_build.artifact_path(LAYER, "hourly_award", product, blob)
         record = {"emil_id": product, "doc_id": package["doc_id"], "blob_sha256": blob, "status": "skipped", "tables": 1, "rows": None,
                   "seconds": 0.0, "error": None}
         if key in existing and (session.data_dir / rel).is_file():
@@ -214,7 +214,7 @@ IDENTITY = ("emil_id", "doc_id", "blob_sha256", "member_sha256", "member_path") 
 
 def _raw(session, table: str, emil_id: str, blob_sha256: str) -> pl.DataFrame | None:
     """One raw table of one package without its identity columns (a DAM package is ~200 MB in memory this way, ~500 with them)."""
-    path = session.data_dir / raw_build.artifact_path(table, emil_id, blob_sha256)
+    path = session.data_dir / raw_build.artifact_path(raw_build.LAYER, table, emil_id, blob_sha256)
     if not path.is_file():
         return None
     return pl.read_parquet(path, columns=[c for c in pl.read_parquet_schema(path) if c not in IDENTITY])

@@ -25,13 +25,12 @@ Raw keeps ERCOT's text for ``delivery_date`` (``MM/DD/YYYY``) and ``hour_ending`
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 
 import pyarrow as pa
 
-from .table import Column, F, I, read_delimited, table_for_header
+from .table import Column, F, I, Member, classify_csv, parse_csv
 
-VERSION = 1
+VERSION = 2  # 2: the always-null operating_date and hour identity columns are gone
 
 _TIME = (Column("DeliveryDate"), Column("HourEnding"))
 _DST = Column("DSTFlag", name="dst_flag")
@@ -55,24 +54,8 @@ TABLES: dict[str, tuple[Column, ...]] = {
 }
 
 
-@dataclass(frozen=True)
-class PriceMember:
-    path: str
-    format: str
-    operating_date: None = None  # a file's delivery date is in its rows, not its name
-    hour: None = None
-
-    @property
-    def is_parsed(self) -> bool:
-        return self.format == "csv"
+classify_member = classify_csv
 
 
-def classify_member(path: str) -> PriceMember | None:
-    if path.endswith("/"):
-        return None
-    return PriceMember(path, path.rsplit(".", 1)[-1].lower() if "." in path else "")
-
-
-def parse_member(member: PriceMember, data: bytes) -> dict[str, pa.Table]:
-    table = table_for_header(data, TABLES, "DAM prices")
-    return {table: read_delimited(data, TABLES[table], table)}
+def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
+    return parse_csv(data, TABLES, "DAM prices")

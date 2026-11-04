@@ -15,37 +15,31 @@ from __future__ import annotations
 
 import io
 import zipfile
-from dataclasses import dataclass
+from datetime import date
 
 import polars as pl
 import pyarrow as pa
 
 from ..clock import local_timestamps_expr
-from .table import ParseError
+from .table import Member, ParseError, extension
 
 VERSION = 3
 
 _SHEET = "Results"
 
 
-@dataclass(frozen=True)
-class GtlMember:
-    path: str
-    kind: str  # "gtl_hourly" or "dc_tie_limits" or "unknown"
-    format: str
-
-    @property
-    def is_parsed(self) -> bool:
-        return self.kind == "gtl_hourly"
-
-
-def classify_document(path: str, data: bytes) -> GtlMember:
-    """The shape is in the bytes: the GTL workbook is a zip (xlsx), the DC-tie file is not."""
+def classify_document(path: str, data: bytes, operating_date: date | None = None) -> Member:
+    """The shape is in the bytes: the GTL workbook is a zip (xlsx), the DC-tie file is not. The listing's day is the rows' identity."""
+    identity = {"operating_date": operating_date}
     if zipfile.is_zipfile(io.BytesIO(data)):
-        return GtlMember(path, "gtl_hourly", "xlsx")
+        return Member(path, "gtl_hourly", "xlsx", True, identity)
     if data[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":  # OLE2 compound file: legacy xls
-        return GtlMember(path, "dc_tie_limits", "xls")
-    return GtlMember(path, "unknown", path.rsplit(".", 1)[-1].lower() if "." in path else "")
+        return Member(path, "dc_tie_limits", "xls", False, identity)
+    return Member(path, "unknown", extension(path), False, identity)
+
+
+def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
+    return {"gtl_hourly": parse_gtl(data, f"GTL {member.identity['operating_date']}")}
 
 
 def parse_gtl(data: bytes, label: str = "GTL") -> pa.Table:

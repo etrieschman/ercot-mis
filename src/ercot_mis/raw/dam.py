@@ -19,13 +19,12 @@ from __future__ import annotations
 VERSION = 1
 
 import re
-from dataclasses import dataclass
 from datetime import date
 
 import pyarrow as pa
 
 from . import psse
-from .table import F, I, Column, read_delimited
+from .table import F, I, Column, Member, extension, read_delimited
 
 _HOURLY = re.compile(r"^DAM(\d{8})_(?:([A-Za-z]+)_)?(\d{3})\.(raw|csv)$", re.IGNORECASE)
 _DAILY = re.compile(r"^DAM(\d{8})_(SpCtg|SpNb)\.csv$", re.IGNORECASE)
@@ -122,45 +121,38 @@ _CSV_COLUMNS = {
 }
 
 
-@dataclass(frozen=True)
-class DamMember:
-    path: str
-    kind: str  # "network_model", "lines", ...; "readme"; "unknown"
-    format: str
-    operating_date: date | None
-    hour: int | None  # 1-based study hour; None for once-a-day files
-
-    @property
-    def is_parsed(self) -> bool:
-        return self.kind == "network_model" or self.kind in _CSV_COLUMNS
+def _member(path: str, kind: str, fmt: str, operating_date: date | None, hour: int | None) -> Member:
+    """``hour`` is the 1-based study hour; None for once-a-day files."""
+    return Member(path, kind, fmt, kind == "network_model" or kind in _CSV_COLUMNS, {"operating_date": operating_date, "hour": hour})
 
 
 def _operating_date(mmddyyyy: str) -> date:
     return date(int(mmddyyyy[4:]), int(mmddyyyy[:2]), int(mmddyyyy[2:4]))
 
 
-def classify_member(path: str) -> DamMember | None:
+def classify_member(path: str) -> Member | None:
     """Describe a zip member of a DAM package from its name; None for folders."""
     if path.endswith("/"):
         return None
     file = path.rsplit("/", 1)[-1]
-    fmt = file.rsplit(".", 1)[-1].lower() if "." in file else ""
+    fmt = extension(file)
     if hourly := _HOURLY.match(file):
         token = hourly.group(2).lower() if hourly.group(2) else None
         kind = _KINDS.get(token, "unknown")
         if (kind == "network_model") != (fmt == "raw"):
             kind = "unknown"
-        return DamMember(path, kind, fmt, _operating_date(hourly.group(1)), int(hourly.group(3)))
+        return _member(path, kind, fmt, _operating_date(hourly.group(1)), int(hourly.group(3)))
     if daily := _DAILY.match(file):
-        return DamMember(path, _KINDS[daily.group(2).lower()], fmt, _operating_date(daily.group(1)), None)
+        return _member(path, _KINDS[daily.group(2).lower()], fmt, _operating_date(daily.group(1)), None)
     if readme := _README.match(file):
-        return DamMember(path, "readme", fmt, _operating_date(readme.group(1)), None)
-    return DamMember(path, "unknown", fmt, None, None)
+        return _member(path, "readme", fmt, _operating_date(readme.group(1)), None)
+    return _member(path, "unknown", fmt, None, None)
 
 
-def parse_member(member: DamMember, data: bytes) -> dict[str, pa.Table]:
+def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
     """Parse one member into raw tables; members without a parser return no tables."""
-    label = f"DAM {member.kind} hour {member.hour}" if member.hour else f"DAM {member.kind}"
+    hour = member.identity["hour"]
+    label = f"DAM {member.kind} hour {hour}" if hour else f"DAM {member.kind}"
     if member.kind == "network_model":
         return psse.parse_raw(data, label).tables
     if member.kind in _CSV_COLUMNS:

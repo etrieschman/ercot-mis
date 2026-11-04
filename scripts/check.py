@@ -17,8 +17,6 @@ from __future__ import annotations
 import argparse
 from datetime import date
 
-import polars as pl
-
 import ercot_mis as em
 from ercot_mis.checks import flows, identity, injections, ldf, network, prices, register
 
@@ -46,9 +44,8 @@ def main() -> None:
             result = ldf.run(session, args.day, args.hour)
             print(f"ldf {args.day} he{args.hour:02d}: {result.get('matched_substations')} substations, share diff {result.get('share_abs_diff')}")
         elif args.check == "network":
-            snaps = session.core("snapshot").collect()
-            crr = args.crr or snaps.filter(pl.col("model_kind") == "crr_monthly").sort("month", "revision")["snapshot_id"][-1]
-            dam = args.dam or snaps.filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision")["snapshot_id"][-1]
+            newest = session.newest()
+            crr, dam = args.crr or newest[0], args.dam or newest[1]
             for label, values in network.run(session, crr, dam)["sections"].items():
                 print(f"{label}: " + ", ".join(f"{k}={v}" for k, v in values.items()))
         elif args.check == "identity":

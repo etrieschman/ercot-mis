@@ -16,6 +16,8 @@ from pathlib import Path
 
 import polars as pl
 
+from .branch import resolved
+
 VERSION = 2
 
 GTC_COLUMNS = ("gtc_id", "source", "limit_mw", "n_members", "n_unresolved", "crr_gtc_id")
@@ -25,12 +27,9 @@ MEMBER_COLUMNS = ("gtc_id", "branch_id", "factor", "flow_direction", "element_na
 
 def crr_gtcs(branches: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """From ``crr_non_thermal_constraints`` (Name, Limit, DeviceName, DeviceType, FlowDirection, Factor)."""
-    known = branches.select("branch_id", pl.lit(True).alias("is_resolved"))
     members = (raw.select(pl.col("name").alias("gtc_id"), pl.col("device_name").alias("branch_id"), "factor",
                           "flow_direction", pl.col("device_name").alias("element_name"), pl.col("limit"))
-               .join(known, on="branch_id", how="left")
-               .with_columns(pl.col("is_resolved").fill_null(False))
-               .with_columns(pl.when(pl.col("is_resolved")).then(pl.col("branch_id")).otherwise(None).alias("branch_id")))
+               .pipe(resolved, branches))
     gtcs = (members.group_by("gtc_id").agg(pl.col("limit").first().alias("limit_mw"), pl.len().alias("n_members"),
                                            (~pl.col("is_resolved")).sum().alias("n_unresolved"))
             .with_columns(pl.lit("crr_csv").alias("source"), pl.col("gtc_id").alias("crr_gtc_id"))

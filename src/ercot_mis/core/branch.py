@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import polars as pl
 
-from .node import TIE_REACTANCE
+from ..raw.table import flag
+from .node import TIE_REACTANCE, autos_by_key
 
 VERSION = 4  # bump when columns or identities change
 
@@ -30,16 +31,11 @@ BRANCH_COLUMNS = ("branch_id", "kind", "from_node", "to_node", "ckt", "from_bus_
 RATING_COLUMNS = ("branch_id", "rating_source", "time_of_use", "base_mw", "emergency_mw", "rate_c_mw")
 
 
-def autos_by_key(autos: pl.DataFrame) -> pl.DataFrame:
-    """``Autos`` names keyed by (from_node, to_node, ckt) in both orientations: the sheet
-    lists some transformers with from and to swapped relative to the RAW. ``is_swapped``
-    says which orientation a key came from."""
-    direct = autos.select(pl.col("from_number").cast(pl.Int64, strict=False).alias("from_node"),
-                          pl.col("to_number").cast(pl.Int64, strict=False).alias("to_node"),
-                          pl.col("id").str.strip_chars().alias("ckt"), pl.col("crr_name").alias("name"),
-                          pl.lit(False).alias("is_swapped")).drop_nulls(["from_node", "to_node"])
-    swapped = direct.select(pl.col("to_node").alias("from_node"), pl.col("from_node").alias("to_node"), "ckt", "name", pl.lit(True).alias("is_swapped"))
-    return pl.concat([direct, swapped]).unique(subset=["from_node", "to_node", "ckt"], keep="first")
+def resolved(rows: pl.DataFrame, branches: pl.DataFrame) -> pl.DataFrame:
+    """``rows`` with ``is_resolved`` (its ``branch_id`` names one of ``branches``) and ``branch_id`` nulled where it does not."""
+    known = branches.select("branch_id", pl.lit(True).alias("is_resolved"))
+    return (rows.join(known, on="branch_id", how="left").with_columns(pl.col("is_resolved").fill_null(False))
+            .with_columns(pl.when(pl.col("is_resolved")).then(pl.col("branch_id")).otherwise(None).alias("branch_id")))
 
 
 def _keys(nodes: pl.DataFrame) -> pl.DataFrame:
@@ -97,8 +93,8 @@ def dam_branches(nodes: pl.DataFrame, psse_branch: pl.DataFrame, psse_transforme
     named = pl.concat([
         frame.select(pl.col("psse_from_bus_number").alias("from_node"), pl.col("psse_to_bus_number").alias("to_node"),
                      pl.col("psse_ckt_id").str.strip_chars().alias("ckt"), pl.col("branch_name").alias("branch_id"),
-                     (pl.col("monitored").str.to_uppercase().str.starts_with("Y")).alias("is_monitored"),
-                     (pl.col("monitored_and_secured").str.to_uppercase().str.starts_with("Y")).alias("is_secured"))
+                     (flag(pl.col("monitored"), "Y")).alias("is_monitored"),
+                     (flag(pl.col("monitored_and_secured"), "Y")).alias("is_secured"))
         for frame in (dam_lines, dam_transformers)])
     frame = _with_endpoints(_raw_parts(psse_branch, psse_transformer).join(named, on=["from_node", "to_node", "ckt"], how="left"), nodes)
     return _finish(frame.with_columns(pl.lit(False).alias("is_name_reversed"), pl.lit(False).alias("is_temporary")), tie_reactance)

@@ -15,14 +15,13 @@ settlement point names, offer, bid and CRR IDs, flags and indicators) stay text.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 
 import pyarrow as pa
 
-from .table import Column, F, read_delimited, table_for_header
+from .table import Column, F, Member, extension, read_delimited, table_for_header
 
-VERSION = 2
+VERSION = 3  # 3: the always-null operating_date and hour identity columns are gone
 
 TABLES: dict[str, tuple[Column, ...]] = {
     "dam_60d_qse_self_arranged_as": (
@@ -209,25 +208,14 @@ TABLES: dict[str, tuple[Column, ...]] = {
 _MEMBER = re.compile(r"(?:^|/)60d_DAM_(?P<stem>.+)-(?P<day>\d\d-[A-Za-z]{3}-\d\d)\.csv$")
 
 
-@dataclass(frozen=True)
-class DisclosureMember:
-    path: str
-    format: str
-    operating_date: date | None
-    hour: None = None
-
-    @property
-    def is_parsed(self) -> bool:
-        return self.format == "csv" and self.operating_date is not None
-
-
-def classify_member(path: str) -> DisclosureMember | None:
+def classify_member(path: str) -> Member | None:
+    """``kind`` is the file's stem (the report it holds); the day in its name is its rows' ``operating_date``."""
     if path.endswith("/"):
         return None
-    fmt = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    fmt = extension(path)
     match = _MEMBER.search(path)
     day = datetime.strptime(match.group("day").upper(), "%d-%b-%y").date() if match else None
-    return DisclosureMember(path, fmt, day)
+    return Member(path, match.group("stem") if match else "unknown", fmt, fmt == "csv" and day is not None, {"operating_date": day})
 
 
 # Two files share one header (the storage resource table is the generation table's layout for energy
@@ -235,11 +223,9 @@ def classify_member(path: str) -> DisclosureMember | None:
 _SAME_HEADER = {"ESR_Data": "dam_60d_esr_data", "Gen_Resource_Data": "dam_60d_gen_resource_data"}
 
 
-def parse_member(member: DisclosureMember, data: bytes) -> dict[str, pa.Table]:
-    label = f"60-day DAM disclosure {member.operating_date}"
+def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
+    label = f"60-day DAM disclosure {member.identity['operating_date']}"
     table = table_for_header(data, TABLES, label)
-    match = _MEMBER.search(member.path)
-    stem = match.group("stem") if match else ""
-    if stem in _SAME_HEADER and tuple(c.header for c in TABLES[_SAME_HEADER[stem]]) == tuple(c.header for c in TABLES[table]):
-        table = _SAME_HEADER[stem]
+    if member.kind in _SAME_HEADER and tuple(c.header for c in TABLES[_SAME_HEADER[member.kind]]) == tuple(c.header for c in TABLES[table]):
+        table = _SAME_HEADER[member.kind]
     return {table: read_delimited(data, TABLES[table], table)}

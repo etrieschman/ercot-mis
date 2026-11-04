@@ -7,11 +7,11 @@ and every point-to-point obligation nets to zero between its source and its sink
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 
 from ..core import award
 from ..out.injection import awards
-from . import write_report
+from . import delivery_days, write_report
 
 TOTALS = ("interval_start_utc", "delivery_date", "hour_ending", "net_mw", "supply_mw", "net_share_of_supply")
 
@@ -37,7 +37,7 @@ def check_day(session, day: date) -> dict:
 
 def days(session) -> list[date]:
     """Every operating day with awards built, oldest first."""
-    return sorted(datetime.strptime(d, "%m/%d/%Y").date() for d in session.core("hourly_award").select("delivery_date").unique().collect()["delivery_date"])
+    return sorted(delivery_days(session.core("hourly_award")))
 
 
 def run(session, day: date) -> dict:

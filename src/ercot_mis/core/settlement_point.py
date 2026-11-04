@@ -30,6 +30,7 @@ each in-service unit takes an equal share: ERCOT weighs units by their registere
 from __future__ import annotations
 
 import polars as pl
+from ..raw.table import flag
 
 VERSION = 6
 
@@ -136,7 +137,7 @@ def _dam_resource_nodes(sp: pl.DataFrame, points: pl.DataFrame, generators: pl.D
     units = (generators.filter(pl.col(column).is_in(without_bus.implode()))
              .select(pl.col(column).cast(pl.String).alias("settlement_point_id"),
                      pl.col("resource_node_psse_bus_number").cast(pl.Int64).alias("node_number"),
-                     pl.col("generator_status").cast(pl.String).str.to_uppercase().str.starts_with("IN").fill_null(False).alias("in_service")))
+                     flag(pl.col("generator_status"), "IN").fill_null(False).alias("in_service")))
     units = (units.filter(pl.col("in_service") | ~pl.col("in_service").any().over("settlement_point_id"))
              .select("settlement_point_id", "node_number", pl.lit(1.0).alias("raw_weight"), pl.lit("dam_gn").alias("source")))
     placed = pl.col("node_number").is_null() & pl.col("settlement_point_id").is_in(units["settlement_point_id"].implode())
@@ -152,7 +153,7 @@ def _dam_hubs(hub_buses: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
     """
     hb = hub_buses.select(pl.col("hub_name").cast(pl.String).alias("settlement_point_id"), pl.col("hub_bus_name").cast(pl.String).alias("_hub_bus"),
                           pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"),
-                          pl.col("bus_status").cast(pl.String).str.to_uppercase().str.starts_with("ENERGIZED").alias("_energized"))
+                          flag(pl.col("bus_status"), "ENERGIZED").alias("_energized"))
     hub_names = points.filter(pl.col("kind") == "hub")["settlement_point_id"]
     real = (hb.filter(pl.col("settlement_point_id").is_in(hub_names.implode()) & pl.col("_energized")).drop("_energized")
             .with_columns(pl.col("node_number").count().over("settlement_point_id", "_hub_bus").alias("_in_hub_bus"))
@@ -178,7 +179,7 @@ def _dam_zones(loads: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
     names, by the fractions given, when those targets are in service (the file's own rule).
     """
     zone_names = points.filter(pl.col("kind").is_in(["load_zone", "dc_tie"]))["settlement_point_id"]
-    in_service = pl.col("load_status").str.to_uppercase().str.starts_with("IN")
+    in_service = flag(pl.col("load_status"), "IN")
     zone_loads = loads.filter(pl.col("load_zone_name").is_in(zone_names.implode()))
     zones = (zone_loads.filter(in_service)
              .select(pl.col("load_zone_name").cast(pl.String).alias("settlement_point_id"), pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"),
@@ -187,7 +188,7 @@ def _dam_zones(loads: pl.DataFrame, points: pl.DataFrame) -> pl.DataFrame:
         return zones
     targets = [(f"{n}_target_load_name", f"fraction_of_this_load_to_{n}_target_load") for n in ("1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th")
                if f"{n}_target_load_name" in loads.columns]
-    rolling = zone_loads.filter(~in_service & pl.col("load_rollover_capable").cast(pl.String).str.to_uppercase().str.starts_with("Y"))
+    rolling = zone_loads.filter(~in_service & flag(pl.col("load_rollover_capable"), "Y"))
     receivers = loads.filter(in_service).select(pl.col("load_name").alias("_target"), pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"))
     rolled = pl.concat([
         rolling.select(pl.col("load_zone_name").cast(pl.String).alias("settlement_point_id"), pl.col(name).cast(pl.String).alias("_target"),

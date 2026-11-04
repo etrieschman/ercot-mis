@@ -35,15 +35,15 @@ class Logical:
 
 def logical(emil_id: str, member_paths: list[str]) -> Logical | None:
     if emil_id == DAM_PRODUCT:
-        days = {m.operating_date for n in member_paths if (m := dam.classify_member(n)) and m.operating_date}
+        days = {m.identity["operating_date"] for n in member_paths if (m := dam.classify_member(n)) and m.identity["operating_date"]}
         return Logical("dam", (min(days),), (), min(days)) if days else None
-    members = [m for n in member_paths if (m := crr.classify_member(n)) and m.month]
+    members = [m.identity for n in member_paths if (m := crr.classify_member(n)) and m.identity["month"]]
     if not members:
         return None
-    months = tuple(sorted({m.month for m in members}))
-    if any(m.auction == "annual" for m in members):
-        first = next(m for m in members if m.auction == "annual")
-        return Logical("annual", (first.term, first.sequence), months, None)
+    months = tuple(sorted({m["month"] for m in members}))
+    if any(m["auction"] == "annual" for m in members):
+        first = next(m for m in members if m["auction"] == "annual")
+        return Logical("annual", (first["term"], first["sequence"]), months, None)
     return Logical("monthly", (months[0],), months, None)
 
 
@@ -63,7 +63,7 @@ def snapshots(session) -> pl.DataFrame:
                 base = {"emil_id": emil_id, "doc_id": p["doc_id"], "blob_sha256": p["sha256"], "posted_at": p["posted_at"],
                         "model_kind": MODEL_KIND[kind], "revision": revision}
                 if kind == "dam":
-                    hours = sorted({m.hour for n in p["members"] if (m := dam.classify_member(n)) and m.kind == "network_model" and m.hour})
+                    hours = sorted({m.identity["hour"] for n in p["members"] if (m := dam.classify_member(n)) and m.kind == "network_model" and m.identity["hour"]})
                     for hour in hours:
                         rows.append({**base, "snapshot_id": f"dam:{l.day}:he{hour:02d}:r{revision}", "operating_date": l.day,
                                      "hour": hour, "interval_start_utc": study_hour_start(l.day, hour), "month": None, "term": None, "sequence": None})

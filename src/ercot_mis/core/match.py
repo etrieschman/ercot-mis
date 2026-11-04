@@ -20,7 +20,6 @@ side. Differences are never smoothed over: a match records identity only.
 
 from __future__ import annotations
 
-import re
 
 import polars as pl
 

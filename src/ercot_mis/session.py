@@ -14,7 +14,11 @@ from pathlib import Path
 
 import polars as pl
 
-from . import ews, fetch
+from . import ews, fetch, viewer
+from .core import diff, match
+from .core.build import build as build_core_tables
+from .out import injection, network as out
+from .raw import build as raw_build
 from .catalog import Catalog, ReadOnlyCatalog, writing
 from .config import Identity, load_identity
 from .ews import PRIVATE_COLUMNS, EwsClient, Probe
@@ -137,9 +141,7 @@ class Session:
         One file per package and table under ``raw/<table>/emil_id=<EMIL>/``, every row
         carrying its source identity. See ``ercot_mis.raw.build``. Returns one row per package.
         """
-        from .raw.build import build
-
-        return pl.DataFrame(build(self, product, workers=workers, limit=limit), schema=BUILD_SCHEMA)
+        return pl.DataFrame(raw_build.build(self, product, workers=workers, limit=limit), schema=BUILD_SCHEMA)
 
     def build_core(self, *, limit: int | None = None) -> pl.DataFrame:
         """Write every core table from the raw layer, skipping packages already built.
@@ -148,9 +150,7 @@ class Session:
         in ``ercot_mis.core.build.TABLES``; per disclosure day, ``hourly_award``. Each lands under
         ``core/<table>/emil_id=<EMIL>/``.
         """
-        from .core.build import build
-
-        return pl.DataFrame(build(self, limit=limit), schema=BUILD_SCHEMA)
+        return pl.DataFrame(build_core_tables(self, limit=limit), schema=BUILD_SCHEMA)
 
     # ----------------------------------------------------------------- one model
 
@@ -161,10 +161,24 @@ class Session:
             raise KeyError(f"{snapshot_id!r} is not in core.snapshot; run build_core()")
         return rows.row(0, named=True)
 
+    def newest(self) -> tuple[str, str]:
+        """The newest monthly CRR model and hour 12 of the newest DAM day, latest revisions: the pair the checks and the viewer default to."""
+        snaps = self.core("snapshot").collect()
+        crr = snaps.filter(pl.col("model_kind") == "crr_monthly").sort("month", "revision")
+        dam = snaps.filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision")
+        if crr.is_empty() or dam.is_empty():
+            raise ValueError("no monthly CRR model or no DAM day in core.snapshot; run build_core() first or pass snapshot ids")
+        return crr["snapshot_id"][-1], dam["snapshot_id"][-1]
+
+    def hour_ids(self, day: date) -> list[str]:
+        """The latest revision of every DAM hour of one operating day."""
+        snaps = self.core("snapshot").filter((pl.col("model_kind") == "dam") & (pl.col("operating_date") == day)).collect()
+        return snaps.sort("hour", "revision").unique(subset=["hour"], keep="last").sort("hour")["snapshot_id"].to_list()
+
     def core_rows(self, table: str, snapshot_id: str) -> pl.DataFrame:
         """One model's rows of a core table, read from its package's file alone."""
         snap = self.snapshot(snapshot_id)
-        path = self._package_file("core", table, snap)
+        path = self.data_dir / raw_build.artifact_path("core", table, snap["emil_id"], snap["blob_sha256"])
         if not path.is_file():
             return self.core(table).filter(pl.col("snapshot_id") == snapshot_id).collect()
         return pl.scan_parquet(path).filter(pl.col("snapshot_id") == snapshot_id).collect().with_columns(pl.lit(snap["emil_id"]).alias("emil_id"))
@@ -172,7 +186,7 @@ class Session:
     def raw_rows(self, table: str, snapshot_id: str) -> pl.DataFrame:
         """One model's rows of a raw table: its package's file, narrowed to the DAM hour or the CRR month."""
         snap = self.snapshot(snapshot_id)
-        path = self._package_file("raw", table, snap)
+        path = self.data_dir / raw_build.artifact_path("raw", table, snap["emil_id"], snap["blob_sha256"])
         rows = pl.scan_parquet(path) if path.is_file() else self.raw(table).filter(pl.col("blob_sha256") == snap["blob_sha256"]).drop("emil_id")
         columns = rows.collect_schema().names()
         if snap["hour"] is not None and "hour" in columns:
@@ -181,15 +195,10 @@ class Session:
             rows = rows.filter(pl.col("month") == snap["month"])
         return rows.collect().with_columns(pl.lit(snap["emil_id"]).alias("emil_id"))
 
-    def _package_file(self, layer: str, table: str, snap: dict) -> Path:
-        return self.data_dir / layer / table / f"emil_id={snap['emil_id']}" / f"{snap['blob_sha256'][:16]}.parquet"
-
     # ----------------------------------------------------------------- one CRR model against one DAM hour
 
     def match_branches(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
         """``core.match_branch``: every CRR branch with the DAM branch it matched and the ``match_method``; unmatched rows kept."""
-        from .core import match
-
         def compute() -> pl.DataFrame:
             return match.match_branches(self.core_rows("branch", crr_snapshot_id), self.raw_rows("crr_mapping_lines", crr_snapshot_id),
                                         self.raw_rows("crr_mapping_autos", crr_snapshot_id), self.core_rows("branch", dam_snapshot_id))
@@ -198,8 +207,6 @@ class Session:
 
     def match_buses(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
         """``core.match_bus``: settlement points first, then the endpoints of matched branches."""
-        from .core import match
-
         def compute() -> pl.DataFrame:
             return match.match_buses(self.core_rows("node", crr_snapshot_id), self.core_rows("node", dam_snapshot_id),
                                      self.core_rows("branch", crr_snapshot_id), self.core_rows("branch", dam_snapshot_id),
@@ -209,8 +216,6 @@ class Session:
 
     def match_contingencies(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
         """``core.match_contingency``: by name, then by the translated branch set."""
-        from .core import match
-
         def compute() -> pl.DataFrame:
             return match.match_contingencies(self.core_rows("contingency_outage", crr_snapshot_id), self.core_rows("contingency_outage", dam_snapshot_id),
                                              self.match_branches(crr_snapshot_id, dam_snapshot_id))
@@ -219,8 +224,6 @@ class Session:
 
     def diff_branches(self, crr_snapshot_id: str, dam_snapshot_id: str, time_of_use: str = "PeakWD") -> pl.DataFrame:
         """``core.diff_branch``: matched branches' kind, reactance, voltages, service and ratings side by side, with ``same_*`` verdicts."""
-        from .core import diff
-
         def compute() -> pl.DataFrame:
             crr, dam = crr_snapshot_id, dam_snapshot_id
             return diff.diff_branches(self.match_branches(crr, dam), self.core_rows("branch", crr), self.core_rows("node", crr), self.core_rows("branch_rating", crr),
@@ -230,8 +233,6 @@ class Session:
 
     def diff_settlement_points(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
         """``core.diff_settlement_point``: per settlement point, the buses each model puts it on, compared through ``core.match_bus``."""
-        from .core import diff
-
         def compute() -> pl.DataFrame:
             crr, dam = crr_snapshot_id, dam_snapshot_id
             return diff.diff_settlement_points(self.core_rows("settlement_point", crr), self.core_rows("settlement_point_bus", crr),
@@ -241,8 +242,6 @@ class Session:
 
     def diff_loads(self, crr_snapshot_id: str, dam_snapshot_id: str) -> pl.DataFrame:
         """``core.diff_load``: per bus carrying a load in either model, both models' loads there, compared through ``core.match_bus``."""
-        from .core import diff
-
         def compute() -> pl.DataFrame:
             return diff.diff_loads(self.core_rows("load", crr_snapshot_id), self.core_rows("load", dam_snapshot_id),
                                    self.match_buses(crr_snapshot_id, dam_snapshot_id))
@@ -274,15 +273,8 @@ class Session:
         folder (``reports/viewer/``); open it with ``?nohash`` if its address could leave the
         machine. See ``ercot_mis.viewer``.
         """
-        from . import viewer
-
         if left is None:
-            snaps = self.core("snapshot").collect()
-            crr = snaps.filter(pl.col("model_kind") == "crr_monthly").sort("month", "revision")
-            dam = snaps.filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision")
-            if crr.is_empty() or dam.is_empty():
-                raise ValueError("no monthly CRR model or no DAM day in core.snapshot; run build_core() first or pass snapshot ids")
-            left, right = crr["snapshot_id"][-1], dam["snapshot_id"][-1]
+            left, right = self.newest()
         return viewer.build(self, left, right, reference_dam=reference_dam)
 
     def network(self, snapshot_id: str, options=None):
@@ -293,16 +285,12 @@ class Session:
         limits, the post-contingency rating. See ``ercot_mis.out.network``. Assembly
         takes well under a second; reading a saved copy took longer, so none is kept.
         """
-        from .out import network as out
-
         return out.build_network(snapshot_id, out.core_tables(self, snapshot_id), options or out.Options())
 
     # ----------------------------------------------------------------- reading
 
     def injections(self, day: date) -> pl.DataFrame:
         """The DAM's net injection per settlement point and hour for one operating day: ``out.injection`` (needs the 60-day disclosure built)."""
-        from .out import injection
-
         return injection.injections(self, as_date(day))
 
     def raw(self, table: str) -> pl.LazyFrame:

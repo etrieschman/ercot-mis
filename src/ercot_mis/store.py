@@ -19,7 +19,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-CHUNK = 1 << 20
+from .ews import CHUNK
+
 
 
 @dataclass(frozen=True)

@@ -19,13 +19,12 @@ dates a document. ERCOT's one misspelt header is kept as the raw column
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 
 import pyarrow as pa
 
-from .table import Column, F, I, read_delimited, table_for_header
+from .table import Column, F, I, Member, classify_csv, parse_csv
 
-VERSION = 1
+VERSION = 2  # 2: the always-null operating_date and hour identity columns are gone
 
 TABLES: dict[str, tuple[Column, ...]] = {
     "sp_electrical_bus_mapping": (
@@ -40,24 +39,8 @@ TABLES: dict[str, tuple[Column, ...]] = {
 }
 
 
-@dataclass(frozen=True)
-class MappingMember:
-    path: str
-    format: str
-    operating_date: None = None  # the package carries no date; the listing does
-    hour: None = None
-
-    @property
-    def is_parsed(self) -> bool:
-        return self.format == "csv"
+classify_member = classify_csv
 
 
-def classify_member(path: str) -> MappingMember | None:
-    if path.endswith("/"):
-        return None
-    return MappingMember(path, path.rsplit(".", 1)[-1].lower() if "." in path else "")
-
-
-def parse_member(member: MappingMember, data: bytes) -> dict[str, pa.Table]:
-    table = table_for_header(data, TABLES, "settlement point mappings")
-    return {table: read_delimited(data, TABLES[table], table)}
+def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
+    return parse_csv(data, TABLES, "settlement point mappings")

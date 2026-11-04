@@ -61,6 +61,9 @@ from dataclasses import asdict, dataclass, field
 
 import polars as pl
 
+from ..core.node import components
+from ..raw.table import flag
+
 INF = math.inf
 
 # The row of docs/assumptions.md behind every option and every reason an element is
@@ -192,23 +195,6 @@ class CoreTables:
         schema={"settlement_point_id": pl.String, "bus_key": pl.String, "weight": pl.Float64, "is_resolved": pl.Boolean}))
 
 
-def _components(nodes: list[str], edges: pl.DataFrame) -> dict[str, str]:
-    """Union-find over ``edges`` (from_node_id, to_node_id): node -> component representative."""
-    parent = {n: n for n in nodes}
-
-    def find(a: str) -> str:
-        while parent[a] != a:
-            parent[a] = parent[parent[a]]
-            a = parent[a]
-        return a
-
-    for a, b in edges.select("from_node_id", "to_node_id").rows():
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[max(ra, rb)] = min(ra, rb)
-    return {n: find(n) for n in nodes}
-
-
 def _node_ids(node: pl.DataFrame, contract_ties: bool) -> pl.DataFrame:
     """One row per model node with the ``node_id`` it is listed under: its own, or its bus's when ties are contracted."""
     if contract_ties:
@@ -279,7 +265,7 @@ def _main_component(branch: pl.DataFrame, node_rows: pl.DataFrame, options: Opti
     kept = branch.filter(pl.col("reason").is_null())
     # The largest connected component over the kept branches; everything else is dropped.
     node_ids = sorted(node_rows["node_id"].unique())
-    component = _components(node_ids, kept)
+    component = components(node_ids, kept.select("from_node_id", "to_node_id").rows())
     sizes: dict[str, int] = {}
     for rep in component.values():
         sizes[rep] = sizes.get(rep, 0) + 1
@@ -369,7 +355,7 @@ def _gtcs(core: CoreTables, kept: pl.DataFrame, branches: pl.DataFrame) -> tuple
     """
     reversed_names = (kept.select("branch_id", pl.col("is_name_reversed").fill_null(False)) if "is_name_reversed" in kept.columns
                       else kept.select("branch_id", pl.lit(False).alias("is_name_reversed")))
-    sign = (pl.when(pl.col("flow_direction").str.to_uppercase().str.starts_with("TO")).then(-1.0).otherwise(1.0)
+    sign = (pl.when(flag(pl.col("flow_direction"), "TO")).then(-1.0).otherwise(1.0)
             * pl.when(pl.col("is_name_reversed")).then(-1.0).otherwise(1.0))
     members = (core.gtc_member.join(branches.select("branch_id", pl.col("index").alias("branch_index")), on="branch_id", how="left")
                .join(reversed_names, on="branch_id", how="left")

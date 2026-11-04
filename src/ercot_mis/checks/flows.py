@@ -13,16 +13,15 @@ weights and solved as DC flows, in the base case and under each binding continge
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 
 import numpy as np
 import polars as pl
 
 from ..out.network import Network
 from ..out.shift_factors import DcSystem
-from . import write_report
+from . import delivery_days, histogram, modelled_days, quantiles, write_report
 from .binding import hour_rows, resolve
-from .prices import hour_ids
 
 LOADING_BINS = [0.0, 0.5, 0.9, 1.0, 1.05, 1.2, np.inf]  # loading is rounded to 6 decimals first: a branch at its limit stays at it
 
@@ -42,7 +41,7 @@ def check_hour(session, snapshot_id: str, q_day: pl.DataFrame) -> dict | None:
     limited = net.branches.filter(pl.col("is_limited") & (pl.col("base_limit_mw") > 0))
     j, limit = limited["index"].to_numpy(), limited["base_limit_mw"].to_numpy()
     loading = np.round(np.abs(base[j]) / limit, 6)
-    result["base_case_limits"] = {"branches_limited": int(j.size), "loading_histogram": _histogram(loading),
+    result["base_case_limits"] = {"branches_limited": int(j.size), "loading_histogram": histogram(loading, LOADING_BINS),
                                   "above_limit": int((loading > 1).sum()), "max_loading": round(float(loading.max()), 3) if j.size else None,
                                   "mw_above_limit_total": round(float(np.clip(np.abs(base[j]) - limit, 0, None).sum()), 1)}
 
@@ -74,12 +73,12 @@ def check_hour(session, snapshot_id: str, q_day: pl.DataFrame) -> dict | None:
         ours_loading = np.round(np.abs(ours) / np.abs(lim), 6)
     result["binding_rows"] = {
         "rows": shadow.height, "rows_by_outcome": dict(sorted(outcome.items())), "rows_compared": len(compared),
-        "contingencies_solved": len(resolved.systems), "ours_minus_ercot_mw": _quantiles(diff),
+        "contingencies_solved": len(resolved.systems), "ours_minus_ercot_mw": quantiles(diff, 1),
         "within_1_mw": int((np.abs(diff) <= 1).sum()), "within_5_percent_of_limit": int((np.abs(diff) <= 0.05 * np.abs(lim)).sum()),
         "ours_opposite_sign": int((np.sign(ours) != np.sign(theirs)).sum()),
-        "ours_loading_histogram": _histogram(ours_loading[np.isfinite(ours_loading)]) if compared else None,
+        "ours_loading_histogram": histogram(ours_loading[np.isfinite(ours_loading)], LOADING_BINS) if compared else None,
         "ercot_value_over_limit_max": round(float(np.nanmax(np.abs(theirs) / np.abs(lim))), 3) if compared else None,
-        "by_outcome": {w: _quantiles(np.array([o - t for o, t, _, why in compared if why == w])) for w in sorted({c[3] for c in compared})},
+        "by_outcome": {w: quantiles(np.array([o - t for o, t, _, why in compared if why == w]), 1) for w in sorted({c[3] for c in compared})},
     }
     return result
 
@@ -107,30 +106,15 @@ def node_injections(net: Network, q: pl.DataFrame) -> tuple[np.ndarray, dict]:
     }
 
 
-def _histogram(loading: np.ndarray) -> dict:
-    counts, _ = np.histogram(loading, bins=LOADING_BINS)
-    return {f"<{e:g}": int(n) for n, e in zip(counts, LOADING_BINS[1:])}
-
-
-def _quantiles(values: np.ndarray) -> dict | None:
-    if values.size == 0:
-        return None
-    a = np.abs(values)
-    return {"n": int(a.size), "p50_abs": round(float(np.quantile(a, 0.5)), 1), "p90_abs": round(float(np.quantile(a, 0.9)), 1),
-            "max_abs": round(float(a.max()), 1), "median_signed": round(float(np.median(values)), 1)}
-
-
 def days_with_flows(session) -> list[date]:
     """Operating days with both a DAM model and disclosure awards, oldest first."""
-    awarded = {datetime.strptime(d, "%m/%d/%Y").date() for d in session.core("hourly_award").select("delivery_date").unique().collect()["delivery_date"]}
-    modelled = set(session.core("snapshot").filter(pl.col("model_kind") == "dam").select("operating_date").unique().collect()["operating_date"])
-    return sorted(awarded & modelled)
+    return sorted(delivery_days(session.core("hourly_award")) & modelled_days(session))
 
 
 def run(session, day: date) -> list[dict]:
     """Every hour of one day; writes ``data/reports/flows/<snapshot>.json`` per hour with awards."""
     q_day = session.injections(day)
-    results = [r for sid in hour_ids(session, day) if (r := check_hour(session, sid, q_day)) is not None]
+    results = [r for sid in session.hour_ids(day) if (r := check_hour(session, sid, q_day)) is not None]
     for r in results:
         write_report(session, "flows", r["snapshot_id"], r)
     return results

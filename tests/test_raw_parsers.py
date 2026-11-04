@@ -39,7 +39,7 @@ def test_snake_case():
 )
 def test_classify_crr_members(path, expected):
     m = crr.classify_member(path)
-    assert (m.kind, m.format, m.auction, m.term, m.sequence, m.month, m.time_of_use) == expected
+    assert (m.kind, m.format, *(m.identity[k] for k in ("auction", "term", "sequence", "month", "time_of_use"))) == expected
     assert crr.classify_member("2029.1st6.AnnualAuction.Seq6.JAN/") is None
 
 
@@ -95,10 +95,10 @@ def test_crr_mapping_workbook_and_outages():
 
 def test_classify_dam_members():
     raw = dam.classify_member("DAM09162026_001.RAW")
-    assert (raw.kind, raw.format, raw.operating_date, raw.hour) == ("network_model", "raw", date(2026, 9, 16), 1)
-    assert dam.classify_member("DAM09162026_Ln_025.csv").hour == 25
+    assert (raw.kind, raw.format, raw.identity["operating_date"], raw.identity["hour"]) == ("network_model", "raw", date(2026, 9, 16), 1)
+    assert dam.classify_member("DAM09162026_Ln_025.csv").identity["hour"] == 25
     assert dam.classify_member("DAM09162026_SpCtg.csv").kind == "settlement_point_contingencies"
-    assert dam.classify_member("DAM09162026_SpNb.csv").hour is None
+    assert dam.classify_member("DAM09162026_SpNb.csv").identity["hour"] is None
     assert dam.classify_member("README_DAM09162026.txt").kind == "readme"
     assert dam.classify_member("DAM09162026_Zz_001.csv").kind == "unknown"
 
@@ -160,7 +160,7 @@ def test_mapping_files_are_told_apart_by_their_header():
     from ercot_mis.raw.table import ParseError
 
     member = mappings.classify_member("SP_List_EB_Mapping/Settlement_Points_1_2.csv")
-    assert member.is_parsed and member.operating_date is None
+    assert member.is_parsed and member.identity == {}
     assert mappings.classify_member("SP_List_EB_Mapping/") is None
     full = mappings.parse_member(member, (
         b"ELECTRICAL_BUS,NODE_NAME,PSSE_BUS_NAME,VOLTAGE_LEVEL,SUBSTATION,SETTLEMENT_LOAD_ZONE,RESOURCE_NODE,HUB_BUS_NAME,HUB,PSSE_BUS_NUMBER\r\n"
@@ -180,7 +180,7 @@ def test_disclosure_members_are_dated_by_name_and_told_apart_by_header():
     from ercot_mis.raw import disclosure
 
     member = disclosure.classify_member("60d_DAM_EnergyOnlyOfferAwards-06-OCT-26.csv")
-    assert member.is_parsed and member.operating_date == date(2026, 10, 6) and member.hour is None
+    assert member.is_parsed and member.identity == {"operating_date": date(2026, 10, 6)}
     assert not disclosure.classify_member("README.txt").is_parsed
     assert disclosure.classify_member("folder/") is None
     awards = disclosure.parse_member(member, (

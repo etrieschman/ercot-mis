@@ -19,7 +19,7 @@ import requests
 from . import store
 from .catalog import writing
 from .clock import TZ
-from .ews import EwsError, retrying
+from .ews import CHUNK, EwsError, retrying
 from .products import Product, get_product
 
 FETCH_SCHEMA = {
@@ -123,7 +123,7 @@ def ingest(data_dir: Path, path: str | Path, product: str | int | None = None) -
     for file in files:
         spec = get_product(product) if product is not None else _product_from_name(file.name)
         with file.open("rb") as handle:
-            blob = archive(data_dir, spec, iter(lambda: handle.read(store.CHUNK), b""), file.suffix)
+            blob = archive(data_dir, spec, iter(lambda: handle.read(CHUNK), b""), file.suffix)
         with writing(data_dir) as writer:
             doc_id = writer.doc_id_for_name(spec.emil_id, file.name)
             writer.add_source(blob.sha256, spec.emil_id, doc_id, "ingest", file.name)

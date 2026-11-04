@@ -104,23 +104,41 @@ def dam_nodes(bus: pl.DataFrame, lines: pl.DataFrame, transformers: pl.DataFrame
                               pl.col("raw_name").alias("substation")).select(COLUMNS).sort("node_number")
 
 
-def tie_groups(branch: pl.DataFrame, tie_reactance: float = TIE_REACTANCE) -> pl.DataFrame:
-    """Union-find over in-service branches with |x| <= tie_reactance: (node_number, tie_group)."""
-    ties = branch.filter((pl.col("x").abs() <= tie_reactance) & (pl.col("st") == 1)).select("i", "j")
-    parent: dict[int, int] = {}
+def components(nodes, edges) -> dict:
+    """Union-find: each of ``nodes`` mapped to the smallest member of its component under ``edges`` (pairs of nodes)."""
+    parent = {n: n for n in nodes}
 
-    def find(a: int) -> int:
-        while parent.setdefault(a, a) != a:
+    def find(a):
+        while parent[a] != a:
             parent[a] = parent[parent[a]]
             a = parent[a]
         return a
 
-    for i, j in ties.rows():
-        ri, rj = find(i), find(j)
-        if ri != rj:
-            parent[max(ri, rj)] = min(ri, rj)
-    members = sorted(parent)
-    return pl.DataFrame({"node_number": members, "tie_group": [find(b) for b in members]}, schema={"node_number": pl.Int64, "tie_group": pl.Int64})
+    for a, b in edges:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+    return {n: find(n) for n in parent}
+
+
+def tie_groups(branch: pl.DataFrame, tie_reactance: float = TIE_REACTANCE) -> pl.DataFrame:
+    """(node_number, tie_group) for every node on an in-service branch with |x| <= tie_reactance; the group is its smallest node number."""
+    ties = branch.filter((pl.col("x").abs() <= tie_reactance) & (pl.col("st") == 1)).select("i", "j").rows()
+    groups = components({n for pair in ties for n in pair}, ties)
+    members = sorted(groups)
+    return pl.DataFrame({"node_number": members, "tie_group": [groups[n] for n in members]}, schema={"node_number": pl.Int64, "tie_group": pl.Int64})
+
+
+def autos_by_key(autos: pl.DataFrame) -> pl.DataFrame:
+    """``Autos`` names keyed by (from_node, to_node, ckt) in both orientations: the sheet
+    lists some transformers with from and to swapped relative to the RAW. ``is_swapped``
+    says which orientation a key came from."""
+    direct = autos.select(pl.col("from_number").cast(pl.Int64, strict=False).alias("from_node"),
+                          pl.col("to_number").cast(pl.Int64, strict=False).alias("to_node"),
+                          pl.col("id").str.strip_chars().alias("ckt"), pl.col("crr_name").alias("name"),
+                          pl.lit(False).alias("is_swapped")).drop_nulls(["from_node", "to_node"])
+    swapped = direct.select(pl.col("to_node").alias("from_node"), pl.col("from_node").alias("to_node"), "ckt", "name", pl.lit(True).alias("is_swapped"))
+    return pl.concat([direct, swapped]).unique(subset=["from_node", "to_node", "ckt"], keep="first")
 
 
 def crr_nodes(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame, autos: pl.DataFrame,
@@ -141,8 +159,6 @@ def crr_nodes(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame
     to_group = nodes.select("node_number", "bus_group")
 
     lines = branch.filter(pl.col("x").abs() > tie_reactance).select("i", "j", pl.col("comment").alias("name"))
-    from .branch import autos_by_key  # both orientations of the sheet's (from, to, ckt)
-
     xf = (transformer.select("i", "j", pl.col("ckt").str.strip_chars().alias("ckt"))
           .join(autos_by_key(autos).rename({"from_node": "i", "to_node": "j"}), on=["i", "j", "ckt"], how="left"))
     xf = xf.with_columns(pl.coalesce(pl.col("name"), pl.format("XF {} {} {}", "i", "j", "ckt")).alias("name"))

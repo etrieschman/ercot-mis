@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import polars as pl
 
+from .branch import resolved
+
 VERSION = 3
 
 CONTINGENCY_COLUMNS = ("contingency_id", "n_outages", "n_unresolved", "has_split_bus")
@@ -40,17 +42,13 @@ def _summarize(outages: pl.DataFrame) -> pl.DataFrame:
 
 def crr_contingencies(branches: pl.DataFrame, raw: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """From ``crr_contingencies`` (Contingency, DeviceName, DeviceType, Action)."""
-    known = branches.select("branch_id", pl.lit(True).alias("is_resolved"))
     outages = (raw.select(pl.col("contingency").alias("contingency_id"),
                           pl.col("device_type").str.to_uppercase().replace_strict(_CRR_KINDS, default="unknown").alias("element_kind"),
                           pl.lit("outage").alias("operation"), pl.col("action"),
                           pl.col("device_name").alias("branch_id"), pl.lit(None, pl.String).alias("bus_key"),
                           pl.lit(None, pl.Int64).alias("node_number"), pl.lit(None, pl.String).alias("psse_id"),
                           pl.col("device_name").alias("element_name"), pl.lit(None, pl.String).alias("split_end"))
-               .join(known, on="branch_id", how="left")
-               .with_columns(pl.col("is_resolved").fill_null(False))
-               .with_columns(pl.when(pl.col("is_resolved")).then(pl.col("branch_id")).otherwise(None).alias("branch_id"))
-               .select(OUTAGE_COLUMNS))
+               .pipe(resolved, branches).select(OUTAGE_COLUMNS))
     return _summarize(outages), outages
 
 

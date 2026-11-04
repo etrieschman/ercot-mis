@@ -453,9 +453,8 @@ def coverage_section(session, crr_id: str, dam_id: str, r: Report) -> None:
 
 def run(session, crr_id: str | None = None, dam_id: str | None = None, quiet: bool = False) -> dict:
     """Every section for one monthly CRR model and one DAM hour (the newest of each by default); writes the report."""
-    snaps = session.core("snapshot").collect()
-    crr_id = crr_id or snaps.filter(pl.col("model_kind") == "crr_monthly").sort("month", "revision")["snapshot_id"][-1]
-    dam_id = dam_id or snaps.filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision")["snapshot_id"][-1]
+    newest = session.newest()
+    crr_id, dam_id = crr_id or newest[0], dam_id or newest[1]
     crr, dam = session.snapshot(crr_id), session.snapshot(dam_id)
     r = Report(quiet)
     C, D = tables(session, crr_id), tables(session, dam_id)

@@ -25,16 +25,14 @@ from __future__ import annotations
 
 import polars as pl
 
+from ..raw.table import flag
+
 VERSION = 2
 
 COLUMNS = ("load_id", "node_number", "psse_load_id", "bus_key", "is_in_service", "mw", "load_zone", "weather_zone",
            "is_ercot_load", "is_conforming", "mw_ldf", "is_rollover_capable", "n_rollover_targets")
 _DAM_ONLY = {"load_zone": pl.String, "weather_zone": pl.String, "is_ercot_load": pl.Boolean, "is_conforming": pl.Boolean,
              "mw_ldf": pl.Float64, "is_rollover_capable": pl.Boolean, "n_rollover_targets": pl.Int64}
-
-
-def _yes(expr: pl.Expr) -> pl.Expr:
-    return expr.cast(pl.String).str.to_uppercase().str.starts_with("Y")
 
 
 def crr_loads(nodes: pl.DataFrame, psse_load: pl.DataFrame) -> pl.DataFrame:
@@ -60,11 +58,11 @@ def dam_loads(nodes: pl.DataFrame, psse_load: pl.DataFrame, loads: pl.DataFrame)
                            (pl.col("status") == 1).alias("_raw_in_service"), pl.col("pl").cast(pl.Float64).alias("mw"))
     return (loads.select(pl.col("load_name").cast(pl.String).alias("load_id"), pl.col("psse_bus_number").cast(pl.Int64).alias("node_number"),
                          pl.col("psse_load_id").cast(pl.String).str.strip_chars().alias("psse_load_id"),
-                         pl.col("load_status").str.to_uppercase().str.starts_with("IN").alias("_csv_in_service"),
+                         flag(pl.col("load_status"), "IN").alias("_csv_in_service"),
                          pl.col("load_zone_name").cast(pl.String).alias("load_zone"), pl.col("weather_zone_name").cast(pl.String).alias("weather_zone"),
-                         _yes(pl.col("ercot_load")).alias("is_ercot_load"),
-                         pl.col("conforming_or_non_conforming").cast(pl.String).str.to_uppercase().str.starts_with("C").alias("is_conforming"),
-                         pl.col("raw_mw_ldf").cast(pl.Float64).alias("mw_ldf"), _yes(pl.col("load_rollover_capable")).alias("is_rollover_capable"),
+                         flag(pl.col("ercot_load"), "Y").alias("is_ercot_load"),
+                         flag(pl.col("conforming_or_non_conforming"), "C").alias("is_conforming"),
+                         pl.col("raw_mw_ldf").cast(pl.Float64).alias("mw_ldf"), flag(pl.col("load_rollover_capable"), "Y").alias("is_rollover_capable"),
                          pl.col("number_of_target_loads").cast(pl.Int64, strict=False).alias("n_rollover_targets"))
             .join(raw, on=["node_number", "psse_load_id"], how="left").join(to_node, on="node_number", how="left")
             .with_columns(pl.coalesce(pl.col("_raw_in_service"), pl.col("_csv_in_service")).alias("is_in_service"))

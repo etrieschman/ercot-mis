@@ -42,12 +42,12 @@ def test_report_counts_failed_packages_and_prints_their_errors(capsys):
 def test_build_layers_runs_every_parsed_product_then_core():
     session = FakeSession(raw=_result("skipped"), core=_result("built"))
     assert pull.build_layers(session) == 0
-    assert session.raw_calls == list(pull.parsed_products())
+    assert session.raw_calls == list(pull.PARSERS)
 
 
 def test_build_layers_counts_an_exception_as_one_failure_and_keeps_going(capsys):
     session = FakeSession(raw=RuntimeError("catalog locked"), core=_result("built", "failed"))
-    assert pull.build_layers(session) == len(pull.parsed_products()) + 1
+    assert pull.build_layers(session) == len(pull.PARSERS) + 1
     assert "catalog locked" in capsys.readouterr().out
 
 

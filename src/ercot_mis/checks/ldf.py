@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date
 
 import polars as pl
+from ..raw.table import flag
 
 from . import write_report
 
@@ -20,7 +21,7 @@ def check(session, day: date, hour: int) -> dict:
     ldf = session.raw("load_distribution_factors").filter((pl.col("ldf_date") == f"{day:%m/%d/%Y}") & (pl.col("ldf_hour") == f"{hour:02d}:00")).collect()
     if ld.is_empty() or ldf.is_empty():
         return {"day": str(day), "hour": hour, "compared": False, "model_rows": ld.height, "published_rows": ldf.height}
-    model = (ld.filter(pl.col("load_status").str.to_uppercase().str.starts_with("IN"))
+    model = (ld.filter(flag(pl.col("load_status"), "IN"))
              .group_by(pl.col("station_name_psse_bus_name").str.to_uppercase().alias("substation"), pl.col("load_zone_name").alias("zone"))
              .agg(pl.col("raw_mw_ldf").sum().alias("model_mw")))
     zone_of = model.sort("model_mw", descending=True).unique(subset=["substation"], keep="first").select("substation",

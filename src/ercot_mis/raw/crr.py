@@ -18,13 +18,12 @@ from __future__ import annotations
 VERSION = 1
 
 import re
-from dataclasses import dataclass
 from datetime import date
 
 import pyarrow as pa
 
 from . import psse
-from .table import F, I, Column, read_delimited, read_sheet
+from .table import F, Column, Member, extension, read_delimited, read_sheet
 
 MONTHS = {m: n for n, m in enumerate(
     ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"), start=1)}
@@ -88,28 +87,12 @@ PARSED = {
 }
 
 
-@dataclass(frozen=True)
-class CrrMember:
-    path: str
-    kind: str  # e.g. "contingencies"; "unknown" for a file this module does not recognize
-    format: str  # lower-case extension
-    auction: str | None  # "annual" or "monthly"
-    term: str | None  # annual only, e.g. "2029.1st6"
-    sequence: int | None  # annual only
-    month: date | None  # first day of the month the file describes
-    time_of_use: str | None  # network models only, e.g. "PeakWD"
-
-    @property
-    def is_parsed(self) -> bool:
-        return (self.kind, self.format) in PARSED
-
-
-def classify_member(path: str) -> CrrMember | None:
+def classify_member(path: str) -> Member | None:
     """Describe a zip member of a CRR package from its path; None for folders."""
     if path.endswith("/"):
         return None
     file = path.rsplit("/", 1)[-1]
-    fmt = file.rsplit(".", 1)[-1].lower() if "." in file else ""
+    fmt = extension(file)
     kind = next((k for token, k in _KINDS if token.lower() in file.lower()), "unknown")
     auction = term = sequence = month = None
     if annual := _ANNUAL.search(file):
@@ -121,10 +104,11 @@ def classify_member(path: str) -> CrrMember | None:
         if monthly.group(2).upper() in MONTHS:
             auction, month = "monthly", date(int(monthly.group(1)), MONTHS[monthly.group(2).upper()], 1)
     tou = _TOU.search(file)
-    return CrrMember(path, kind, fmt, auction, term, sequence, month, tou.group(1) if tou else None)
+    return Member(path, kind, fmt, (kind, fmt) in PARSED, {"auction": auction, "term": term, "sequence": sequence, "month": month,
+                                                         "time_of_use": tou.group(1) if tou else None})
 
 
-def parse_member(member: CrrMember, data: bytes) -> dict[str, pa.Table]:
+def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:
     """Parse one member into raw tables; members without a parser return no tables."""
     label = f"CRR {member.kind}.{member.format}"
     match (member.kind, member.format):

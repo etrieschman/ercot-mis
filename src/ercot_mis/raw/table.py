@@ -7,8 +7,10 @@ VERSION = 1  # bump when reading or casting changes what every parser produces
 import io
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
+import polars as pl
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.csv as pacsv
@@ -28,6 +30,47 @@ class Column(NamedTuple):
     @property
     def column_name(self) -> str:
         return self.name or snake_case(self.header)
+
+
+@dataclass(frozen=True)
+class Member:
+    """One file of a package: what it is, whether a parser reads it, and the identity columns its rows get.
+
+    ``identity`` holds what the file name says about its rows: CRR ``auction``, ``term``,
+    ``sequence``, ``month``, ``time_of_use``; DAM ``operating_date``, ``hour``; a disclosure
+    day's ``operating_date``. The builder adds the package's own identity (``emil_id``, hashes).
+    """
+
+    path: str
+    kind: str  # the parser's word for the file ("contingencies", "network_model", "readme", "unknown")
+    format: str  # lower-case extension
+    is_parsed: bool
+    identity: dict = field(default_factory=dict)
+
+
+def extension(path: str) -> str:
+    """The lower-case extension of a file name, or an empty string."""
+    name = path.rsplit("/", 1)[-1]
+    return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
+def classify_csv(path: str) -> Member | None:
+    """A member whose table is told by its header (price reports, mappings): parsed when it is a CSV; None for folders."""
+    if path.endswith("/"):
+        return None
+    fmt = extension(path)
+    return Member(path, "csv" if fmt == "csv" else "unknown", fmt, fmt == "csv")
+
+
+def parse_csv(data: bytes, tables: dict[str, Sequence[Column]], label: str) -> dict[str, pa.Table]:
+    """The one table of ``tables`` whose header the CSV carries."""
+    table = table_for_header(data, tables, label)
+    return {table: read_delimited(data, tables[table], table)}
+
+
+def flag(expr: pl.Expr, prefix: str) -> pl.Expr:
+    """ERCOT's yes/no and status text as a boolean: true when it starts with ``prefix`` (``Y``, ``IN``, ``ENERGIZED``, ``C``, ``TO``), any case."""
+    return expr.cast(pl.String).str.to_uppercase().str.starts_with(prefix)
 
 
 def snake_case(header: str) -> str:
@@ -130,8 +173,6 @@ def read_delimited(
 
 def read_sheet(data: bytes, sheet: str, columns: Sequence[Column], label: str) -> pa.Table:
     """Read one worksheet whose header row must match ``columns`` exactly."""
-    import polars as pl
-
     try:
         frame = pl.read_excel(io.BytesIO(data), sheet_name=sheet, infer_schema_length=0)
     except Exception as error:  # fastexcel raises its own types for a missing sheet

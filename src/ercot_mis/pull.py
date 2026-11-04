@@ -17,7 +17,7 @@ from pathlib import Path
 import polars as pl
 
 from .products import PRODUCTS, Product
-from .raw.build import parsed_products
+from .raw.build import PARSERS
 from .session import Session
 
 # DAM network models are ~29 MB a day (~10 GB a year). None captures every day;
@@ -108,7 +108,7 @@ def fetch_products(mis: Session, specs, captured: dict[str, datetime]) -> int:
 def build_layers(mis: Session) -> int:
     """Raw tables for every archived package with a parser, then core; returns the failure count."""
     failed = 0
-    for emil_id in parsed_products():
+    for emil_id in PARSERS:
         try:
             result = mis.build_raw(emil_id)
         except FAILURES as error:

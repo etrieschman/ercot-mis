@@ -90,7 +90,8 @@ def validate_dam(mis, days, problems):
                 kinds[(member.kind, member.format, "parsed" if member.is_parsed else "archived")] += 1
                 if not member.is_parsed:
                     continue
-                label = f"DAM {member.operating_date} hour {member.hour} {member.kind}"
+                hour = member.identity["hour"]
+                label = f"DAM {member.identity['operating_date']} hour {hour} {member.kind}"
                 try:
                     if member.kind == "network_model":
                         tables = check_raw(package.read(name), label, problems).tables
@@ -102,7 +103,7 @@ def validate_dam(mis, days, problems):
                     continue
                 for table_name, table in tables.items():
                     rows[table_name] += table.num_rows
-                    per_hour[member.hour][table_name] = table.num_rows
+                    per_hour[hour][table_name] = table.num_rows
         for hour, counts in per_hour.items():
             if hour is None:
                 continue

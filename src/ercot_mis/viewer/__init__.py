@@ -182,8 +182,7 @@ def build(session, left: str, right: str | None = None, *, reference_dam: str | 
         if dams:
             reference_dam = dams[0]
         else:
-            snaps = session.core("snapshot").filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision").collect()
-            reference_dam = snaps["snapshot_id"][-1]
+            reference_dam = session.newest()[1]
     data = {"models": [model(session, i, reference_dam) for i in ids], "reference_dam": reference_dam,
             "compare": comparison(session, left, right) if right else None, "pair_coverage": None}
     if right and _is_dam(left) != _is_dam(right):
