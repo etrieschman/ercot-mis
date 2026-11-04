@@ -84,7 +84,7 @@ your machine:
 - all data lives in `data/` (gitignored) or wherever `ERCOT_MIS_DATA` points; `em.open()`
   warns if that folder is inside a cloud-synced location;
 - your DUNS and API user id come from the environment or a gitignored `.env`;
-- a pre-commit check (`tools/check_confidential.py`) blocks DUNS-like numbers, API user
+- a pre-commit check (`scripts/check_confidential.py`) blocks DUNS-like numbers, API user
   ids, certificates, PSS/E `.RAW` files and anything named ECEII.
 
 Before storing ECEII data in any cloud service, check your ERCOT ECEII obligations.

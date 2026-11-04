@@ -18,7 +18,7 @@ belongs to `~/dev/ftr_align`, which reads what this repo writes.
 - The DUNS and the API user come from the environment or `.env`. `Identity` hides both
   from its repr.
 - Tests use synthetic data only (`tests/fixtures/synthetic/` when files are needed).
-- `tools/check_confidential.py` is the pre-commit hook and runs in the test suite. It is
+- `scripts/check_confidential.py` is the pre-commit hook and runs in the test suite. It is
   never bypassed with `--no-verify`.
 - Putting ECEII in a cloud service needs the user to check ERCOT's ECEII obligations first.
 - Before printing any column of a raw or core table, mask it or count it. A real viewer
@@ -273,7 +273,7 @@ scripts/daily_pull.py        fetch, build, the price, flow and CRR price checks,
 scripts/urgent_pull.py       EWS products only; run when the daily pull's notification says data is at risk
 scripts/probe.py             what EWS offers for each product
 scripts/validate_parsers.py  parse every archived package and check counts
-tools/check_confidential.py  the pre-commit guard
+scripts/check_confidential.py  the pre-commit guard; plain python3, no session
 tests/                       synthetic tests; test_guard scans every tracked file
 ```
 

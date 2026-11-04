@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-_spec = importlib.util.spec_from_file_location("check_confidential", ROOT / "tools" / "check_confidential.py")
+_spec = importlib.util.spec_from_file_location("check_confidential", ROOT / "scripts" / "check_confidential.py")
 guard = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(guard)
 

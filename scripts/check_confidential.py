@@ -6,8 +6,8 @@ The repository is public and holds code only. This is the git pre-commit hook
 file. Standard library only, so the hook works before the environment is synced. A finding
 names the file and line, never the matched text.
 
-    python3 tools/check_confidential.py            # every tracked file
-    python3 tools/check_confidential.py --staged   # what is staged for commit
+    python3 scripts/check_confidential.py            # every tracked file
+    python3 scripts/check_confidential.py --staged   # what is staged for commit
 """
 
 from __future__ import annotations
