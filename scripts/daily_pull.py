@@ -72,6 +72,9 @@ SLEPT_FLAG_MINUTES = 10
 # EWS data this close to rolling off makes the flag urgent.
 URGENT_DAYS = 7
 
+# What a step may raise and the run reports: a polars panic (a Rust panic) is not an Exception.
+FAILURES = (Exception, pl.exceptions.PanicException)
+
 # The fix an urgent notification names, runnable from any folder.
 URGENT_COMMAND = f"cd {shlex.quote(str(Path(__file__).resolve().parents[1]))} && uv run python scripts/urgent_pull.py"
 
@@ -141,7 +144,7 @@ def fetch_products(mis: em.Session, specs, captured: dict[str, datetime]) -> int
                 continue
             dates = DAM_OPERATING_DATES if spec.emil_id == "NP4-500-SG" else None
             result = mis.fetch(spec.emil_id, since, operating_dates=dates, max_gb=MAX_GB)
-        except Exception as error:  # one product's failure must not stop the others
+        except FAILURES as error:  # one product's failure must not stop the others
             failed += 1
             print(f"  {spec.emil_id}: FAILED {type(error).__name__}: {error}", flush=True)
             continue
@@ -162,14 +165,14 @@ def build_layers(mis: em.Session) -> int:
     for emil_id in parsed_products():
         try:
             result = mis.build_raw(emil_id)
-        except Exception as error:
+        except FAILURES as error:
             failed += 1
             print(f"  build_raw {emil_id}: FAILED {type(error).__name__}: {error}")
             continue
         failed += _report(f"build_raw {emil_id}", result)
     try:
         result = mis.build_core()
-    except Exception as error:
+    except FAILURES as error:
         failed += 1
         print(f"  build_core: FAILED {type(error).__name__}: {error}")
         return failed
@@ -236,7 +239,7 @@ def run_checks(mis: em.Session) -> int:
             began = time.monotonic()
             try:
                 print(f"  {module.summary_line(day, module.run(mis, day))}, {time.monotonic() - began:.0f}s", flush=True)
-            except Exception as error:
+            except FAILURES as error:
                 failed += 1
                 print(f"  {module.__name__.rsplit('.', 1)[-1]} check {day}: FAILED {type(error).__name__}: {error}", flush=True)
     return failed
@@ -267,7 +270,7 @@ def main() -> int:
             try:
                 risk = at_risk(mis, captured)
                 print(f"  at risk: {risk_line(risk)}", flush=True)
-            except Exception as error:
+            except FAILURES as error:
                 failed += 1
                 print(f"  at risk: FAILED {type(error).__name__}: {error}", flush=True)
             failed += build_layers(mis)

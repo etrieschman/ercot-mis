@@ -53,9 +53,11 @@ def hour_rows(session, table: str, start_utc: datetime) -> pl.DataFrame:
     ERCOT's delivery date, hour ending and DST flag become the hour's UTC start (NAM-08).
     """
     day = f"{start_utc.astimezone(TZ):%m/%d/%Y}"
-    rows = (session.raw(table).filter(pl.col("delivery_date") == day)
-            .with_columns(hour_ending_start_expr(pl.col("delivery_date").str.to_date("%m/%d/%Y"), pl.col("hour_ending"), pl.col("dst_flag")).alias("_start"))
-            .filter(pl.col("_start") == start_utc).drop("_start").collect())
+    rows = session.raw(table).filter(pl.col("delivery_date") == day).collect()
+    if rows.is_empty():  # a day ERCOT did not post; polars 1.44 panics on the hour expression over no rows
+        return rows
+    rows = (rows.with_columns(hour_ending_start_expr(pl.col("delivery_date").str.to_date("%m/%d/%Y"), pl.col("hour_ending"), pl.col("dst_flag")).alias("_start"))
+            .filter(pl.col("_start") == start_utc).drop("_start"))
     if rows["doc_id"].n_unique() > 1:
         rows = rows.filter(pl.col("doc_id") == session.latest_doc(rows["emil_id"][0], rows["doc_id"].unique()))
     return rows

@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from polars.exceptions import PanicException
 
 from ..products import Product, get_product
 from . import crr, dam, disclosure, gtl, mappings, prices, psse, table
@@ -150,7 +151,7 @@ def build_package(path: Path, emil_id: str, doc_id: str | None, blob_sha256: str
             os.close(handle)
             pq.write_table(rows, tmp, compression=COMPRESSION)
             written.append(Written(table, Path(tmp), rows.num_rows, Path(tmp).stat().st_size, tuple(sorted(set(sources)))))
-    except Exception as error:  # reported per package; other packages continue
+    except (Exception, PanicException) as error:  # a polars panic is not an Exception; reported per package; other packages continue
         return PackageResult(blob_sha256, (), time.perf_counter() - started, f"{type(error).__name__}: {error}")
     return PackageResult(blob_sha256, tuple(written), time.perf_counter() - started)
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import time
 from datetime import date
 from pathlib import Path
 
@@ -75,12 +76,13 @@ def build(session, *, limit: int | None = None) -> list[dict]:
         if none_key in existing or (set(keys.values()) <= existing and all((session.data_dir / rel).is_file() for rel in rels.values())):
             results.append(record)
             continue
+        started = time.perf_counter()
         try:
             tables = package_tables(session, emil_id, blob, package, gtl[0] if gtl else None)
         except FileNotFoundError:
             results.append({**record, "status": "no_raw"})  # build_raw first
             continue
-        except Exception as error:
+        except (Exception, pl.exceptions.PanicException) as error:
             results.append({**record, "status": "failed", "error": f"{type(error).__name__}: {error}"})
             continue
         if not tables:  # every month filtered out: remember that, or it is rebuilt every run
@@ -90,7 +92,8 @@ def build(session, *, limit: int | None = None) -> list[dict]:
             continue
         placed = [(keys[t], _write(frame, session.data_dir / rels[t], tmp_dir, t), rels[t]) for t, frame in tables.items()]
         session.record_artifacts(run_id, LAYER, emil_id, blob, identity, placed)
-        results.append({**record, "status": "built", "tables": len(placed), "rows": sum(f.height for f in tables.values())})
+        results.append({**record, "status": "built", "tables": len(placed), "rows": sum(f.height for f in tables.values()),
+                        "seconds": round(time.perf_counter() - started, 1)})
     results += build_awards(session, existing, tmp_dir, run_id)
     session.finish_run(run_id, failed=sum(1 for r in results if r["status"] == "failed"))
     return results
@@ -192,13 +195,14 @@ def build_awards(session, existing: set[str], tmp_dir: Path, run_id: str) -> lis
         if any(v is None for v in raw.values()):
             results.append({**record, "status": "no_raw"})
             continue
+        started = time.perf_counter()
         try:
             frame = award.hourly_awards(**raw, doc_id=package["doc_id"])
-        except Exception as error:
+        except (Exception, pl.exceptions.PanicException) as error:
             results.append({**record, "status": "failed", "error": f"{type(error).__name__}: {error}"})
             continue
         session.record_artifacts(run_id, LAYER, product, blob, identity, [(key, _write(frame, session.data_dir / rel, tmp_dir, "hourly_award"), rel)])
-        results.append({**record, "status": "built", "rows": frame.height})
+        results.append({**record, "status": "built", "rows": frame.height, "seconds": round(time.perf_counter() - started, 1)})
     return results
 
 
