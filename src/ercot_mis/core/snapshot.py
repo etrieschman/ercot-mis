@@ -14,7 +14,7 @@ from datetime import date
 
 import polars as pl
 
-from ..archive.catalog import posting_order
+from ..catalog import posting_order
 from ..clock import study_hour_start
 from ..raw import crr, dam
 

@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 
 from ercot_mis import BudgetError, Session
-from ercot_mis.sources.ews import EwsError, RemoteDoc
+from ercot_mis.ews import EwsError, RemoteDoc
 
 NOW = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
 
@@ -188,7 +188,7 @@ def test_catalog_is_read_only_between_writes(tmp_path, payloads):
 
 def test_reads_hold_no_catalog_connection(tmp_path, payloads):
     """A session that has read the catalog must not block a writer: each read opens and closes its own connection."""
-    from ercot_mis.archive.catalog import Catalog
+    from ercot_mis.catalog import Catalog
 
     with _mis(tmp_path, FakeSource([(_doc("a", payloads["a"]), payloads["a"])])) as mis:
         mis.list("NP7-800-M")

@@ -20,7 +20,7 @@ point mappings in electrical-bus vocabulary (NP4-160-SG, NP3-220-SG) are parsed 
 
 ## Source and capture
 
-Public API archive (`sources/public_api.py`), one document per product and delivery
+Public API archive (`public_api.py`), one document per product and delivery
 date, posted once the DAM clears. The archive reaches back years, so nothing is lost
 by starting late; the daily pull looks at the last few days and older days are
 fetched by hand with `fetch(product, since=...)`. The archive listing carries a

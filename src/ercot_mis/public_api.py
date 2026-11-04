@@ -23,10 +23,10 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from ..config import ConfigError, load_secret
-from ..products import Product
-from .ews import ERCOT_TZ, RemoteDoc
-from .retry import retrying
+from .clock import TZ
+from .config import ConfigError, load_secret
+from .ews import RemoteDoc, retrying
+from .products import Product
 
 TOKEN_URL = "https://ercotb2c.b2clogin.com/ercotb2c.onmicrosoft.com/B2C_1_PUBAPI-ROPC-FLOW/oauth2/v2.0/token"
 # The public client of ERCOT's B2C tenant, from the Public API user guide; not a secret.
@@ -151,11 +151,11 @@ def _local(t: datetime) -> str:
     """A bound as the API reads it: ERCOT local time without an offset."""
     if t.tzinfo is None:
         raise ValueError("Public API time bounds must be timezone-aware datetimes")
-    return t.astimezone(ERCOT_TZ).strftime("%Y-%m-%dT%H:%M:%S")
+    return t.astimezone(TZ).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _posted(text: str | None) -> datetime | None:
     if not text:
         return None
     t = datetime.fromisoformat(text)
-    return t if t.tzinfo else t.replace(tzinfo=ERCOT_TZ)
+    return t if t.tzinfo else t.replace(tzinfo=TZ)

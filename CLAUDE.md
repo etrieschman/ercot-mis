@@ -204,13 +204,10 @@ strings them together and is the only writer.
 ```
 src/ercot_mis/
   products.py, config.py, clock.py   vocabulary: EMIL specs; data folder, identity, secrets; ERCOT's hours as UTC instants
-  sources/          how bytes arrive
-    ews.py          EWS: build_request, sign (SHA-1 WS-Security), parse_reports, EwsClient
-    public_api.py   Public API: ID token, paged archive listing, paced calls, retry on 429
-    retry.py        retrying(): fixed back-off for stalled downloads and listings
-  archive/          layer 0: original documents, never edited
-    store.py        content-addressed files (archive/<EMIL>/<sha256>.zip, read-only, atomic), zip member hashing
-    catalog.py      DuckDB catalog: remote_doc, archive_blob, archive_member, archive_source, run, artifact, lineage;
+  ews.py            EWS: build_request, sign (SHA-1 WS-Security), parse_reports, EwsClient; retrying() for stalled calls
+  public_api.py     Public API: ID token, paged archive listing, paced calls, retry on 429
+  store.py          layer 0, the archive: content-addressed files (archive/<EMIL>/<sha256>.zip, read-only, atomic), zip member hashing
+  catalog.py        DuckDB catalog: remote_doc, archive_blob, archive_member, archive_source, run, artifact, lineage;
                     posting_order (TOP-11: the latest posting wins, an undated one counts as oldest)
   raw/              layer 1: typed tables, one per source file
     table.py        Column specs, snake_case, read_delimited (Arrow CSV, exact header check), read_sheet; ParseError

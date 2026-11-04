@@ -25,8 +25,8 @@ import duckdb
 import polars as pl
 
 if TYPE_CHECKING:
-    from ..products import Product
-    from ..sources.ews import RemoteDoc
+    from .ews import RemoteDoc
+    from .products import Product
     from .store import Member, StoredBlob
 
 SCHEMA = (

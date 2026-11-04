@@ -5,7 +5,7 @@ from pathlib import Path
 from .config import ConfigError, Identity, load_identity, load_secret, resolve_data_dir, secure_permissions
 from .session import BudgetError, DownloadError, Probe, Session
 from .products import PRODUCTS, Product, get_product
-from .sources.ews import EwsError, RemoteDoc
+from .ews import EwsError, RemoteDoc
 
 __version__ = "0.0.1"
 

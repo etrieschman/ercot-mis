@@ -28,22 +28,24 @@ from __future__ import annotations
 
 import base64
 import secrets
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 from urllib.parse import parse_qs, urlparse
-from zoneinfo import ZoneInfo
 
 import requests
 from lxml import etree
 
-from ..config import Identity
-from .retry import retrying
+from .clock import TZ
+from .config import Identity
 
 if TYPE_CHECKING:
-    from ..products import Product
+    from .products import Product
+
+T = TypeVar("T")
 
 ENDPOINT = "https://misapi.ercot.com/NodalAPI/EWS/"
 CHUNK = 1 << 20
@@ -65,8 +67,20 @@ NS = {
     "oasis-200401-wss-wssecurity-utility-1.0.xsd",
 }
 
-# ERCOT operates in Central Prevailing Time; used only when a timestamp has no offset.
-ERCOT_TZ = ZoneInfo("America/Chicago")
+# Seconds to wait before the second and third attempts at a stalled call. Tests shorten this.
+DELAYS: tuple[float, ...] = (5.0, 20.0)
+
+
+def retrying(call: Callable[[], T], transient: tuple[type[BaseException], ...]) -> T:
+    """Run ``call``; on a ``transient`` error (a stalled download, a 5xx reply) wait and try again, up to ``len(DELAYS)`` times."""
+    for delay in (*DELAYS, None):
+        try:
+            return call()
+        except transient:
+            if delay is None:
+                raise
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 class EwsError(RuntimeError):
@@ -236,7 +250,7 @@ def _parse_time(text: str) -> datetime | None:
         t = datetime.fromisoformat(text)
     except ValueError:
         return None
-    return t if t.tzinfo else t.replace(tzinfo=ERCOT_TZ)
+    return t if t.tzinfo else t.replace(tzinfo=TZ)
 
 
 class EwsClient:

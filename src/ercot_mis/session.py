@@ -20,11 +20,11 @@ import requests
 
 from .config import Identity, load_identity
 from .products import Product, get_product
-from .sources.retry import retrying
-from .sources.ews import ERCOT_TZ, EwsClient, EwsError, RemoteDoc
-from .sources.public_api import PublicApiClient
-from .archive import store
-from .archive.catalog import Catalog, posting_order
+from .clock import TZ
+from .ews import EwsClient, EwsError, RemoteDoc, retrying
+from .public_api import PublicApiClient
+from . import store
+from .catalog import Catalog, posting_order
 
 # Columns that embed the participant DUNS (ERCOT's file names) or point at the
 # participant's download servlet. They stay in the catalog and never leave it.
@@ -567,8 +567,8 @@ def _bound(value: date | datetime | str | None) -> datetime | None:
     if isinstance(value, str):
         value = date.fromisoformat(value) if len(value) == 10 else datetime.fromisoformat(value)
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=ERCOT_TZ)
-    return datetime.combine(value, time(), ERCOT_TZ)
+        return value if value.tzinfo else value.replace(tzinfo=TZ)
+    return datetime.combine(value, time(), TZ)
 
 
 def _as_date(value: date | str) -> date:

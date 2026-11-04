@@ -8,8 +8,8 @@ PACKAGE = Path(__file__).resolve().parents[1] / "src" / "ercot_mis"
 # Earliest first. A module may import from its own layer and any earlier one, never a later one.
 LAYERS = [
     {"products", "config", "clock"},  # vocabulary: no dependencies
-    {"sources"},                      # how bytes arrive
-    {"archive"},                      # layer 0: original documents
+    {"ews", "public_api"},            # how bytes arrive
+    {"store", "catalog"},             # layer 0: original documents
     {"raw"},                          # layer 1: typed tables, one per source file
     {"core"},                         # layer 2: tidy keyed tables shared by CRR and DAM
     {"out"},                          # layer 3: what consumers read

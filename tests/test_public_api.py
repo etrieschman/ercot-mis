@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from ercot_mis.products import get_product
-from ercot_mis.sources import public_api, retry
-from ercot_mis.sources.public_api import ARCHIVE_URL, TOKEN_URL, PublicApiClient, PublicApiError
+from ercot_mis import ews, public_api
+from ercot_mis.public_api import ARCHIVE_URL, TOKEN_URL, PublicApiClient, PublicApiError
 
 PRODUCT = get_product("NP4-191-CD")
 SECRETS = ("user@example.org", "pass-" + "w" * 8, "key-" + "k" * 8)
@@ -58,7 +58,7 @@ def client(replies):
 
 @pytest.fixture(autouse=True)
 def no_waiting(monkeypatch):
-    monkeypatch.setattr(retry, "DELAYS", (0.0, 0.0))
+    monkeypatch.setattr(ews, "DELAYS", (0.0, 0.0))
 
 
 def test_listing_follows_pages_and_sends_both_credentials():
