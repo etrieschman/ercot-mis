@@ -21,6 +21,7 @@ from pathlib import Path
 
 import polars as pl
 
+from ..catalog import posting_order
 from ..raw import build as raw_build
 from . import award, branch, contingency, gtc, load, node, settlement_point, snapshot
 
@@ -120,9 +121,11 @@ def latest_gtl_by_day(session) -> dict[date, tuple[pl.DataFrame, str]]:
     if not (session.data_dir / "raw" / "gtl_hourly").is_dir():
         return {}
     rows = session.raw("gtl_hourly").collect()
+    posted = dict(session.catalog.documents(GTL_PRODUCT).select("doc_id", "posted_at").rows())
     out = {}
     for (day,), day_rows in rows.partition_by("delivery_date", as_dict=True).items():
-        latest = day_rows.filter(pl.col("doc_id") == session.latest_doc(GTL_PRODUCT, day_rows["doc_id"].unique()))
+        newest = max(day_rows["doc_id"].unique(), key=lambda d: posting_order(posted.get(d), d))
+        latest = day_rows.filter(pl.col("doc_id") == newest)
         out[day] = (latest.select(GTL_SCHEMA.keys()), latest["blob_sha256"][0])
     return out
 
@@ -206,9 +209,15 @@ def build_awards(session, existing: set[str], tmp_dir: Path, run_id: str) -> lis
     return results
 
 
+IDENTITY = ("emil_id", "doc_id", "blob_sha256", "member_sha256", "member_path")  # on every raw row; no core builder reads them
+
+
 def _raw(session, table: str, emil_id: str, blob_sha256: str) -> pl.DataFrame | None:
+    """One raw table of one package without its identity columns (a DAM package is ~200 MB in memory this way, ~500 with them)."""
     path = session.data_dir / raw_build.artifact_path(table, emil_id, blob_sha256)
-    return pl.read_parquet(path) if path.is_file() else None
+    if not path.is_file():
+        return None
+    return pl.read_parquet(path, columns=[c for c in pl.read_parquet_schema(path) if c not in IDENTITY])
 
 
 def _write(frame: pl.DataFrame, dest: Path, tmp_dir: Path, table: str = "") -> raw_build.Written:

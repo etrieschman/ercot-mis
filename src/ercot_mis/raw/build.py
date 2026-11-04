@@ -96,7 +96,7 @@ def _identity_columns(table: pa.Table, values: dict) -> pa.Table:
     for name, value in reversed(list(values.items())):
         if name in table.column_names:
             continue
-        table = table.add_column(0, name, pa.array([value] * table.num_rows, IDENTITY_TYPES.get(name, pa.string())))
+        table = table.add_column(0, name, pa.repeat(pa.scalar(value, IDENTITY_TYPES.get(name, pa.string())), table.num_rows))
     return table
 
 

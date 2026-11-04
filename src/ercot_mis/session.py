@@ -362,18 +362,19 @@ class Session:
         path = self._package_file("core", table, snap)
         if not path.is_file():
             return self.core(table).filter(pl.col("snapshot_id") == snapshot_id).collect()
-        return pl.read_parquet(path).filter(pl.col("snapshot_id") == snapshot_id).with_columns(pl.lit(snap["emil_id"]).alias("emil_id"))
+        return pl.scan_parquet(path).filter(pl.col("snapshot_id") == snapshot_id).collect().with_columns(pl.lit(snap["emil_id"]).alias("emil_id"))
 
     def raw_rows(self, table: str, snapshot_id: str) -> pl.DataFrame:
         """One model's rows of a raw table: its package's file, narrowed to the DAM hour or the CRR month."""
         snap = self.snapshot(snapshot_id)
         path = self._package_file("raw", table, snap)
-        rows = pl.read_parquet(path) if path.is_file() else self.raw(table).filter(pl.col("blob_sha256") == snap["blob_sha256"]).collect().drop("emil_id")
-        if snap["hour"] is not None and "hour" in rows.columns:
+        rows = pl.scan_parquet(path) if path.is_file() else self.raw(table).filter(pl.col("blob_sha256") == snap["blob_sha256"]).drop("emil_id")
+        columns = rows.collect_schema().names()
+        if snap["hour"] is not None and "hour" in columns:
             rows = rows.filter(pl.col("hour") == snap["hour"])
-        if snap["month"] is not None and "month" in rows.columns:
+        if snap["month"] is not None and "month" in columns:
             rows = rows.filter(pl.col("month") == snap["month"])
-        return rows.with_columns(pl.lit(snap["emil_id"]).alias("emil_id"))
+        return rows.collect().with_columns(pl.lit(snap["emil_id"]).alias("emil_id"))
 
     def _package_file(self, layer: str, table: str, snap: dict) -> Path:
         return self.data_dir / layer / table / f"emil_id={snap['emil_id']}" / f"{snap['blob_sha256'][:16]}.parquet"

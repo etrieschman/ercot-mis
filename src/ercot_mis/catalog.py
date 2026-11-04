@@ -136,15 +136,19 @@ def client_version() -> str:
 # Seconds between attempts to open a locked catalog, about a minute in total.
 LOCK_WAITS = (1, 2, 5, 10, 20, 30)
 
+# Catalog files this process has checked for every table; a read-only open checks each file once.
+_CHECKED: set[Path] = set()
+
 
 class Catalog:
     def __init__(self, path: Path, read_only: bool = False):
         self.path = Path(path)
         self.read_only = read_only
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if read_only and (not self.path.is_file() or self._missing_tables()):
+        if read_only and self.path not in _CHECKED and (not self.path.is_file() or self._missing_tables()):
             Catalog(self.path).close()  # create the file, or tables a newer version added
         self.con = _connect(self.path, read_only)
+        _CHECKED.add(self.path)
         self.con.execute("SET TimeZone = 'UTC'")
         if not read_only:
             for statement in SCHEMA:
