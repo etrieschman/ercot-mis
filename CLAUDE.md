@@ -345,58 +345,74 @@ First, check health (2 min):
 - `launchctl list | grep ercot-mis`: last exit code 0.
 - The user may schedule a daily wake (`sudo pmset repeat wakeorpoweron MTWRFSU 06:55:00`); not done.
 
-Then, in order:
+Then, in order. The first four items are what stands between the repo and its two aims:
+reproducing what the DAM cleared, and comparing the two network models.
 
-0. **Legibility leftovers from the 2026-11-04 reviews**: module docstrings that re-teach the
-   domain (`settlement_point`, `load`, `diff`, `match`, `award`, `ews`, `daily_pull`) cut to a
-   few lines that point at the dataset note; guards that only a test fixture can hit
-   (`"col" in frame.columns`, `generators is None`) replaced by required inputs and full
-   fixtures; `_keys`/`_finish` renamed for what they return; `diff.py` booleans get `is_`;
-   the three pasted `VERSION` comments; `checks/prices.check_hour` (132 lines) as one function
-   per measurement; `settlement_point_bus` rows sort by source now, and two builds still
-   differ by a float summation order of about 1e-17 in `weight`.
-1. **Flow check, follow-ups** (`checks/flows.py`, runs daily on the newest day with
-   awards): base-case binding rows reproduce ERCOT's flow; contingency rows miss by a few MW
-   at the median, with a long tail; a GTC with an incomplete borrowed member list misses by
-   far more (PRC-04, NP3-770-M); a few enforced branches sit above their base limit every
-   hour (which, and why).
-2. **Register rows the measurements reopened** (`scripts/check.py register`): TOP-03/04
+1. **GTC members** (PRC-04). A generic transmission constraint (GTC) is a limit on the sum of
+   flows over several branches. ERCOT publishes the DAM's GTC limits in the GTL workbook
+   (NP3-766-M) and the member branches only in NP3-770-M, one PDF per constraint, which the
+   repo does not read. The price check borrows the members from the CRR month's file; some
+   rows stay incomplete, and the hours where a GTC binds are the hours the price check misses.
+   Reading the PDFs is the user's call on when.
+2. **What a contingency disconnects** (NAM-07, PRC-03). When a contingency cuts buses off
+   from the grid, the network zeroes those buses' settlement point weights and renormalizes
+   the rest. ERCOT publishes its own list of the settlement points each contingency
+   disconnects (the DAM `SpCtg` file) for few of the binding contingencies, and where it
+   does, our list rarely agrees. The flow check misses most on rows applied under such a
+   contingency. Find ERCOT's rule for a disconnected settlement point first (Protocols,
+   the DAM README), then measure against it.
+3. **Matching** (MAT-01 to MAT-07). The CRR branches without a DAM match are mostly ties
+   and out-of-service branches, which have no DAM counterpart by design; the ones that
+   matter are the in-service, monitored CRR branches and the secured DAM branches with no
+   match, and the unmatched buses that sit in the solved networks. `core.coverage.pair_coverage`
+   and `checks/identity.py` measure them; the workbook's placeholder operations names are
+   the first place to look.
+4. **CRR auction results**. The repo archives no CRR auction results or CRR shadow prices,
+   so nothing checks the CRR model against what the auction cleared. Find the EWS report
+   type IDs, archive the products, then write the CRR counterpart of the price and flow
+   checks.
+5. **The awards lag** is structural: the 60-day disclosure (NP3-966-ER) arrives two months
+   after the models, so the flow check runs on the newest day with both. Nothing to do but
+   keep capturing.
+
+The two models rate the same branch differently (the CRR base rating against the DAM's
+rate A, the CRR emergency rating against rate B). `core.diff_branch` records both sides;
+that difference is a result of the comparison, not a choice to make (RAT-04).
+
+Then:
+
+6. **Register rows the measurements reopened** (`scripts/check.py register`): TOP-03/04
    (some branches the CRR Outages file names are in service in the RAW), TOP-06 (the CRR
-   network keeps more than one swing record), NAM-01 (a few CRR line names run to-from),
-   RAT-04 (the CRR emergency rating almost never equals DAM rate B).
-3. **Combined-cycle trains whose units sit on several buses** take an equal share per unit
+   network keeps more than one swing record), NAM-01 (a few CRR line names run to-from).
+7. **Combined-cycle trains whose units sit on several buses** take an equal share per unit
    (SP-05, `forced`): ERCOT splits a train by each unit's registered HRL (Protocols 4.6.1.4),
-   which no file we pull carries. The price check's `logical_resource_nodes` block confirms it.
-   An ERCOT product that publishes unit HRLs would replace the equal split with the protocol's.
-4. **GTC definitions from NP3-770-M** (one text PDF per constraint): the user's call on
-   when; until then the evening residual stands (PRC-04).
-5. **Viewer**: check the coverage table on a real pair with `?nohash`; show `diff_load` in
+   which no file we pull carries. An ERCOT product that publishes unit HRLs would replace
+   the equal split with the protocol's.
+8. **Viewer**: check the coverage table on a real pair with `?nohash`; show `diff_load` in
    the side panel; label the DAM load column "LDF" (the DAM RAW gives every load 0 MW).
-6. **Smaller leftovers**: count the match and GTC duplicates `keep="first"` resolves
-   (RAT-12); a glossary page if the notebook's cell is not enough; the night-time offset
-   of a few cents between the fitted and the published system price in hours with few
-   binding rows (unexplained; `system_price.fitted_median_minus_published`).
-7. **Planning-stage inputs** as the user asks; EWS report type IDs for transmission
-   outage reports and CRR auction results.
-8. **Cross-model network** (one bus set for a CRR and a DAM network): the rule for a CRR
-   bus that maps to two DAM buses is the user's call.
-9. **Redundancy**: the move to the new Mac is done (2026-10-28); the same `rsync` on a
-   schedule would give a second copy on another machine. The old Mac's launchd job is
-   unloaded (confirmed 2026-11-04), so there is one pull and one archive.
+9. **Smaller leftovers**: count the match and GTC duplicates `keep="first"` resolves
+   (RAT-12); the offset of a few cents between the fitted and the published system price in
+   hours with few binding rows (`system_price.fitted_median_minus_published`); the
+   injections and LDF checks run only by hand, so their reports are stale.
+10. **Planning-stage inputs** as the user asks; EWS report type IDs for transmission
+    outage reports.
+11. **Cross-model network** (one bus set for a CRR and a DAM network): the rule for a CRR
+    bus that maps to two DAM buses is the user's call.
+12. **A second copy of the data.** There is one pull and one archive, on this Mac, excluded
+    from Time Machine. EWS keeps DAM models for 31 days, so a disk loss is permanent. The
+    same `rsync` that moved the folder, on a schedule, would give a second copy.
 
-Other open rows of `docs/assumptions.md`: RAT-04 (which RAW rate is the DAM's
-post-contingency limit), RAT-05 (the two rating fallbacks), RAT-11 (tap convention), NAM-06,
-NAM-07, PRC-04 (GTC members from NP3-770-M), TOP-04, TOP-07, TOP-11, SP-06, SP-07, MAT-06, MAT-07.
+Other open rows of `docs/assumptions.md`: RAT-05 (the two rating fallbacks), RAT-11 (tap
+convention), NAM-06, NAM-07, PRC-04, TOP-04, TOP-07, TOP-11, SP-06, SP-07, MAT-06, MAT-07.
 
 Open decisions for the user: schedule the daily wake? Install Julia for the
-PowerFlowData.jl cross-check? Keep capturing every DAM day?
+PowerFlowData.jl cross-check? Keep capturing every DAM day? Where does the second copy go?
 
-Slips to avoid repeating (2026-10-01, still true): a URL hash and a `value_counts` on a
-column assumed categorical each put a few equipment names into tool output. Mask or
-count before printing any column of a raw or core table, and never navigate a real
-viewer page without `?nohash`. New on 2026-10-06: drive builds from a script file with a
-`__main__` guard (a heredoc on stdin breaks the process pool), and never run two builds
-against one data folder at once (the catalog writer blocks the second).
+Rules that keep data out of tool output: mask or count before printing any column of a raw
+or core table (a URL hash and a `value_counts` on a column once put equipment names into
+output), and never open a real viewer page without `?nohash`. Drive builds from a script
+file with a `__main__` guard (a heredoc on stdin breaks the process pool), and never run
+two builds against one data folder at once (the catalog writer blocks the second).
 
 ## EWS facts learned the hard way (keep)
 
