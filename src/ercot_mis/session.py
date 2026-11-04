@@ -7,7 +7,6 @@ layers, ``raw(table)`` and ``core(table)`` read them.
 
 from __future__ import annotations
 
-import hashlib
 import re
 import zipfile
 from collections.abc import Iterable, Iterator
@@ -148,6 +147,7 @@ class Session:
         self._identity = identity
         self._ews: EwsClient | None = None
         self._public_api: PublicApiClient | None = None
+        self._pairs: dict[tuple, tuple[tuple, pl.DataFrame]] = {}  # match_* and diff_* tables computed in this session
 
     def __repr__(self) -> str:
         return f"Session({str(self.data_dir)!r})"
@@ -447,25 +447,21 @@ class Session:
         return self._pair("diff_load", diff.VERSION, crr_snapshot_id, dam_snapshot_id, compute)
 
     def _pair(self, table: str, version: int, crr_snapshot_id: str, dam_snapshot_id: str, compute, suffix: str = "") -> pl.DataFrame:
-        """A table about one CRR model and one DAM hour, computed once and kept until either model's core files or ``version`` change."""
+        """A table about one CRR model and one DAM hour, computed once per session; recomputed when either model's core files or ``version`` change.
+
+        Recomputing a pair costs tens of milliseconds, so nothing is written to disk.
+        """
         packages = [self.snapshot(sid) for sid in (crr_snapshot_id, dam_snapshot_id)]
         files = sorted(f for snap in packages for f in (self.data_dir / "core").glob(f"*/emil_id={snap['emil_id']}/{snap['blob_sha256'][:16]}.parquet"))
-        inputs = [(str(f.relative_to(self.data_dir)), f.stat().st_mtime_ns, f.stat().st_size) for f in files]
-        stamp = hashlib.sha256(repr((version, inputs)).encode()).hexdigest()[:16]
-        name = f"{crr_snapshot_id}__{dam_snapshot_id}{suffix}".replace(":", "-")
-        folder = self.data_dir / "core" / table
-        path = folder / f"{name}__{stamp}.parquet"
-        if path.is_file():
-            return pl.read_parquet(path)
-        ids = ("crr_snapshot_id", "dam_snapshot_id")
-        result = (compute().with_columns(pl.lit(crr_snapshot_id).alias(ids[0]), pl.lit(dam_snapshot_id).alias(ids[1]))
-                  .select(*ids, pl.exclude(*ids)))
-        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-        for stale in folder.glob(f"{name}__*.parquet"):
-            stale.unlink()
-        result.write_parquet(path, compression="zstd")
-        path.chmod(0o600)
-        return result
+        stamp = (version, tuple((str(f.relative_to(self.data_dir)), f.stat().st_mtime_ns, f.stat().st_size) for f in files))
+        key = (table, crr_snapshot_id, dam_snapshot_id, suffix)
+        cached = self._pairs.get(key)
+        if cached is None or cached[0] != stamp:
+            ids = ("crr_snapshot_id", "dam_snapshot_id")
+            result = (compute().with_columns(pl.lit(crr_snapshot_id).alias(ids[0]), pl.lit(dam_snapshot_id).alias(ids[1]))
+                      .select(*ids, pl.exclude(*ids)))
+            cached = self._pairs[key] = (stamp, result)
+        return cached[1]
 
     def viewer(self, left: str | None = None, right: str | None = None, *, reference_dam: str | None = None) -> Path:
         """Write the single-file network viewer and return its path.

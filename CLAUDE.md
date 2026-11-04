@@ -188,7 +188,7 @@ identity columns on every row (`emil_id`, `doc_id`, `blob_sha256`, `member_sha25
 package, `core/<table>/emil_id=<EMIL>/<blob16>.parquet` for node, branch,
 branch_rating, contingency, contingency_outage, gtc, gtc_member, settlement_point,
 settlement_point_bus and load, and `hourly_award` per disclosure day; the matchers
-cache under `core/match_<kind>/v<N>/`. Read with `session.raw(table)` and
+are computed per session and kept in memory (recomputing a pair costs tens of milliseconds). Read with `session.raw(table)` and
 `session.core(table)` (polars lazy scans that span products; identity columns a
 product lacks come back null). Artifacts will carry the most
 restrictive classification of their inputs; `export()` refuses Secure/ECEII outside
