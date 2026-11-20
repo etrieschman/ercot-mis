@@ -53,7 +53,7 @@ def validate_crr(mis, emil_id, problems):
                 kinds[(member.kind, member.format, "parsed" if member.is_parsed else "archived")] += 1
                 if not member.is_parsed:
                     continue
-                label = f"{emil_id} {member.month} {member.kind}.{member.format}"
+                label = f"{emil_id} {member.identity['month']} {member.kind}.{member.format}"
                 try:
                     if member.kind == "network_model":
                         case = check_raw(package.read(name), label, problems)
