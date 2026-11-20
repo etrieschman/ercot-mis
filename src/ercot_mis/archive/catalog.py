@@ -166,12 +166,6 @@ class Catalog:
         """The rows of an ad hoc SQL query."""
         return self.con.execute(sql, params or []).fetchall()
 
-    def latest_doc(self, emil_id: str, doc_ids: Iterable[str]) -> str:
-        """The one of ``doc_ids`` ERCOT posted last (TOP-11)."""
-        doc_ids = list(doc_ids)
-        posted = dict(self.documents(emil_id, doc_ids).select("doc_id", "posted_at").rows())
-        return max(doc_ids, key=lambda d: posting_order(posted.get(d), d))
-
     def close(self) -> None:
         self.con.close()
 

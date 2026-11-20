@@ -221,7 +221,7 @@ Each layer owns its `build`; `Session` strings them together and is the only wri
 ```
 src/ercot_mis/
   session.py        Session, the hub: list, fetch, ingest, probe; build_raw, build_core; raw, core, core_rows, raw_rows;
-                    network, injections, match_*, diff_*, viewer, newest, hour_ids
+                    network, injections, match_*, diff_*, viewer, newest, hour_ids, latest_snapshot, latest_posting
   daily.py          the daily job's steps: fetch_products, build_layers, at_risk
   config.py         data folder, identity, secrets
   clock.py          ERCOT's hours as UTC instants; the CRR time-of-use blocks
@@ -261,7 +261,7 @@ src/ercot_mis/
     shift_factors.py  DcSystem: the one place shift factors are computed (the shift-factors extra)
     injection.py    one day's awards as q per settlement point and hour
   checks/           layer 4: the layers against ERCOT's results; each writes data/reports/<check>/
-    binding.py      the DAM's binding rows of one hour resolved onto our network
+    binding.py      binding rows resolved onto our network, for the DAM's hour and the CRR auction's block
     prices.py       the price identity per DAM hour
     crr_prices.py   the CRR auction's shadow prices per time-of-use block on the monthly CRR model
     flows.py        the awards through the network against ERCOT's flows

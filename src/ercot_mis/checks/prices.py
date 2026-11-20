@@ -19,7 +19,7 @@ from scipy import sparse
 from ..core.match import name_key
 from ..out.shift_factors import DcSystem
 from . import delivery_days, histogram, modelled_days, quantiles, weight_matrix, write_report
-from .binding import BASE_CASE, hour_rows, resolve
+from .binding import hour_rows, resolve_dam, sensitivity, tally
 
 RESIDUAL_BINS = [-1e9, -20, -10, -5, -2, -1, -0.1, 0.1, 1, 2, 5, 10, 20, 1e9]
 
@@ -30,11 +30,7 @@ class Congestion(NamedTuple):
     per_constraint: np.ndarray  # the congestion term per settlement point, weights renormalized per constraint (PRC-03)
     plain: np.ndarray  # the same with plain weights, cut-off buses at zero
     cut_off_mu: np.ndarray  # per bus: the shadow price of the rows whose contingency cuts it off
-    rows_by_outcome: dict[str, int]
-    mu_by_outcome: dict[str, float]
     rows_by_flags: dict[str, int]  # binding branches by their secured, monitored and limited flags (RAT-09)
-    used_mu: float
-    total_mu: float
     cut_lists: dict[str, int]  # our cut-off settlement points against ERCOT's SpCtg lists (NAM-07)
 
 
@@ -51,9 +47,9 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     system_price = float(lam["system_lambda"][0]) if lam.height else None
     net = session.network(snapshot_id)
     system = DcSystem(net)
-    resolved = resolve(session, snapshot_id, net, system, shadow)
+    resolved = resolve_dam(session, snapshot_id, net, system, shadow)
     W, points_frame = weight_matrix(net)
-    c = _congestion(resolved, system, net, W, points_frame, _ercot_cut_lists(session, snapshot_id))
+    c = _congestion(resolved, net, W, points_frame, _ercot_cut_lists(session, snapshot_id))
 
     points = (prices.select(pl.col("settlement_point").alias("settlement_point_id"), pl.col("settlement_point_price").alias("price"))
               .join(points_frame.with_columns(pl.Series("c", c.per_constraint), pl.Series("c_plain", c.plain)), on="settlement_point_id")
@@ -66,15 +62,12 @@ def check_hour(session, snapshot_id: str) -> dict | None:
     fitted_plain = observed + points["c_plain"].to_numpy()
     plain = np.abs(fitted_plain - (system_price if system_price is not None else np.median(fitted_plain)))
 
-    share = round(c.used_mu / c.total_mu, 4) if c.total_mu else None
-    result = {"snapshot_id": snapshot_id, "binding_rows": shadow.height, "rows_by_outcome": dict(sorted(c.rows_by_outcome.items())),
-              "shadow_price_by_outcome": dict(sorted(c.mu_by_outcome.items())), "share_of_shadow_price_used": share,
-              "contingencies_solved": len(resolved.systems),
+    result = {"snapshot_id": snapshot_id, "binding_rows": shadow.height, **tally(resolved.bindings), "contingencies_solved": len(resolved.systems),
               "max_nodes_islanded_by_a_contingency": max((s.n_islanded for s in resolved.systems.values()), default=0),
               "priced_points_published": prices.height, "points_compared": points.height,
               "price_spread_published": round(float(observed.max() - observed.min()), 2),
               "residual": quantiles(residual, 3, within=(0.01, 1.0))}
-    result["residual_when_every_row_applied"] = result["residual"] if share == 1.0 else None
+    result["residual_when_every_row_applied"] = result["residual"] if result["share_of_shadow_price_used"] == 1.0 else None
     result["binding_rows_by_limit_flags"] = dict(sorted(c.rows_by_flags.items()))
     result["system_price"] = {"source": "published" if system_price is not None else "fitted_median",
                               "fitted_median_minus_published": round(float(np.median(fitted) - system_price), 3) if system_price is not None else None}
@@ -94,42 +87,28 @@ def _ercot_cut_lists(session, snapshot_id: str) -> dict[str, set[str]]:
     return {ctg: set(g["settlement_point_name"]) for (ctg,), g in spctg.group_by("ctg")}
 
 
-def _congestion(resolved, system: DcSystem, net, W: sparse.csr_matrix, points_frame: pl.DataFrame, ercot_cut: dict[str, set[str]]) -> Congestion:
-    """Every binding row's shadow price times its shift factors, summed per settlement point; rows the network cannot apply are counted."""
+def _congestion(resolved, net, W: sparse.csr_matrix, points_frame: pl.DataFrame, ercot_cut: dict[str, set[str]]) -> Congestion:
+    """Every applied row's shadow price times its shift factors, summed per settlement point, with and without the renormalization of PRC-03."""
     n_points = points_frame.height
     point_ids = points_frame["settlement_point_id"].to_list()
     per_constraint, plain, cut_off_mu = np.zeros(n_points), np.zeros(n_points), np.zeros(net.n_buses)
-    rows_by_outcome: dict[str, int] = {}
-    mu_by_outcome: dict[str, float] = {}
     rows_by_flags: dict[str, int] = {}
     flags = net.branches.select("is_secured", "is_monitored", "is_limited").rows()
     cut_lists = {"binding_contingencies_compared": 0, "binding_contingencies_ercot_lists_none": 0, "agree": 0, "only_ours": 0, "only_ercot": 0}
     compared: set[str] = set()
-    used_mu = total_mu = 0.0
     for row in resolved.bindings:
-        total_mu += abs(row.shadow_price)
-        rows_by_outcome[row.outcome] = rows_by_outcome.get(row.outcome, 0) + 1
-        mu_by_outcome[row.outcome] = round(mu_by_outcome.get(row.outcome, 0.0) + row.shadow_price, 2)
         if row.branch is not None:
             label = "secured={} monitored={} limited={}".format(*flags[row.branch])
             rows_by_flags[label] = rows_by_flags.get(label, 0) + 1
         if row.system is None:
             continue
-        used_mu += abs(row.shadow_price)
-        if row.gtc_members:
-            js, factors = zip(*row.gtc_members)
-            sf = np.asarray(factors) @ system.shift_factors(list(js))
-            per_constraint += row.shadow_price * (W @ sf)
-            plain += row.shadow_price * (W @ sf)
-            continue
-        islanding = row.outcome == "used_contingency_islanding"
-        connected = row.system.connected[:net.n_buses] if islanding else None
-        sf = row.system.shift_factors([row.branch])[0]
-        per_constraint += row.sign * row.shadow_price * (_renormalized(W, connected) @ sf)
-        plain += row.sign * row.shadow_price * (W @ sf)
+        s = sensitivity(row)
+        connected = row.system.connected[:net.n_buses] if row.outcome == "used_contingency_islanding" else None
+        per_constraint += _renormalized(W, connected) @ s
+        plain += W @ s
         if connected is not None:
             cut_off_mu += row.shadow_price * ~connected
-        if row.contingency != BASE_CASE and row.outcome.startswith("used_contingency") and row.contingency not in compared:
+        if row.outcome.startswith("used_contingency") and row.contingency not in compared:
             compared.add(row.contingency)
             mask = connected if connected is not None else np.ones(net.n_buses, bool)
             ours = {point_ids[i] for i in np.flatnonzero(np.asarray((W @ sparse.diags(mask.astype(float))).sum(axis=1)).ravel() <= 0)}
@@ -139,7 +118,7 @@ def _congestion(resolved, system: DcSystem, net, W: sparse.csr_matrix, points_fr
             cut_lists["agree"] += len(ours & theirs)
             cut_lists["only_ours"] += len(ours - theirs)
             cut_lists["only_ercot"] += len(theirs - ours)
-    return Congestion(per_constraint, plain, cut_off_mu, rows_by_outcome, mu_by_outcome, rows_by_flags, used_mu, total_mu, cut_lists)
+    return Congestion(per_constraint, plain, cut_off_mu, rows_by_flags, cut_lists)
 
 
 def _by_kind(points: pl.DataFrame, resid: np.ndarray) -> dict:

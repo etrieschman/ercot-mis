@@ -11,10 +11,7 @@ from ..core import award
 
 def awards(session, day: date) -> pl.DataFrame:
     """Every award of one operating day, from ERCOT's latest posting of the day (TOP-11)."""
-    rows = session.core("hourly_award").filter(pl.col("delivery_date") == f"{day:%m/%d/%Y}").collect()
-    if rows["doc_id"].n_unique() > 1:
-        rows = rows.filter(pl.col("doc_id") == session.latest_doc(award.DISCLOSURE_PRODUCT, rows["doc_id"].unique()))
-    return rows
+    return session.latest_posting(session.core("hourly_award").filter(pl.col("delivery_date") == f"{day:%m/%d/%Y}").collect())
 
 
 def injections(session, day: date) -> pl.DataFrame:

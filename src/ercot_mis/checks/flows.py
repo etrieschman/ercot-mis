@@ -17,7 +17,7 @@ import polars as pl
 from ..out.network import Network
 from ..out.shift_factors import DcSystem
 from . import delivery_days, histogram, modelled_days, quantiles, write_report
-from .binding import hour_rows, resolve
+from .binding import hour_rows, resolve_dam
 
 LOADING_BINS = [0.0, 0.5, 0.9, 1.0, 1.05, 1.2, np.inf]  # loading is rounded to 6 decimals first: a branch at its limit stays at it
 
@@ -45,7 +45,7 @@ def check_hour(session, snapshot_id: str, q_day: pl.DataFrame) -> dict | None:
     if shadow.is_empty():
         result["binding_rows"] = None
         return result
-    resolved = resolve(session, snapshot_id, net, system, shadow)
+    resolved = resolve_dam(session, snapshot_id, net, system, shadow)
     flows = {None: base}  # per contingency solved: the post-contingency flows
     compared = []  # (ours, ERCOT's, limit, outcome)
     for row in resolved.bindings:

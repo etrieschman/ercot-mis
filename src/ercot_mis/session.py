@@ -21,7 +21,7 @@ from .core import diff, match
 from .core.build import build as build_core_tables
 from .out import injection, network as out
 from .raw import build as raw_build
-from .archive.catalog import Catalog, ReadOnlyCatalog, writing
+from .archive.catalog import Catalog, ReadOnlyCatalog, posting_order, writing
 from .config import Identity, load_identity
 from .archive.ews import PRIVATE_COLUMNS, EwsClient, Probe
 from .archive.fetch import as_date
@@ -74,9 +74,13 @@ class Session:
         """The rows of an ad hoc read-only SQL query on the catalog."""
         return self.catalog.query(sql, params)
 
-    def latest_doc(self, emil_id: str, doc_ids: Iterable[str]) -> str:
-        """The one of ``doc_ids`` ERCOT posted last (TOP-11)."""
-        return self.catalog.latest_doc(emil_id, doc_ids)
+    def latest_posting(self, rows: pl.DataFrame) -> pl.DataFrame:
+        """``rows`` narrowed to the document ERCOT posted last, when they come from several postings of one product (TOP-11)."""
+        doc_ids = rows["doc_id"].unique()
+        if doc_ids.len() <= 1:
+            return rows
+        posted = dict(self.catalog.documents(rows["emil_id"][0], doc_ids).select("doc_id", "posted_at").rows())
+        return rows.filter(pl.col("doc_id") == max(doc_ids, key=lambda d: posting_order(posted.get(d), d)))
 
     @contextmanager
     def _writer(self) -> Iterator[Catalog]:
@@ -147,14 +151,19 @@ class Session:
             raise KeyError(f"{snapshot_id!r} is not in core.snapshot; run build_core()")
         return rows.row(0, named=True)
 
+    def latest_snapshot(self, **where) -> str | None:
+        """The highest revision of the ``core.snapshot`` row matching ``where`` (TOP-11), or None: ``latest_snapshot(model_kind="dam", operating_date=day, hour=12)``."""
+        rows = self.core("snapshot").filter(*[pl.col(k) == v for k, v in where.items()]).sort("revision").collect()
+        return rows["snapshot_id"][-1] if rows.height else None
+
     def newest(self) -> tuple[str, str]:
         """The newest monthly CRR model and hour 12 of the newest DAM day, latest revisions; the pair the checks and the viewer default to."""
         snaps = self.core("snapshot").collect()
-        crr = snaps.filter(pl.col("model_kind") == "crr_monthly").sort("month", "revision")
-        dam = snaps.filter((pl.col("model_kind") == "dam") & (pl.col("hour") == 12)).sort("operating_date", "revision")
-        if crr.is_empty() or dam.is_empty():
+        month = snaps.filter(pl.col("model_kind") == "crr_monthly")["month"].max()
+        day = snaps.filter(pl.col("model_kind") == "dam")["operating_date"].max()
+        if month is None or day is None:
             raise ValueError("no monthly CRR model or no DAM day in core.snapshot; run build_core() first or pass snapshot ids")
-        return crr["snapshot_id"][-1], dam["snapshot_id"][-1]
+        return self.latest_snapshot(model_kind="crr_monthly", month=month), self.latest_snapshot(model_kind="dam", operating_date=day, hour=12)
 
     def hour_ids(self, day: date) -> list[str]:
         """The latest revision of every DAM hour of one operating day."""
