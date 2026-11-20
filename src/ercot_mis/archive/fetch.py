@@ -113,7 +113,12 @@ def ingest(data_dir: Path, path: str | Path, product: str | int | None = None) -
     )
     rows = []
     for file in files:
-        spec = get_product(product) if product is not None else _product_from_name(file.name)
+        if product is not None:
+            spec = get_product(product)
+        elif named := ERCOT_NAME.match(file.name):
+            spec = get_product(int(named.group(1)))
+        else:
+            raise ValueError("Can't tell the product from a file name like this; pass product= (e.g. 'NP7-801-M').")
         with file.open("rb") as handle:
             blob = archive(data_dir, spec, iter(lambda: handle.read(CHUNK), b""), file.suffix)
         with writing(data_dir) as writer:
@@ -128,8 +133,8 @@ def archive(data_dir: Path, spec: Product, chunks: Iterable[bytes], suffix: str,
     """The blob stored for ``chunks``, indexed in the catalog; a download of the wrong size is discarded and raises ``DownloadError``."""
     blob = store.put(data_dir, spec.emil_id, chunks, suffix)
     if expected_size and blob.size_bytes != expected_size:
-        if blob.created:
-            store.discard(data_dir, blob)
+        if blob.created:  # a blob this run created and then rejected goes
+            (data_dir / blob.path).unlink(missing_ok=True)
         raise DownloadError(f"received {blob.size_bytes:,} bytes but the listing says {expected_size:,}")
     with writing(data_dir) as writer:
         if not writer.has_blob(blob.sha256):
@@ -153,10 +158,3 @@ def as_date(value: date | str) -> date:
     if isinstance(value, datetime):
         return value.date()
     return value if isinstance(value, date) else date.fromisoformat(value)
-
-
-def _product_from_name(name: str) -> Product:
-    match = ERCOT_NAME.match(name)
-    if match is None:
-        raise ValueError("Can't tell the product from a file name like this; pass product= (e.g. 'NP7-801-M').")
-    return get_product(int(match.group(1)))

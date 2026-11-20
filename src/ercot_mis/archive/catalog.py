@@ -174,7 +174,6 @@ _CHECKED: set[Path] = set()
 class Catalog:
     def __init__(self, path: Path, read_only: bool = False):
         self.path = Path(path)
-        self.read_only = read_only
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         if read_only and self.path not in _CHECKED and (not self.path.is_file() or self._missing_tables()):
             Catalog(self.path).close()  # create the file, or the tables a newer version added
@@ -385,8 +384,6 @@ class ReadOnlyCatalog:
 
     A notebook that kept a connection open would block the daily pull's writes.
     """
-
-    read_only = True
 
     def __init__(self, data_dir: Path):
         self.path = Path(data_dir) / CATALOG_FILE

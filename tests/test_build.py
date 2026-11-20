@@ -1,9 +1,9 @@
 import io
-import zipfile
 
 import polars as pl
 import pytest
 
+from conftest import zipped
 from ercot_mis import Session
 from ercot_mis.raw import build
 from ercot_mis.raw import dam_network_model as dam_parser
@@ -38,17 +38,9 @@ def _workbook() -> bytes:
     return buffer.getvalue()
 
 
-def _zip(members: dict[str, bytes]) -> bytes:
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as z:
-        for name, data in members.items():
-            z.writestr(name, data)
-    return buffer.getvalue()
-
-
 def _monthly(tmp_path, suffix=b""):
     package = tmp_path / "man.00011205.x.20260901.pkg.zip"
-    package.write_bytes(_zip({
+    package.write_bytes(zipped({
         "2026.SEP.Monthly.Auction.NetworkModel_PeakWD.raw": MARKED.encode() + suffix,
         "2026.SEP.Monthly.Auction.Contingencies.CSV": CTG,
         "2026.SEP.Monthly.Auction.Contingencies.XML": b"<x/>",  # archived, not parsed
@@ -63,7 +55,7 @@ def _monthly(tmp_path, suffix=b""):
 def _dam(tmp_path):
     package = tmp_path / "man.00013070.x.20260915.pkg.zip"
     bare = to_bare(MARKED).encode()
-    package.write_bytes(_zip({
+    package.write_bytes(zipped({
         "DAM09152026_001.RAW": bare, "DAM09152026_002.RAW": bare,
         "DAM09152026_Ln_001.csv": DAM_LINES, "DAM09152026_Ln_002.csv": DAM_LINES.replace(b"\n1, ", b"\n2, "),
         "README_DAM09152026.txt": b"notes",
@@ -91,9 +83,9 @@ def test_build_raw_writes_identity_columns_and_provenance(tmp_path):
 
         artifacts = mis.catalog.artifacts("raw")
         assert artifacts.height == 17 and set(artifacts["table_name"]) >= {"psse_bus", "crr_contingencies"}
-        lineage = mis.query("SELECT count(DISTINCT member_sha256) FROM lineage")[0][0]
+        lineage = mis.catalog.query("SELECT count(DISTINCT member_sha256) FROM lineage")[0][0]
         assert lineage == 6  # RAW, four CSVs and the workbook; the XML fed nothing
-        runs = mis.query("SELECT command, failed FROM run")
+        runs = mis.catalog.query("SELECT command, failed FROM run")
         assert runs == [("build_raw NP7-800-M", 0)]
         for path in artifacts["path"]:
             assert oct((tmp_path / "data" / path).stat().st_mode & 0o777) == "0o600"
@@ -130,7 +122,7 @@ def test_build_raw_reports_a_broken_package_without_stopping(tmp_path):
     with Session(tmp_path / "data") as mis:
         mis.ingest(_monthly(tmp_path))
         broken = tmp_path / "man.00011205.x.20260801.broken.zip"
-        broken.write_bytes(_zip({"2026.AUG.Monthly.Auction.Contingencies.CSV": b"Wrong,Header\n1,2\n"}))
+        broken.write_bytes(zipped({"2026.AUG.Monthly.Auction.Contingencies.CSV": b"Wrong,Header\n1,2\n"}))
         mis.ingest(broken)
         result = mis.build_raw("NP7-800-M", workers=1)
         assert sorted(result["status"].to_list()) == ["built", "failed"]
@@ -168,8 +160,8 @@ def test_build_core_snapshots_and_nodes(tmp_path):
         matched = mis.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
         assert set(matched["match_method"]) <= {"exact", "ops+ckt", "prefix", "unmatched"} and matched.height >= 2
         assert mis.match_branches("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1").equals(matched)  # cached
-        nodes_matched = mis.match_buses("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
-        assert set(nodes_matched["match_method"]) <= {"settlement_point", "branch_endpoints", "unmatched"}
+        buses_matched = mis.match_buses("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
+        assert set(buses_matched["match_method"]) <= {"settlement_point", "branch_endpoints", "unmatched"}
         ctg_matched = mis.match_contingencies("crr:monthly:2026-09:r1", "dam:2026-09-15:he01:r1")
         assert ctg_matched.filter(pl.col("crr_contingency_id") == "CTG_1").height == 1
         both = mis.raw("psse_bus").collect()  # CRR and DAM packages in one scan
@@ -189,6 +181,7 @@ def test_snapshot_revisions_order_packages_by_posting_time(tmp_path):
     from datetime import datetime, timezone
 
     from ercot_mis.core.snapshot import snapshots
+    from ercot_mis.archive.catalog import writing
     from ercot_mis.archive.documents import RemoteDoc
 
     with Session(tmp_path / "data") as mis:
@@ -198,7 +191,7 @@ def test_snapshot_revisions_order_packages_by_posting_time(tmp_path):
             mis.ingest(path)
         docs = [RemoteDoc(11205, str(i), path.name, "g", "2026-09-01", datetime(2026, 8, 1 + i, tzinfo=timezone.utc), path.stat().st_size, "zip", f"u{i}")
                 for i, path in enumerate((first, second))]
-        with mis._writer() as writer:
+        with writing(mis.data_dir) as writer:
             writer.record_listing(__import__("ercot_mis").get_product("NP7-800-M"), docs, datetime.now(timezone.utc))
             for i, path in enumerate((first, second)):
                 import hashlib

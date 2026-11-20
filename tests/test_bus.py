@@ -1,15 +1,12 @@
 import polars as pl
 
+from conftest import bus_records
 from ercot_mis.core import bus as identity
-
-
-def _bus(numbers, names, kv=138.0):
-    return pl.DataFrame({"i": numbers, "name": names, "basekv": [kv] * len(numbers), "ide": [1] * len(numbers)})
 
 
 def _dam(renumber: dict[int, int]):
     r = lambda b: renumber.get(b, b)
-    bus = _bus([r(1), r(2), r(3)], ["ALPHA", "ALPHA", "BRAVO"])
+    bus = bus_records([r(1), r(2), r(3)], ["ALPHA", "ALPHA", "BRAVO"])
     lines = pl.DataFrame({"psse_from_bus_number": [r(1), r(2)], "psse_to_bus_number": [r(3), r(3)], "branch_name": ["L1", "L2"]})
     xf = lines.clear()
     gens = pl.DataFrame({"psse_bus_number": [r(1)], "generator_name": ["G1"]})
@@ -31,7 +28,7 @@ def test_dam_bus_keys_survive_renumbering_and_split_station_names():
 
 
 def test_isolated_buses_at_one_station_get_distinct_keys():
-    bus = _bus([1, 2], ["ALPHA", "ALPHA"])
+    bus = bus_records([1, 2], ["ALPHA", "ALPHA"])
     empty = pl.DataFrame({"psse_from_bus_number": [], "psse_to_bus_number": [], "branch_name": []}, schema={"psse_from_bus_number": pl.Int64, "psse_to_bus_number": pl.Int64, "branch_name": pl.String})
     buses = identity.dam_buses(bus, empty, empty, pl.DataFrame({"psse_bus_number": [], "generator_name": []}, schema={"psse_bus_number": pl.Int64, "generator_name": pl.String}),
                                pl.DataFrame({"psse_bus_number": [], "load_name": []}, schema={"psse_bus_number": pl.Int64, "load_name": pl.String}),
@@ -40,7 +37,7 @@ def test_isolated_buses_at_one_station_get_distinct_keys():
 
 
 def test_crr_nodes_contract_bus_ties_and_name_transformers_from_autos():
-    bus = _bus([1, 2, 3, 4], ["A_BUS1", "A_BUS2", "B_BUS", "C_BUS"])
+    bus = bus_records([1, 2, 3, 4], ["A_BUS1", "A_BUS2", "B_BUS", "C_BUS"])
     branch = pl.DataFrame({
         "i": [1, 2, 3], "j": [2, 3, 4], "ckt": ["1", "1", "1"], "x": [0.00001, 0.05, 0.02], "st": [1, 1, 1],
         "comment": ["1 A_BUS1 2 A_BUS2 1", "2 A_BUS2 3 B_BUS 1", "3 B_BUS 4 C_BUS 1"],

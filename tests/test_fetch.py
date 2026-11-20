@@ -1,23 +1,14 @@
-import io
-import zipfile
 from datetime import date, datetime, timedelta, timezone
 
 import polars as pl
 import pytest
 
+from conftest import zipped
 from ercot_mis import BudgetError, Session
 from ercot_mis.archive.documents import RemoteDoc
 from ercot_mis.archive.ews import EwsError
 
 NOW = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
-
-
-def _zip(**members: bytes) -> bytes:
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as z:
-        for name, data in members.items():
-            z.writestr(name, data)
-    return buffer.getvalue()
 
 
 def _doc(doc_id, payload, days_ago=1, size=None, operating_date=None, name=None):
@@ -55,7 +46,7 @@ class FakeSource:
 
 @pytest.fixture
 def payloads():
-    return {"a": _zip(**{"JAN/model.csv": b"a"}), "b": _zip(**{"FEB/model.csv": b"bb"}), "c": _zip(x=b"c")}
+    return {"a": zipped({"JAN/model.csv": b"a"}), "b": zipped({"FEB/model.csv": b"bb"}), "c": zipped({"x": b"c"})}
 
 
 def _mis(tmp_path, source):
@@ -81,7 +72,7 @@ def test_fetch_archives_indexes_and_resumes(tmp_path, payloads):
         result = mis.fetch("NP7-800-M")
         assert dict(zip(result["doc_id"], result["status"])) == {"a": "fetched", "b": "failed", "c": "fetched"}
         assert "file_name" not in result.columns
-        assert mis.query("SELECT count(*) FROM archive_member")[0][0] == 2
+        assert mis.catalog.query("SELECT count(*) FROM archive_member")[0][0] == 2
         for sha in result.filter(pl.col("status") == "fetched")["sha256"]:
             assert (tmp_path / "archive" / "NP7-800-M" / f"{sha}.zip").is_file()
 
@@ -100,7 +91,7 @@ def test_size_mismatch_keeps_nothing(tmp_path, payloads):
         assert result["status"].to_list() == ["failed"]
         assert "listing says 999" in result["error"][0]
         assert not list((tmp_path / "archive" / "NP7-800-M").iterdir())
-        assert mis.query("SELECT count(*) FROM archive_blob")[0][0] == 0
+        assert mis.catalog.query("SELECT count(*) FROM archive_blob")[0][0] == 0
 
 
 def test_budget_refuses_before_downloading(tmp_path, payloads):
@@ -137,7 +128,7 @@ def test_ingest_links_local_files_to_listings_and_deduplicates(tmp_path, payload
         again = mis.ingest(local)
         assert first.select("emil_id", "doc_id", "is_new_bytes").rows() == [("NP7-800-M", "a", True)]
         assert again["is_new_bytes"].to_list() == [False]
-        assert mis.query("SELECT count(*) FROM archive_source")[0][0] == 1
+        assert mis.catalog.query("SELECT count(*) FROM archive_source")[0][0] == 1
         assert mis.fetch("NP7-800-M").height == 0
     assert source.downloads == []
 
@@ -157,7 +148,7 @@ def test_listing_hides_file_names_and_urls(tmp_path, payloads):
         listed = mis.list("NP7-800-M")
         assert "file_name" not in listed.columns and "url" not in listed.columns
         # The catalog keeps them: fetch needs the URL and the suffix.
-        assert mis.query("SELECT count(file_name) FROM remote_doc")[0][0] == 1
+        assert mis.catalog.query("SELECT count(file_name) FROM remote_doc")[0][0] == 1
 
 
 def test_transient_download_errors_are_retried_within_a_run(tmp_path, payloads):
@@ -181,9 +172,8 @@ def test_catalog_is_read_only_between_writes(tmp_path, payloads):
 
     with _mis(tmp_path, FakeSource([(_doc("a", payloads["a"]), payloads["a"])])) as mis:
         mis.list("NP7-800-M")
-        assert mis.catalog.read_only
         with pytest.raises(duckdb.Error):
-            mis.query("DELETE FROM remote_doc")
+            mis.catalog.query("DELETE FROM remote_doc")
         assert oct(mis.catalog.path.stat().st_mode & 0o777) == "0o600"
 
 
@@ -194,6 +184,6 @@ def test_reads_hold_no_catalog_connection(tmp_path, payloads):
     with _mis(tmp_path, FakeSource([(_doc("a", payloads["a"]), payloads["a"])])) as mis:
         mis.list("NP7-800-M")
         mis.catalog.packages("NP7-800-M")
-        mis.query("SELECT count(*) FROM remote_doc")
+        mis.catalog.query("SELECT count(*) FROM remote_doc")
         writer = Catalog(mis.catalog.path)  # DuckDB refuses a second configuration on the same file while a read-only one is open
         writer.close()

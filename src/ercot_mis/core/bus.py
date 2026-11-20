@@ -13,7 +13,6 @@ shared by many buses (TOP-02, TOP-07, TOP-09, TOP-10). Details: docs/datasets/id
 from __future__ import annotations
 
 import hashlib
-import re
 
 import polars as pl
 
@@ -34,8 +33,8 @@ NODE_SCHEMA = {"node_number": pl.Int64, "raw_name": pl.String, "kv": pl.Float64,
 _KIND = {"branch": "B", "generator": "G", "load": "D", "settlement_point": "S", "source_sink": "S"}
 
 
-def _norm(value: str | None) -> str | None:
-    return re.sub(r"\s+", " ", value.strip().upper()) if value is not None else None
+# A RAW name as a key: upper case, whitespace collapsed.
+_NAME = pl.col("name").str.strip_chars().str.to_uppercase().str.replace_all(r"\s+", " ")
 
 
 def _digest(text: str) -> str:
@@ -83,7 +82,7 @@ def dam_buses(bus: pl.DataFrame, lines: pl.DataFrame, transformers: pl.DataFrame
         (loads, "psse_bus_number", "load_name", "load"),
         (settlement_points, "psse_bus_number", "settlement_point_name", "settlement_point"),
     ])
-    buses = bus.select(pl.col("i").alias("bus_number"), pl.col("name").map_elements(_norm, return_dtype=pl.String).alias("raw_name"),
+    buses = bus.select(pl.col("i").alias("bus_number"), _NAME.alias("raw_name"),
                        pl.col("basekv").alias("kv"), pl.col("ide").alias("bus_type"))
     return (_with_bus_keys(buses, attachments, "bus_number")
             .with_columns(pl.col("raw_name").alias("substation"), pl.lit(None, pl.Int64).alias("n_nodes"))
@@ -135,7 +134,7 @@ def crr_buses(bus: pl.DataFrame, branch: pl.DataFrame, transformer: pl.DataFrame
     member type.
     """
     groups = tie_groups(branch)
-    nodes = (bus.select(pl.col("i").alias("node_number"), pl.col("name").map_elements(_norm, return_dtype=pl.String).alias("raw_name"),
+    nodes = (bus.select(pl.col("i").alias("node_number"), _NAME.alias("raw_name"),
                         pl.col("basekv").alias("kv"), pl.col("ide").alias("node_type"))
              .join(groups.rename({"tie_group": "_group"}), on="node_number", how="left")
              .with_columns(pl.col("_group").fill_null(pl.col("node_number")), pl.col("node_number").is_in(groups["node_number"].implode()).alias("is_tie_member")))

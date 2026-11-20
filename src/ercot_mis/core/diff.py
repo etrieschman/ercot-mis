@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from .branch import enforced_ratings
 from .match import reactance_agrees
 
 VERSION = 4
@@ -28,10 +29,7 @@ COLUMNS = ("crr_branch_id", "dam_branch_id", "match_method",
 def _side(branch: pl.DataFrame, buses: pl.DataFrame, ratings: pl.DataFrame, prefix: str, enforced: str,
           rating_source: str, time_of_use: str | None) -> pl.DataFrame:
     kv = buses.select("bus_key", pl.col("kv").floor().alias("_kv"))
-    rows = ratings.filter(pl.col("rating_source") == rating_source)
-    if time_of_use is not None:
-        rows = rows.filter(pl.col("time_of_use") == time_of_use)
-    rows = rows.select("branch_id", "base_mw", "emergency_mw").unique(subset=["branch_id"], keep="first")
+    rows = enforced_ratings(ratings, rating_source, time_of_use)
     frame = (branch.join(kv.rename({"bus_key": "from_bus_key", "_kv": "_f"}), on="from_bus_key", how="left")
              .join(kv.rename({"bus_key": "to_bus_key", "_kv": "_t"}), on="to_bus_key", how="left")
              .join(rows, on="branch_id", how="left"))

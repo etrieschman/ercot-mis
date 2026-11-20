@@ -48,7 +48,6 @@ def local_timestamps_expr(naive: pl.Expr) -> pl.Expr:
     return naive.dt.replace_time_zone(ZONE, ambiguous=ambiguous).dt.convert_time_zone("UTC")
 
 
-BLOCKS = ("PeakWD", "PeakWE", "Off-peak")
 PEAK_HOURS = 16  # hours ending 7 to 22
 
 

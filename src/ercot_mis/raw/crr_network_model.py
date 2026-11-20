@@ -21,8 +21,9 @@ from .columns import F, Column, Member, extension, read_delimited, read_sheet
 MONTHS = {m: n for n, m in enumerate(
     ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"), start=1)}
 
-_ANNUAL = re.compile(r"(\d{4}\.\d(?:st|nd)\d)\.AnnualAuction\.Seq(\d+)\.", re.IGNORECASE)
-_MONTHLY = re.compile(r"(\d{4})\.([A-Z]{3})\.Monthly\.Auction\.", re.IGNORECASE)
+# The auction in a member's name, followed by a dot (a network model member) or an underscore (an auction results member).
+_ANNUAL = re.compile(r"(\d{4}\.\d(?:st|nd)\d)\.AnnualAuction\.Seq(\d+)(?=[._])", re.IGNORECASE)
+_MONTHLY = re.compile(r"(\d{4})\.([A-Z]{3})\.Monthly\.Auction(?=[._])", re.IGNORECASE)
 _MEMBER_MONTH = re.compile(r"_([A-Z]{3})_(\d{4})(?=[._])", re.IGNORECASE)
 _TOU = re.compile(r"_(PeakWD|PeakWE|Off-?peak)(?=[._])", re.IGNORECASE)
 
@@ -80,6 +81,18 @@ PARSED = {
 }
 
 
+def auction_identity(file: str) -> dict:
+    """What a CRR member's name says about its rows: ``auction`` (``annual`` or ``monthly``), the annual ``term`` and ``sequence``, and the ``month``; None where the name is silent. Network model and auction results members are named alike."""
+    auction = term = sequence = month = None
+    if annual := _ANNUAL.search(file):
+        auction, term, sequence = "annual", annual.group(1), int(annual.group(2))
+        if (found := _MEMBER_MONTH.search(file)) and found.group(1).upper() in MONTHS:
+            month = date(int(found.group(2)), MONTHS[found.group(1).upper()], 1)
+    elif (monthly := _MONTHLY.search(file)) and monthly.group(2).upper() in MONTHS:
+        auction, month = "monthly", date(int(monthly.group(1)), MONTHS[monthly.group(2).upper()], 1)
+    return {"auction": auction, "term": term, "sequence": sequence, "month": month}
+
+
 def classify_member(path: str) -> Member | None:
     """The member for a zip entry of a CRR package, from its path; None for a folder."""
     if path.endswith("/"):
@@ -87,18 +100,8 @@ def classify_member(path: str) -> Member | None:
     file = path.rsplit("/", 1)[-1]
     fmt = extension(file)
     kind = next((k for token, k in _KINDS if token.lower() in file.lower()), "unknown")
-    auction = term = sequence = month = None
-    if annual := _ANNUAL.search(file):
-        auction, term, sequence = "annual", annual.group(1), int(annual.group(2))
-        found = _MEMBER_MONTH.search(file)
-        if found and found.group(1).upper() in MONTHS:
-            month = date(int(found.group(2)), MONTHS[found.group(1).upper()], 1)
-    elif monthly := _MONTHLY.search(file):
-        if monthly.group(2).upper() in MONTHS:
-            auction, month = "monthly", date(int(monthly.group(1)), MONTHS[monthly.group(2).upper()], 1)
     tou = _TOU.search(file)
-    return Member(path, kind, fmt, (kind, fmt) in PARSED, {"auction": auction, "term": term, "sequence": sequence, "month": month,
-                                                         "time_of_use": tou.group(1) if tou else None})
+    return Member(path, kind, fmt, (kind, fmt) in PARSED, {**auction_identity(file), "time_of_use": tou.group(1) if tou else None})
 
 
 def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:

@@ -26,6 +26,7 @@ from pathlib import Path
 import polars as pl
 
 from ..core import coverage
+from ..core.branch import enforced_ratings
 from ..core.snapshot import is_dam
 
 TEMPLATE = Path(__file__).with_name("template.html")
@@ -97,34 +98,28 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
         points = (node.join(bus.select("bus_key", "attachments"), on="bus_key", how="left")
                   .select(pl.col("node_number").alias("n"), "kv", "raw_name", pl.col("node_type").alias("type"), "bus_key", "attachments"))
         substation = crr_substations(session, snapshot_id, reference_dam, node, branch)
-    source = "psse_raw" if dam else "crr_monitored"
-    rating = session.core_rows("branch_rating", snapshot_id).filter(pl.col("rating_source") == source)
-    if not dam:
-        rating = rating.filter(pl.col("time_of_use") == "PeakWD")
-    rating = rating.select("branch_id", "base_mw", "emergency_mw").unique(subset=["branch_id"], keep="first")
-    raw = session.core_rows("branch_rating", snapshot_id).filter(pl.col("rating_source") == "psse_raw").select(
-        "branch_id", pl.col("base_mw").alias("rate_a"), pl.col("emergency_mw").alias("rate_b")).unique(subset=["branch_id"], keep="first")
-    branch = branch.join(rating, on="branch_id", how="left").join(raw, on="branch_id", how="left")
+    ratings = session.core_rows("branch_rating", snapshot_id)
+    model_ratings = enforced_ratings(ratings, "psse_raw") if dam else enforced_ratings(ratings, "crr_monitored", "PeakWD")
+    raw = enforced_ratings(ratings, "psse_raw").rename({"base_mw": "rate_a", "emergency_mw": "rate_b"})
+    branch = branch.join(model_ratings, on="branch_id", how="left").join(raw, on="branch_id", how="left")
     outages = session.core_rows("contingency_outage", snapshot_id)
     ctg = outages.filter(pl.col("branch_id").is_not_null()).group_by("branch_id").agg(pl.col("contingency_id").unique().sort().alias("ctg"))
     branch = branch.join(ctg, on="branch_id", how="left")
     # The enforced limit is the network's (out.network applies the register's rating choices); a branch the
     # network dropped, or does not limit, has none.
-    enforced = session.network(snapshot_id).branches if hasattr(session, "network") else None
-    limits = (enforced.filter(pl.col("is_limited")).select("branch_id", pl.col("base_limit_mw").alias("lim")) if enforced is not None
-              else pl.DataFrame(schema={"branch_id": pl.String, "lim": pl.Float64}))
-    branch = branch.join(limits, on="branch_id", how="left")
+    network_branches = session.network(snapshot_id).branches
+    branch = branch.join(network_branches.filter(pl.col("is_limited")).select("branch_id", pl.col("base_limit_mw").alias("lim")), on="branch_id", how="left")
 
     # Settlement points by bus: resource nodes and DC ties sit on one bus; hubs and load zones are sets of buses.
     point_bus, point_rows = session.core_rows("settlement_point_bus", snapshot_id), session.core_rows("settlement_point", snapshot_id)
     placed = point_bus.filter(pl.col("is_resolved")).join(point_rows.select("settlement_point_id", "kind"), on="settlement_point_id")
-    counts = coverage.snapshot_coverage(bus, node, branch, session.core_rows("branch_rating", snapshot_id), load, point_rows, point_bus, outages, enforced)
+    counts = coverage.snapshot_coverage(bus, node, branch, ratings, load, point_rows, point_bus, outages, network_branches)
     if not dam:
         counts["nodes_with_substation"] = sum(1 for name in substation.values() if not name.startswith("~"))
-    on_node: dict[str, list[str]] = {}
+    on_bus: dict[str, list[str]] = {}
     part_of: dict[str, list[str]] = {}
     for sp_id, key, kind in placed.select("settlement_point_id", "bus_key", "kind").sort("settlement_point_id").rows():
-        (on_node if kind in ("resource_node", "dc_tie") else part_of).setdefault(key, []).append(sp_id)
+        (on_bus if kind in ("resource_node", "dc_tie") else part_of).setdefault(key, []).append(sp_id)
     # A three-winding transformer is three two-winding legs meeting at a fictitious star bus (1 kV, transformers only).
     at_ends = pl.concat([branch.select(pl.col(ends[0]).alias("p"), "kind"), branch.select(pl.col(ends[1]).alias("p"), "kind")])
     stars = set(at_ends.group_by("p").agg(pl.len().alias("n"), (pl.col("kind") == "transformer").sum().alias("nt"))
@@ -138,7 +133,7 @@ def model(session, snapshot_id: str, reference_dam: str | None = None) -> dict:
         "limit_source": "RAW rate A / B" if dam else "CRR monitored CSV, PeakWD",
         "coverage": counts,
         "buses": [{"n": n, "kv": kv, "st": substation[n], "name": name, "type": kind, "key": key,
-                   "sp": on_node.get(key, []), "agg": part_of.get(key, []), "gen": labels(att, "G:"), "star": n in stars}
+                   "sp": on_bus.get(key, []), "agg": part_of.get(key, []), "gen": labels(att, "G:"), "star": n in stars}
                   for n, kv, name, kind, key, att in points.rows()],
         "branches": [{"id": i, "k": kind[0].upper(), "f": f, "t": t, "ckt": ckt, "x": x, "on": on, "tie": tie, "mon": bool(mon), "sec": bool(sec),
                       "base": base, "emer": emer, "ra": ra, "rb": rb, "lim": lim, "ctg": c or [], "temp": bool(temp)}

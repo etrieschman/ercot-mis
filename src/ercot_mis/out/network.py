@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass
 
 import polars as pl
 
+from ..core.branch import enforced_ratings
 from ..core.bus import components
 from ..core.snapshot import is_dam
 from ..raw.columns import flag
@@ -139,12 +140,9 @@ def _bus_rows(core: CoreTables, dam: bool, contract_ties: bool) -> tuple[pl.Data
 def _limits(branch: pl.DataFrame, ratings: pl.DataFrame, options: Options, dam: bool) -> pl.DataFrame:
     """Add ``base_limit_mw``, ``contingency_limit_mw`` and ``is_limited``."""
     source = "psse_raw" if dam else "crr_monitored"  # the model's own ratings: RAW rate A/B for DAM, the monitored CSV for CRR (RAT-04)
-    rows = ratings.filter(pl.col("rating_source") == source)
-    if source == "crr_monitored":
-        rows = rows.filter(pl.col("time_of_use") == options.time_of_use)
-        if rows.is_empty() and not ratings.filter(pl.col("rating_source") == source).is_empty():
-            raise ValueError(f"no crr_monitored ratings for time_of_use={options.time_of_use!r}")
-    rows = rows.select("branch_id", "base_mw", "emergency_mw").unique(subset=["branch_id"], keep="first")
+    rows = enforced_ratings(ratings, source, None if dam else options.time_of_use)
+    if rows.is_empty() and not enforced_ratings(ratings, source).is_empty():
+        raise ValueError(f"no crr_monitored ratings for time_of_use={options.time_of_use!r}")
     enforced = pl.col("is_secured")  # the branches ERCOT enforces: CRR monitored, DAM secured (RAT-08)
     post = pl.col("emergency_mw")  # the post-contingency limit is rate B / EmergencyRating (RAT-04)
     # A PSS/E rating of zero means "no limit"; so does a branch the CSV does not list.

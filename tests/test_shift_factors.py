@@ -26,7 +26,7 @@ def _core(bus_like: pl.DataFrame, branch: pl.DataFrame, rating: pl.DataFrame) ->
 
 def _system() -> tuple[DcSystem, dict[str, int]]:
     node = pl.DataFrame({"node_number": [1, 2, 3, 4], "raw_name": ["S1", "S2", "S3", "S4"], "substation": ["S1", "S2", "S3", "S4"], "kv": [138.0] * 4, "node_type": [3, 1, 1, 1],
-                         "bus_group": [1, 2, 3, 4], "is_tie_member": [False] * 4, "bus_key": ["N1", "N2", "N3", "N4"]})
+                         "is_tie_member": [False] * 4, "bus_key": ["N1", "N2", "N3", "N4"]})
     branch = pl.DataFrame({"branch_id": ["A", "B", "C", "D"], "kind": ["line"] * 4, "from_node": [1, 2, 1, 3], "to_node": [2, 3, 3, 4],
                            "is_in_service": [True] * 4, "is_tie": [False] * 4, "x_pu": [0.1] * 4, "tap_ratio": [None] * 4,
                            "is_monitored": [True] * 4, "is_secured": [True] * 4}, schema_overrides={"tap_ratio": pl.Float64})
@@ -69,7 +69,7 @@ def test_a_split_bus_moves_a_branch_end_to_a_new_section():
 def test_a_transformer_tap_scales_its_susceptance():
     """RAT-11: susceptance is 1/(x * tap). Two parallel branches between the same nodes, one with tap 2, split 2:1."""
     node = pl.DataFrame({"node_number": [1, 2], "raw_name": ["S1", "S2"], "substation": ["S1", "S2"], "kv": [138.0, 138.0], "node_type": [3, 1],
-                         "bus_group": [1, 2], "is_tie_member": [False, False], "bus_key": ["N1", "N2"]})
+                         "is_tie_member": [False, False], "bus_key": ["N1", "N2"]})
     branch = pl.DataFrame({"branch_id": ["L", "T"], "kind": ["line", "transformer"], "from_node": [1, 1], "to_node": [2, 2], "is_in_service": [True, True],
                            "is_tie": [False, False], "x_pu": [0.1, 0.1], "tap_ratio": [None, 2.0], "is_monitored": [True, True], "is_secured": [True, True]},
                           schema_overrides={"tap_ratio": pl.Float64})

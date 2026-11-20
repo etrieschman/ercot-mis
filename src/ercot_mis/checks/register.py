@@ -13,6 +13,7 @@ import polars as pl
 
 from ..raw.columns import flag
 
+from ..core.branch import enforced_ratings
 from ..core.match import DAM_REACTANCE_FLOOR, name_key, placeholder_name
 from . import write_report
 from .binding import hour_rows
@@ -37,11 +38,11 @@ def run(session, dam: str | None = None, crr: str | None = None) -> dict[str, di
 def key_stability(session, dam: str, crr: str) -> dict:
     """Bus keys survive the DAM's hourly renumbering and the CRR's monthly models; node numbers do not."""
     snaps = session.core("snapshot").collect()
-    snap = snaps.filter(pl.col("snapshot_id") == dam).row(0, named=True)
-    next_hour = snaps.filter((pl.col("operating_date") == snap["operating_date"]) & (pl.col("hour") == snap["hour"] + 1)).sort("revision")["snapshot_id"]
+    snap = session.snapshot(dam)
+    next_hour = session.latest_snapshot(operating_date=snap["operating_date"], hour=snap["hour"] + 1)
     months = snaps.filter(pl.col("model_kind") == "crr_monthly").sort("month", "revision").unique(subset=["month"], keep="last").sort("month")["snapshot_id"]
     out = {}
-    for label, a, b in (("dam_next_hour", dam, next_hour[-1] if next_hour.len() else None),
+    for label, a, b in (("dam_next_hour", dam, next_hour),
                         ("crr_previous_month", months[-2] if months.len() > 1 else None, crr)):
         if a is None or b is None:
             continue
@@ -126,8 +127,8 @@ def reactances(session, dam: str, crr: str) -> dict:
 def rate_b_against_crr_emergency(session, dam: str, crr: str) -> dict:
     """DAM post-contingency limit is rate B: on matched branches, DAM rate B against the CRR emergency rating."""
     pairs = session.match_branches(crr, dam).drop_nulls(["crr_branch_id", "dam_branch_id"]).select("crr_branch_id", "dam_branch_id")
-    crr = session.core_rows("branch_rating", crr).filter((pl.col("rating_source") == "crr_monitored") & (pl.col("time_of_use") == "PeakWD"))
-    dam = session.core_rows("branch_rating", dam).filter(pl.col("rating_source") == "psse_raw")
+    crr = enforced_ratings(session.core_rows("branch_rating", crr), "crr_monitored", "PeakWD")
+    dam = enforced_ratings(session.core_rows("branch_rating", dam), "psse_raw")
     both = (pairs.join(crr.select(pl.col("branch_id").alias("crr_branch_id"), pl.col("emergency_mw").alias("crr_emergency")), on="crr_branch_id")
             .join(dam.select(pl.col("branch_id").alias("dam_branch_id"), pl.col("emergency_mw").alias("dam_rate_b"),
                              pl.col("base_mw").alias("dam_rate_a")), on="dam_branch_id")

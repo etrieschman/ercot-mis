@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from ..clock import TZ
-from ..config import ConfigError, load_secret
+from ..config import SECRET_VARIABLES, ConfigError, load_secret
 from .documents import CHUNK, RemoteDoc, posted_at, retrying
 from .products import Product
 
@@ -57,9 +57,8 @@ class PublicApiClient:
 
     @classmethod
     def from_secrets(cls) -> PublicApiClient:
-        names = ("ERCOT_PUBLIC_API_USERNAME", "ERCOT_PUBLIC_API_PASSWORD", "ERCOT_PUBLIC_API_SUBSCRIPTION_KEY")
-        values = [load_secret(name) for name in names]
-        missing = [name for name, value in zip(names, values) if not value]
+        values = [load_secret(name) for name in SECRET_VARIABLES]
+        missing = [name for name, value in zip(SECRET_VARIABLES, values) if not value]
         if missing:
             raise ConfigError(f"Missing {', '.join(missing)}: set them in .env or the Keychain (see README, Credentials).")
         return cls(*values)

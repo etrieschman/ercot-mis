@@ -29,6 +29,14 @@ BRANCH_COLUMNS = ("branch_id", "kind", "from_node", "to_node", "from_bus_number"
 RATING_COLUMNS = ("branch_id", "rating_source", "time_of_use", "base_mw", "emergency_mw", "rate_c_mw")
 
 
+def enforced_ratings(ratings: pl.DataFrame, source: str, time_of_use: str | None = None) -> pl.DataFrame:
+    """One ``core.branch_rating`` row per branch from ``source`` (``psse_raw`` as a whole, ``crr_monitored`` within one time-of-use block): ``branch_id``, ``base_mw``, ``emergency_mw``; a branch a block lists twice keeps its first row (RAT-12)."""
+    rows = ratings.filter(pl.col("rating_source") == source)
+    if time_of_use is not None:
+        rows = rows.filter(pl.col("time_of_use") == time_of_use)
+    return rows.select("branch_id", "base_mw", "emergency_mw").unique(subset=["branch_id"], keep="first")
+
+
 def resolved(rows: pl.DataFrame, branches: pl.DataFrame) -> pl.DataFrame:
     """``rows`` with ``is_resolved`` (its ``branch_id`` names one of ``branches``) and ``branch_id`` nulled where it does not."""
     known = branches.select("branch_id", pl.lit(True).alias("is_resolved"))

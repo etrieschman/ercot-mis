@@ -12,19 +12,15 @@ the CRR model's own names (docs/datasets/crr-auction-results.md).
 from __future__ import annotations
 
 import re
-from datetime import date
 
 import pyarrow as pa
 
-from .crr_network_model import MONTHS
+from .crr_network_model import auction_identity
 from .columns import F, Column, Member, extension, read_delimited
 
 VERSION = 1
 
 _KIND = re.compile(r"Common_([A-Za-z]+)_\d{4}\.")
-_ANNUAL = re.compile(r"(\d{4}\.\d(?:st|nd)\d)\.AnnualAuction\.Seq(\d+)", re.IGNORECASE)
-_MONTHLY = re.compile(r"(\d{4})\.([A-Z]{3})\.Monthly\.Auction", re.IGNORECASE)
-_MEMBER_MONTH = re.compile(r"_([A-Z]{3})_(\d{4})(?=[._])", re.IGNORECASE)
 
 _PRICE = Column("ShadowPricePerMWH", F, "shadow_price_per_mwh")
 TABLES: dict[str, tuple[Column, ...]] = {
@@ -53,14 +49,7 @@ def classify_member(path: str) -> Member | None:
     fmt = extension(file)
     found = _KIND.search(file)
     kind = KINDS.get(found.group(1), "unknown") if found else "unknown"
-    auction = term = sequence = month = None
-    if annual := _ANNUAL.search(file):
-        auction, term, sequence = "annual", annual.group(1), int(annual.group(2))
-        if (m := _MEMBER_MONTH.search(file)) and m.group(1).upper() in MONTHS:
-            month = date(int(m.group(2)), MONTHS[m.group(1).upper()], 1)
-    elif (monthly := _MONTHLY.search(file)) and monthly.group(2).upper() in MONTHS:
-        auction, month = "monthly", date(int(monthly.group(1)), MONTHS[monthly.group(2).upper()], 1)
-    return Member(path, kind, fmt, kind != "unknown" and fmt == "csv", {"auction": auction, "term": term, "sequence": sequence, "month": month})
+    return Member(path, kind, fmt, kind != "unknown" and fmt == "csv", auction_identity(file))
 
 
 def parse_member(member: Member, data: bytes) -> dict[str, pa.Table]:

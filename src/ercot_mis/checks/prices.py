@@ -156,7 +156,7 @@ def _deenergized(session, start_utc, net, points: pl.DataFrame, resid: np.ndarra
     dead = set(hour_rows(session, "dam_deenergized_settlement_points", start_utc)["settlement_point"])
     ours_dead = set(net.settlement_points.filter(pl.col("n_buses") == 0)["settlement_point_id"])
     in_points = points["settlement_point_id"].is_in(list(dead)).to_numpy()
-    return {"published": len(dead), "among_points_compared": int(in_points.sum()), "ours_without_node": len(ours_dead),
+    return {"published": len(dead), "among_points_compared": int(in_points.sum()), "ours_without_bus": len(ours_dead),
             "agree": len(dead & ours_dead), "only_ours": len(ours_dead - dead), "only_ercot": len(dead - ours_dead),
             "residual_p50_abs": round(float(np.median(resid[in_points])), 3) if in_points.any() else None}
 

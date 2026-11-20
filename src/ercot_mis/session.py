@@ -8,8 +8,7 @@ names the module that does the work.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from collections.abc import Iterable
 from datetime import date, datetime
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from .core import diff, match
 from .core.build import build as build_core_tables
 from .out import injection, network as out
 from .raw import build as raw_build
-from .archive.catalog import Catalog, ReadOnlyCatalog, artifact_path, posting_order, writing
+from .archive.catalog import ReadOnlyCatalog, artifact_path, posting_order, writing
 from .config import Identity, load_identity
 from .archive.ews import PRIVATE_COLUMNS, EwsClient, Probe
 from .archive.fetch import as_date
@@ -70,10 +69,6 @@ class Session:
         """The catalog, read-only, one connection per call."""
         return ReadOnlyCatalog(self.data_dir)
 
-    def query(self, sql: str, params: list | None = None) -> list[tuple]:
-        """The rows of an ad hoc read-only SQL query on the catalog."""
-        return self.catalog.query(sql, params)
-
     def latest_posting(self, rows: pl.DataFrame) -> pl.DataFrame:
         """``rows`` narrowed to the document ERCOT posted last, when they come from several postings of one product (TOP-11)."""
         doc_ids = rows["doc_id"].unique()
@@ -81,11 +76,6 @@ class Session:
             return rows
         posted = dict(self.catalog.documents(rows["emil_id"][0], doc_ids).select("doc_id", "posted_at").rows())
         return rows.filter(pl.col("doc_id") == max(doc_ids, key=lambda d: posting_order(posted.get(d), d)))
-
-    @contextmanager
-    def _writer(self) -> Iterator[Catalog]:
-        with writing(self.data_dir) as writer:
-            yield writer
 
     @property
     def ews(self) -> EwsClient:
@@ -306,14 +296,14 @@ class Session:
 
     def start_run(self, command: str) -> str:
         """The id of a new ``run`` row in the catalog."""
-        with self._writer() as writer:
+        with writing(self.data_dir) as writer:
             return writer.start_run(command)
 
     def record_artifacts(self, run_id: str, layer: str, emil_id: str, blob_sha256: str, identity: str, placed: list) -> None:
         """Register a build's files: ``placed`` is ``[(artifact key, Written, path relative to the data folder)]``."""
-        with self._writer() as writer:
+        with writing(self.data_dir) as writer:
             writer.add_artifacts(run_id, layer, emil_id, blob_sha256, identity, placed)
 
     def finish_run(self, run_id: str, failed: int) -> None:
-        with self._writer() as writer:
+        with writing(self.data_dir) as writer:
             writer.finish_run(run_id, failed)

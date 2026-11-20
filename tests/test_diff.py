@@ -34,7 +34,7 @@ def test_diff_branches_compares_kind_reactance_kv_and_ratings_side_by_side():
     assert c3["crr_base_mw"] is None  # only the CRR CSV block counts as a CRR rating here
 
 
-def test_diff_settlement_points_translates_crr_nodes_and_compares_sets():
+def test_diff_settlement_points_translates_crr_buses_and_compares_sets():
     crr_p = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H", "RN_ONLY_CRR"], "kind": ["resource_node", "hub", "resource_node"]})
     crr_n = pl.DataFrame({"settlement_point_id": ["RN_A", "HB_H", "HB_H", "HB_H"], "bus_key": ["c1", "c1", "c2", "c3"],
                           "weight": [1.0, 0.5, 0.25, 0.25], "is_resolved": [True] * 4})
@@ -50,7 +50,7 @@ def test_diff_settlement_points_translates_crr_nodes_and_compares_sets():
     assert (round(hub["shared_weight_crr"], 3), round(hub["shared_weight_dam"], 3)) == (0.75, 1.0)
 
 
-def test_diff_loads_compares_per_matched_node_and_keeps_unmatched_sides():
+def test_diff_loads_compares_per_matched_bus_and_keeps_unmatched_sides():
     crr = pl.DataFrame({"bus_key": ["c1", "c1", "c2", "c9"], "is_in_service": [True, False, False, True], "mw": [10.0, 4.0, 6.0, 1.0]})
     dam = pl.DataFrame({"bus_key": ["d1", "d2", "d7"], "is_in_service": [True, True, False], "mw": [9.0, 5.0, 0.0],
                         "mw_ldf": [0.5, 0.3, 0.2], "is_rollover_capable": [False, True, False]})

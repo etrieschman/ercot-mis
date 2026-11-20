@@ -107,19 +107,10 @@ def finish_text_table(table: pa.Table, columns: Sequence[Column], label: str) ->
     return pa.table(arrays, names=[c.column_name for c in columns])
 
 
-def empty_table(columns: Sequence[Column]) -> pa.Table:
-    return pa.table({c.column_name: pa.array([], c.type) for c in columns})
-
-
-def csv_header(data: bytes) -> tuple[str, ...]:
-    """The first line of a CSV as trimmed header names; a byte-order mark and a carriage return are allowed."""
-    first = data.removeprefix(b"\xef\xbb\xbf").partition(b"\n")[0].decode("utf-8", "replace")
-    return tuple(h.strip() for h in first.rstrip("\r").split(","))
-
-
 def table_for_header(data: bytes, tables: dict[str, Sequence[Column]], label: str) -> str:
-    """The one of ``tables`` whose header the CSV carries exactly; ``ParseError`` names the header otherwise."""
-    header = csv_header(data)
+    """The one of ``tables`` whose header the CSV carries exactly; ``ParseError`` names the header otherwise. A byte-order mark and a carriage return are allowed."""
+    first = data.removeprefix(b"\xef\xbb\xbf").partition(b"\n")[0].decode("utf-8", "replace")
+    header = tuple(h.strip() for h in first.rstrip("\r").split(","))
     for table, columns in tables.items():
         if header == tuple(c.header for c in columns):
             return table
@@ -147,7 +138,7 @@ def read_delimited(
     if header != expected:
         raise ParseError(f"{label}: header does not match; expected {expected}, found {header}")
     if not rest.strip():
-        return empty_table(columns)
+        return pa.table({c.column_name: pa.array([], c.type) for c in columns})
 
     names = [c.column_name for c in columns]
     sample = rest.partition(b"\n")[0].rstrip(b"\r")

@@ -24,17 +24,9 @@ from . import write_report
 
 # ------------------------------------------------------------------ helpers
 
-def mask(value) -> str:
-    return re.sub(r"[A-Za-z]", "A", re.sub(r"\d", "9", str(value)))
-
-
 def norm(value) -> str | None:
     """Upper case, collapsed whitespace."""
     return re.sub(r"\s+", " ", str(value).strip().upper()) if value is not None else None
-
-
-def patterns(values, k: int = 3) -> list[tuple[str, int]]:
-    return collections.Counter(mask(v) for v in values if v is not None).most_common(k)
 
 
 class Report:
@@ -65,12 +57,6 @@ def tables(session, snapshot_id: str, names=None) -> dict[str, pl.DataFrame]:
     """One model's raw tables."""
     names = names or (DAM_TABLES if is_dam(snapshot_id) else CRR_TABLES)
     return {t: session.raw_rows(t, snapshot_id) for t in names}
-
-
-def latest(snaps: pl.DataFrame, **where) -> str | None:
-    """The highest revision of the snapshot matching ``where`` (TOP-11), or None."""
-    rows = snaps.filter(*[pl.col(k) == v for k, v in where.items()]).sort("revision")
-    return rows["snapshot_id"][-1] if rows.height else None
 
 
 def bus_identity(tables) -> dict[int, tuple[str | None, float]]:
@@ -113,7 +99,7 @@ def stability(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
         return out
 
     names = ("psse_bus", "dam_generators", "dam_loads", "dam_settlement_points", "dam_lines")
-    next_hour = tables(session, latest(snaps, operating_date=dam["operating_date"], hour=hour + 1 if hour < 24 else hour - 1), names)
+    next_hour = tables(session, session.latest_snapshot(operating_date=dam["operating_date"], hour=hour + 1 if hour < 24 else hour - 1), names)
     r.show(f"DAM bus numbers, hour {hour} vs next hour", **_compare_numbers(bus_identity(D), bus_identity(next_hour)))
     here_eq, next_eq = equipment(D), equipment(next_hour)
     for label, x, y in ((k, here_eq[k], next_eq[k]) for k in ("generator", "load", "settlement_point", "branch")):
@@ -121,7 +107,7 @@ def stability(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
         r.show(f"  {label} name -> (substation, kV) across hours", shared=len(common), same=sum(1 for k in common if x[k] == y[k]))
     oldest_day = snaps.filter(pl.col("model_kind") == "dam")["operating_date"].min()
     if oldest_day != dam["operating_date"]:
-        other = tables(session, latest(snaps, operating_date=oldest_day, hour=hour), names)
+        other = tables(session, session.latest_snapshot(operating_date=oldest_day, hour=hour), names)
         r.show("DAM bus numbers vs the oldest archived day", **_compare_numbers(bus_identity(D), bus_identity(other)))
         other_eq = equipment(other)
         for label, x, y in ((k, here_eq[k], other_eq[k]) for k in ("generator", "load", "settlement_point", "branch")):
@@ -130,7 +116,7 @@ def stability(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
     months = snaps.filter((pl.col("model_kind") == "crr_monthly") & (pl.col("month") != crr["month"]))["month"]
     if months.len():
         other_month = months.max()
-        other = tables(session, latest(snaps, model_kind="crr_monthly", month=other_month), ("psse_bus",))
+        other = tables(session, session.latest_snapshot(model_kind="crr_monthly", month=other_month), ("psse_bus",))
         r.show(f"CRR bus numbers, {crr['month']:%Y-%m} vs {other_month:%Y-%m}", **_compare_numbers(bus_identity(C), bus_identity(other)))
 
 
@@ -152,11 +138,11 @@ def bus_keys(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
              ambiguous_a=int(a["is_ambiguous"].sum()), no_attachments_a=int((a["n_attachments"] == 0).sum()))
 
     here = dam_keys(D)
-    compare(f"DAM hour {hour} vs next hour", here, dam_keys(tables(session, latest(snaps, operating_date=dam["operating_date"],
+    compare(f"DAM hour {hour} vs next hour", here, dam_keys(tables(session, session.latest_snapshot(operating_date=dam["operating_date"],
                                                                                    hour=hour + 1 if hour < 24 else hour - 1), names)))
     oldest_day = snaps.filter(pl.col("model_kind") == "dam")["operating_date"].min()
     if oldest_day != dam["operating_date"]:
-        compare("DAM vs the oldest archived day", here, dam_keys(tables(session, latest(snaps, operating_date=oldest_day, hour=hour), names)))
+        compare("DAM vs the oldest archived day", here, dam_keys(tables(session, session.latest_snapshot(operating_date=oldest_day, hour=hour), names)))
     r.show("DAM attachments per bus", quantiles=[int(here["n_attachments"].quantile(q)) for q in (0, 0.25, 0.5, 0.75, 1)],
          buses_with_settlement_point=int(here["attachments"].str.contains("S:").sum()))
 
@@ -166,13 +152,13 @@ def bus_keys(session, dam_id: str, crr_id: str, D, C, r: Report) -> None:
     kv = dict(zip(C["psse_bus"]["i"].to_list(), C["psse_bus"]["basekv"].to_list()))
     r.show("CRR bus ties (|x| <= TIE_REACTANCE)", n=ties.height, same_kv_both_ends=sum(1 for i, j in zip(ties["i"], ties["j"]) if kv.get(i) == kv.get(j)),
          r_zero=int((ties["r"] == 0).sum()), in_service=int((ties["st"] == 1).sum()), ratea_9999_or_more=int((ties["ratea"] >= 9999).sum()),
-         x_patterns=patterns(ties["x"].to_list(), 3))
+         x_patterns=collections.Counter(re.sub(r"[A-Za-z]", "A", re.sub(r"\d", "9", str(x))) for x in ties["x"].to_list()).most_common(3))
     r.show("CRR contraction", nodes=crr_nodes.height, buses=crr.height, tie_groups=groups.height,
          nodes_in_tie_groups=int(groups["n_nodes"].sum()), largest_group=int(groups["n_nodes"].max()) if groups.height else 0,
          ambiguous=int(crr["is_ambiguous"].sum()), no_attachments=int((crr["n_attachments"] == 0).sum()))
     months = snaps.filter((pl.col("model_kind") == "crr_monthly") & (pl.col("month") != crr_snap["month"]))["month"]
     if months.len():
-        other = tables(session, latest(snaps, model_kind="crr_monthly", month=months.max()), ("psse_bus", "psse_branch", "psse_transformer",
+        other = tables(session, session.latest_snapshot(model_kind="crr_monthly", month=months.max()), ("psse_bus", "psse_branch", "psse_transformer",
                                                                                               "crr_mapping_autos", "crr_sources_and_sinks"))
         _, other_buses = bus.crr_buses(other["psse_bus"], other["psse_branch"], other["psse_transformer"], other["crr_mapping_autos"],
                                        other["crr_sources_and_sinks"])
@@ -237,8 +223,8 @@ def matching(session, crr_id: str, dam_id: str, r: Report) -> None:
     for sid, label in ((crr_id, "CRR"), (dam_id, "DAM")):
         pts = session.core_rows("settlement_point", sid)
         r.show(f"settlement points {label}", n=pts.height, **{f"{k}": n for k, n in pts.group_by("kind").len().sort("kind").rows()},
-             without_node=int((pts["n_buses"] == 0).sum()), with_unresolved_rows=int((pts["n_unresolved"] > 0).sum()),
-             multi_node=int((pts["n_buses"] > 1).sum()), max_nodes=int(pts["n_buses"].max()))
+             without_bus=int((pts["n_buses"] == 0).sum()), with_unresolved_rows=int((pts["n_unresolved"] > 0).sum()),
+             multi_bus=int((pts["n_buses"] > 1).sum()), max_buses=int(pts["n_buses"].max()))
     spd = session.diff_settlement_points(crr_id, dam_id)
     r.show("settlement points in both", n=spd.height, same_kind=int(spd["same_kind"].sum()), same_buses=int(spd["same_buses"].sum()),
          with_untranslatable_crr_buses=int((spd["n_crr_buses_unmatched"] > 0).sum()),

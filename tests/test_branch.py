@@ -1,10 +1,7 @@
 import polars as pl
 
+from conftest import bus_records
 from ercot_mis.core import branch, bus as buses_
-
-
-def _bus(numbers, names):
-    return pl.DataFrame({"i": numbers, "name": names, "basekv": [138.0] * len(numbers), "ide": [1] * len(numbers)})
 
 
 def _raw_branch(rows):
@@ -19,7 +16,7 @@ def _raw_xf(rows):
 
 
 def test_crr_branches_name_lines_by_comment_transformers_by_autos_and_keep_both_ratings():
-    bus = _bus([1, 2, 3, 4], ["A1", "A2", "B", "C"])
+    bus = bus_records([1, 2, 3, 4], ["A1", "A2", "B", "C"])
     raw_branch = _raw_branch([(1, 2, "1", 0.0, 0.00001, 0.0, 9999.0, 9999.0, 9999.0, 1, "1 A1 2 A2 1"),
                               (2, 3, "1", 0.01, 0.05, 0.0, 200.0, 220.0, 240.0, 1, "2 A2 3 B 1"),
                               (3, 4, "1", 0.01, 0.02, 0.0, 100.0, 110.0, 120.0, 0, "3 B 4 C 1")])
@@ -57,7 +54,7 @@ def test_crr_branches_name_lines_by_comment_transformers_by_autos_and_keep_both_
 
 
 def test_dam_branches_take_names_and_flags_from_the_csvs():
-    bus = _bus([1, 2, 3], ["ALPHA", "ALPHA", "BRAVO"])
+    bus = bus_records([1, 2, 3], ["ALPHA", "ALPHA", "BRAVO"])
     raw_branch = _raw_branch([(1, 3, "1", 0.01, 0.05, 0.0, 200.0, 220.0, 240.0, 1, None), (2, 3, "1", 0.01, 0.05, 0.0, 200.0, 220.0, 240.0, 1, None)])
     raw_xf = _raw_xf([(1, 2, "1", 0.0, 0.1, 1.0, 1.0, 0.0, 300.0, 330.0, 360.0, 1, None)])
     lines = pl.DataFrame({"psse_from_bus_number": [1, 2], "psse_to_bus_number": [3, 3], "psse_ckt_id": ["1", "1"], "branch_name": ["L1", "L2"],

@@ -1,19 +1,10 @@
 import hashlib
-import io
 import stat
-import zipfile
 
 import pytest
 
+from conftest import zipped
 from ercot_mis.archive import store
-
-
-def _zip(members: dict[str, bytes]) -> bytes:
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as z:
-        for name, data in members.items():
-            z.writestr(name, data)
-    return buffer.getvalue()
 
 
 def test_store_is_content_addressed_read_only_and_deduplicated(tmp_path):
@@ -44,7 +35,7 @@ def test_interrupted_store_leaves_nothing(tmp_path):
 
 def test_index_members_hashes_files_without_extracting(tmp_path):
     path = tmp_path / "doc.zip"
-    path.write_bytes(_zip({"JAN/model.csv": b"a,b\n1,2\n", "JAN/": b"", "notes.txt": b"x"}))
+    path.write_bytes(zipped({"JAN/model.csv": b"a,b\n1,2\n", "JAN/": b"", "notes.txt": b"x"}))
     members = {m.member_path: m for m in store.index_members(path)}
     assert set(members) == {"JAN/model.csv", "notes.txt"}
     assert members["JAN/model.csv"].member_sha256 == hashlib.sha256(b"a,b\n1,2\n").hexdigest()

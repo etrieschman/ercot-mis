@@ -33,10 +33,6 @@ class Member:
     size_bytes: int
 
 
-def blob_path(emil_id: str, sha256: str, suffix: str) -> Path:
-    return Path("archive") / emil_id / f"{sha256}{suffix}"
-
-
 def put(data_dir: Path, emil_id: str, chunks: Iterable[bytes], suffix: str) -> StoredBlob:
     """The stored blob for ``chunks``; nothing appears at its final path until every chunk is written."""
     partial = data_dir / "archive" / ".partial"
@@ -50,7 +46,7 @@ def put(data_dir: Path, emil_id: str, chunks: Iterable[bytes], suffix: str) -> S
                 out.write(chunk)
                 size += len(chunk)
         sha256 = digest.hexdigest()
-        rel = blob_path(emil_id, sha256, suffix)
+        rel = Path("archive") / emil_id / f"{sha256}{suffix}"
         dest = data_dir / rel
         if dest.exists():
             os.unlink(tmp)
@@ -63,11 +59,6 @@ def put(data_dir: Path, emil_id: str, chunks: Iterable[bytes], suffix: str) -> S
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
-
-
-def discard(data_dir: Path, blob: StoredBlob) -> None:
-    """Remove a blob this run created and then rejected (a short download)."""
-    (data_dir / blob.path).unlink(missing_ok=True)
 
 
 def index_members(path: Path) -> list[Member]:

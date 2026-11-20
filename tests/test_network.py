@@ -18,7 +18,6 @@ def _core():
         "raw_name": ["S1", "S1", "S2", "S3", "S4", "S5", "S5"], "substation": ["S1", "S1", "S2", "S3", "S4", "S5", "S5"],
         "kv": [138.0] * 7,
         "node_type": [1, 1, 3, 1, 4, 1, 1],
-        "bus_group": [1, 1, 3, 4, 5, 6, 7],
         "is_tie_member": [True, True, False, False, False, False, False],
         "bus_key": ["A", "A", "B", "C", "D", "E", "F"],
     })
@@ -129,7 +128,7 @@ def test_contingencies_become_index_sets_and_empty_ones_are_dropped_with_reasons
     assert net.summary()["dropped_contingencies"] == {"empty": 2}
 
 
-def test_slack_falls_back_to_the_busiest_node_when_no_swing_bus_survives():
+def test_slack_falls_back_to_the_busiest_bus_when_no_swing_bus_survives():
     core = _core()
     bus = core.bus.with_columns(pl.when(pl.col("bus_key") == "B").then(1).otherwise(pl.col("bus_type")).alias("bus_type"))
     net = build_network("crr:monthly:2026-10:r1", replace(core, bus=bus), CONTRACT)
@@ -147,7 +146,7 @@ def test_gtc_members_are_signed_and_counted():
     assert {r["branch_id"]: r["factor"] for r in net.gtc_members.to_dicts()} == {"L1": 1.0, "L3": -0.5, "X": -1.0}
 
 
-def test_settlement_points_are_renormalized_over_kept_nodes():
+def test_settlement_points_are_renormalized_over_kept_buses():
     net = build_network("crr:monthly:2026-10:r1", _core(), CONTRACT)
     by = {r["settlement_point_id"]: r for r in net.settlement_points.to_dicts()}
     assert (by["RN_1"]["n_buses"], by["RN_1"]["weight_dropped"]) == (1, 0.0)
