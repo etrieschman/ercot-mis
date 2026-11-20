@@ -227,10 +227,11 @@ src/ercot_mis/
   clock.py          ERCOT's hours as UTC instants; the CRR time-of-use blocks
   archive/          layer 0: ERCOT's files as sent, and how they arrive
     products.py     EMIL product specs
-    ews.py          EWS client: build_request, sign, parse_reports, EwsClient; retrying() for stalled calls; probe
+    documents.py    what both clients share: RemoteDoc, the download chunk, retrying() for stalled calls, posting times
+    ews.py          EWS client: build_request, sign, parse_reports, EwsClient; probe
     public_api.py   Public API client: ID token, paged archive listing, paced calls
     store.py        content-addressed files, read-only, atomic; zip member hashing
-    catalog.py      the DuckDB catalog; posting_order (TOP-11); writing(), ReadOnlyCatalog
+    catalog.py      the DuckDB catalog; posting_order (TOP-11); artifact keys and paths; writing(), ReadOnlyCatalog
     fetch.py        list_documents (a listing into the catalog), fetch (a document into the store), ingest (a local file)
   raw/              layer 1: one typed table per source file; one parser per dataset note in docs/datasets/
     columns.py      Column specs, Member, read_delimited, read_sheet, flag; ParseError

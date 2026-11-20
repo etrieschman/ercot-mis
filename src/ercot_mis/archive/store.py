@@ -16,9 +16,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .ews import CHUNK
-
-
+from .documents import CHUNK
 
 @dataclass(frozen=True)
 class StoredBlob:

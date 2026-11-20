@@ -10,7 +10,6 @@ the main process alone writes the catalog (CLAUDE.md, "Provenance").
 
 from __future__ import annotations
 
-import hashlib
 import os
 import tempfile
 import time
@@ -23,13 +22,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from polars.exceptions import PanicException
 
+from ..archive.catalog import NONE, Written, artifact_key, artifact_path, none_artifact
 from ..archive.products import Product, get_product
 from . import (columns, crr_auction_results, crr_network_model, dam_disclosure, dam_network_model, dam_prices, generic_transmission_limits,
                psse_raw, settlement_point_mappings)
 
 LAYER = "raw"
 COMPRESSION = "zstd"
-NONE = "<none>"  # the artifact row of a package that yields no table (a document shape the parser archives but does not read)
 # The parser of each product, in build order; each module has VERSION, classify_member and parse_member.
 PARSERS = {"NP7-801-M": crr_network_model, "NP7-800-M": crr_network_model, "NP7-803-M": crr_auction_results, "NP7-802-M": crr_auction_results, "NP4-500-SG": dam_network_model, "NP3-766-M": generic_transmission_limits,
            "NP4-191-CD": dam_prices, "NP4-183-CD": dam_prices, "NP4-190-CD": dam_prices, "NP4-523-CD": dam_prices, "NP4-200-CD": dam_prices, "NP4-158-SG": dam_prices,
@@ -44,26 +43,6 @@ def parser_id(emil_id: str) -> str:
         raise ValueError(f"{emil_id} has no raw-layer parser")
     parts = [f"ercot-mis={__version__}", f"build={VERSION}"] + [f"{m.__name__.rsplit('.', 1)[-1]}={m.VERSION}" for m in (columns, psse_raw, PARSERS[emil_id])]
     return "|".join(parts)
-
-
-def artifact_key(parser: str, blob_sha256: str, table: str) -> str:
-    return hashlib.sha256(f"{parser}|{blob_sha256}|{table}".encode()).hexdigest()
-
-
-def artifact_path(layer: str, table: str, emil_id: str, blob_sha256: str) -> Path:
-    """Where a package's table lives in a layer, relative to the data folder; the hive folder gives readers ``emil_id``."""
-    return Path(layer) / table / f"emil_id={emil_id}" / f"{blob_sha256[:16]}.parquet"
-
-
-@dataclass(frozen=True)
-class Written:
-    """One file a worker wrote, not yet registered in the catalog."""
-
-    table: str
-    tmp_path: Path
-    rows: int
-    size_bytes: int
-    member_sha256s: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -174,7 +153,7 @@ def build(session, product: str | int, *, workers: int | None = None, limit: int
         if not result.error:
             placed = []
             if not result.artifacts:  # nothing to read in this document: remember that, or it is parsed again every run
-                placed.append((artifact_key(parser, result.blob_sha256, NONE), Written(NONE, Path(NONE), 0, 0, ()), Path(NONE)))
+                placed.append(none_artifact(parser, result.blob_sha256))
             for artifact in result.artifacts:
                 rel = artifact_path(LAYER, artifact.table, spec.emil_id, result.blob_sha256)
                 dest = session.data_dir / rel

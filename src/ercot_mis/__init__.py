@@ -3,7 +3,8 @@
 from pathlib import Path
 
 from .config import ConfigError, Identity, load_identity, load_secret, resolve_data_dir, secure_permissions
-from .archive.ews import EwsError, Probe, RemoteDoc
+from .archive.documents import RemoteDoc
+from .archive.ews import EwsError, Probe
 from .archive.fetch import BudgetError, DownloadError
 from .archive.products import PRODUCTS, Product, get_product
 from .session import Session

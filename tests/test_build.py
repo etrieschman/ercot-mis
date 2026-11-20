@@ -189,7 +189,7 @@ def test_snapshot_revisions_order_packages_by_posting_time(tmp_path):
     from datetime import datetime, timezone
 
     from ercot_mis.core.snapshot import snapshots
-    from ercot_mis.archive.ews import RemoteDoc
+    from ercot_mis.archive.documents import RemoteDoc
 
     with Session(tmp_path / "data") as mis:
         (tmp_path / "later").mkdir()

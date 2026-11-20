@@ -21,7 +21,7 @@ from .core import diff, match
 from .core.build import build as build_core_tables
 from .out import injection, network as out
 from .raw import build as raw_build
-from .archive.catalog import Catalog, ReadOnlyCatalog, posting_order, writing
+from .archive.catalog import Catalog, ReadOnlyCatalog, artifact_path, posting_order, writing
 from .config import Identity, load_identity
 from .archive.ews import PRIVATE_COLUMNS, EwsClient, Probe
 from .archive.fetch import as_date
@@ -173,7 +173,7 @@ class Session:
     def core_rows(self, table: str, snapshot_id: str) -> pl.DataFrame:
         """One model's rows of a core table, read from its package's file."""
         snap = self.snapshot(snapshot_id)
-        path = self.data_dir / raw_build.artifact_path("core", table, snap["emil_id"], snap["blob_sha256"])
+        path = self.data_dir / artifact_path("core", table, snap["emil_id"], snap["blob_sha256"])
         if not path.is_file():
             return self.core(table).filter(pl.col("snapshot_id") == snapshot_id).collect()
         return pl.scan_parquet(path).filter(pl.col("snapshot_id") == snapshot_id).collect().with_columns(pl.lit(snap["emil_id"]).alias("emil_id"))
@@ -181,7 +181,7 @@ class Session:
     def raw_rows(self, table: str, snapshot_id: str) -> pl.DataFrame:
         """One model's rows of a raw table: its package's file, narrowed to the model's DAM hour or CRR month."""
         snap = self.snapshot(snapshot_id)
-        path = self.data_dir / raw_build.artifact_path("raw", table, snap["emil_id"], snap["blob_sha256"])
+        path = self.data_dir / artifact_path("raw", table, snap["emil_id"], snap["blob_sha256"])
         rows = pl.scan_parquet(path) if path.is_file() else self.raw(table).filter(pl.col("blob_sha256") == snap["blob_sha256"]).drop("emil_id")
         columns = rows.collect_schema().names()
         if snap["hour"] is not None and "hour" in columns:

@@ -11,29 +11,25 @@ from __future__ import annotations
 
 import base64
 import secrets
-import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 import polars as pl
 import requests
 from lxml import etree
 
-from ..clock import TZ
 from ..config import Identity
+from .documents import CHUNK, RemoteDoc, posted_at, retrying
 
 if TYPE_CHECKING:
     from .products import Product
 
-T = TypeVar("T")
-
 ENDPOINT = "https://misapi.ercot.com/NodalAPI/EWS/"
 TIMEOUT = 300  # seconds per call; a 30 MB download on a slow day
-CHUNK = 1 << 20
 
 # Reports are served by the MarketInfo operation; its SOAPAction is a path, not a URN.
 SOAP_ACTION = "/BusinessService/NodalService.serviceagent/HttpEndPoint/MarketInfo"
@@ -49,43 +45,12 @@ NS = {
     "oasis-200401-wss-wssecurity-utility-1.0.xsd",
 }
 
-# Seconds to wait before the second and third attempts at a stalled call.
-DELAYS: tuple[float, ...] = (5.0, 20.0)
-
-
-def retrying(call: Callable[[], T], transient: tuple[type[BaseException], ...]) -> T:
-    """The result of ``call``, retried after each ``transient`` error (a stalled download, a 5xx reply) with the ``DELAYS`` between attempts."""
-    for delay in (*DELAYS, None):
-        try:
-            return call()
-        except transient:
-            if delay is None:
-                raise
-            time.sleep(delay)
-    raise AssertionError("unreachable")
-
-
 class EwsError(RuntimeError):
     """EWS answered with a SOAP fault, a reply code other than OK, or an HTTP error."""
 
 
 class _ServerError(EwsError):
     """A gateway error (HTTP 502 to 504), retried."""
-
-
-@dataclass(frozen=True)
-class RemoteDoc:
-    """One posted document as a listing describes it, from EWS or the Public API archive."""
-
-    report_type_id: int | None
-    doc_id: str | None
-    file_name: str
-    report_group: str
-    operating_date: str
-    posted_at: datetime | None
-    size_bytes: int
-    format: str
-    url: str
 
 
 def _iso(t: datetime) -> str:
@@ -205,21 +170,11 @@ def _to_doc(fields: dict[str, str], report_type_id: int) -> RemoteDoc:
         file_name=fields.get("fileName", ""),
         report_group=fields.get("reportGroup", ""),
         operating_date=fields.get("operatingDate", ""),
-        posted_at=_parse_time(fields.get("created", "")),
+        posted_at=posted_at(fields.get("created", "")),
         size_bytes=int(fields.get("size") or 0),
         format=fields.get("format", ""),
         url=url,
     )
-
-
-def _parse_time(text: str) -> datetime | None:
-    if not text:
-        return None
-    try:
-        t = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    return t if t.tzinfo else t.replace(tzinfo=TZ)
 
 
 class EwsClient:

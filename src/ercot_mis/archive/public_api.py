@@ -17,7 +17,7 @@ import requests
 
 from ..clock import TZ
 from ..config import ConfigError, load_secret
-from .ews import CHUNK, RemoteDoc, retrying
+from .documents import CHUNK, RemoteDoc, posted_at, retrying
 from .products import Product
 
 TOKEN_URL = "https://ercotb2c.b2clogin.com/ercotb2c.onmicrosoft.com/B2C_1_PUBAPI-ROPC-FLOW/oauth2/v2.0/token"
@@ -134,7 +134,7 @@ def parse_archive(body: dict, emil_id: str) -> list[RemoteDoc]:
         name = item.get("friendlyName") or ""
         docs.append(RemoteDoc(
             report_type_id=None, doc_id=str(item["docId"]), file_name=name, report_group="", operating_date="",
-            posted_at=_posted(item.get("postDatetime")), size_bytes=0, format="zip",
+            posted_at=posted_at(item.get("postDatetime")), size_bytes=0, format="zip",
             url=((item.get("_links") or {}).get("endpoint") or {}).get("href") or f"{ARCHIVE_URL}/{emil_id.lower()}?download={item['docId']}"))
     return docs
 
@@ -144,10 +144,3 @@ def _local(t: datetime) -> str:
     if t.tzinfo is None:
         raise ValueError("Public API time bounds must be timezone-aware datetimes")
     return t.astimezone(TZ).strftime("%Y-%m-%dT%H:%M:%S")
-
-
-def _posted(text: str | None) -> datetime | None:
-    if not text:
-        return None
-    t = datetime.fromisoformat(text)
-    return t if t.tzinfo else t.replace(tzinfo=TZ)

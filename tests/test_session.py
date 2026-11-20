@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from ercot_mis import Session, get_product
-from ercot_mis.archive.ews import EwsError, RemoteDoc
+from ercot_mis.archive.documents import RemoteDoc
+from ercot_mis.archive.ews import EwsError
 
 NOW = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
 

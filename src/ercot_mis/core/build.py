@@ -17,7 +17,7 @@ from pathlib import Path
 
 import polars as pl
 
-from ..archive.catalog import posting_order
+from ..archive.catalog import Written, artifact_key, artifact_path, none_artifact, posting_order
 from ..raw import build as raw_build
 from . import award, branch, bus, contingency, gtc, load, settlement_point, snapshot
 
@@ -66,10 +66,10 @@ def build(session, *, limit: int | None = None) -> list[dict]:
         package = snaps.filter(pl.col("blob_sha256") == blob)
         gtl = gtl_days.get(package["operating_date"][0], (pl.DataFrame(schema=GTL_SCHEMA), None)) if emil_id == snapshot.DAM_PRODUCT else None
         identity = f"{core_id()}|{package_inputs(session, emil_id, package, gtl[1] if gtl else None)}"
-        keys = {t: raw_build.artifact_key(identity, blob, t) for t in TABLES}
-        none_key = raw_build.artifact_key(identity, blob, raw_build.NONE)
-        rels = {t: raw_build.artifact_path(LAYER, t, emil_id, blob) for t in TABLES}
-        if none_key in existing or (set(keys.values()) <= existing and all((session.data_dir / rel).is_file() for rel in rels.values())):
+        keys = {t: artifact_key(identity, blob, t) for t in TABLES}
+        none = none_artifact(identity, blob)
+        rels = {t: artifact_path(LAYER, t, emil_id, blob) for t in TABLES}
+        if none[0] in existing or (set(keys.values()) <= existing and all((session.data_dir / rel).is_file() for rel in rels.values())):
             results.append(record)
             continue
         started = time.perf_counter()
@@ -82,8 +82,7 @@ def build(session, *, limit: int | None = None) -> list[dict]:
             results.append({**record, "status": "failed", "error": f"{type(error).__name__}: {error}"})
             continue
         if not tables:  # every month filtered out: remember that, or it is rebuilt every run
-            session.record_artifacts(run_id, LAYER, emil_id, blob, identity, [(none_key, raw_build.Written(raw_build.NONE,
-                                                                                                           Path(raw_build.NONE), 0, 0, ()), Path(raw_build.NONE))])
+            session.record_artifacts(run_id, LAYER, emil_id, blob, identity, [none])
             results.append({**record, "status": "built", "tables": 0, "rows": 0})
             continue
         placed = [(keys[t], _write(frame, session.data_dir / rels[t], tmp_dir, t), rels[t]) for t, frame in tables.items()]
@@ -179,8 +178,8 @@ def build_awards(session, existing: set[str], tmp_dir: Path, run_id: str) -> lis
     results = []
     for package in session.catalog.packages(product):
         blob = package["sha256"]
-        key = raw_build.artifact_key(identity, blob, "hourly_award")
-        rel = raw_build.artifact_path(LAYER, "hourly_award", product, blob)
+        key = artifact_key(identity, blob, "hourly_award")
+        rel = artifact_path(LAYER, "hourly_award", product, blob)
         record = {"emil_id": product, "doc_id": package["doc_id"], "blob_sha256": blob, "status": "skipped", "tables": 1, "rows": None,
                   "seconds": 0.0, "error": None}
         if key in existing and (session.data_dir / rel).is_file():
@@ -206,13 +205,13 @@ IDENTITY = ("emil_id", "doc_id", "blob_sha256", "member_sha256", "member_path") 
 
 def _raw(session, table: str, emil_id: str, blob_sha256: str) -> pl.DataFrame | None:
     """One raw table of one package without its identity columns, which no core builder reads."""
-    path = session.data_dir / raw_build.artifact_path(raw_build.LAYER, table, emil_id, blob_sha256)
+    path = session.data_dir / artifact_path(raw_build.LAYER, table, emil_id, blob_sha256)
     if not path.is_file():
         return None
     return pl.read_parquet(path, columns=[c for c in pl.read_parquet_schema(path) if c not in IDENTITY])
 
 
-def _write(frame: pl.DataFrame, dest: Path, tmp_dir: Path, table: str = "") -> raw_build.Written:
+def _write(frame: pl.DataFrame, dest: Path, tmp_dir: Path, table: str = "") -> Written:
     """Write ``frame`` to a temporary file, then move it into place, owner-only."""
     dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     handle, tmp = tempfile.mkstemp(dir=tmp_dir, suffix=".parquet")
@@ -224,4 +223,4 @@ def _write(frame: pl.DataFrame, dest: Path, tmp_dir: Path, table: str = "") -> r
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
-    return raw_build.Written(table, dest, frame.height, dest.stat().st_size, ())
+    return Written(table, dest, frame.height, dest.stat().st_size, ())

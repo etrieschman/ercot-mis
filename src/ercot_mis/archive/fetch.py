@@ -19,7 +19,8 @@ import requests
 from . import store
 from .catalog import writing
 from ..clock import TZ
-from .ews import CHUNK, EwsError, retrying
+from .documents import CHUNK, retrying
+from .ews import EwsError
 from .products import Product, get_product
 
 FETCH_SCHEMA = {

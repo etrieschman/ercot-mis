@@ -8,11 +8,13 @@ an open that meets a lock waits and retries (CLAUDE.md, "Provenance").
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -22,7 +24,7 @@ import duckdb
 import polars as pl
 
 if TYPE_CHECKING:
-    from .ews import RemoteDoc
+    from .documents import RemoteDoc
     from .products import Product
     from .store import Member, StoredBlob
 
@@ -104,6 +106,36 @@ SCHEMA = (
 
 
 TABLES = {re.search(r"EXISTS (\w+)", statement).group(1) for statement in SCHEMA}
+
+# ------------------------------------------------------------- what a build registers
+
+NONE = "<none>"  # the artifact row of a package that yields no table (a document shape the parser archives but does not read)
+
+
+@dataclass(frozen=True)
+class Written:
+    """One file a build wrote, not yet registered in the catalog."""
+
+    table: str
+    tmp_path: Path
+    rows: int
+    size_bytes: int
+    member_sha256s: tuple[str, ...]
+
+
+def artifact_key(parser: str, blob_sha256: str, table: str) -> str:
+    """The key of one built file: the code that built it, the package bytes and the table; a change to any of the three is a new key."""
+    return hashlib.sha256(f"{parser}|{blob_sha256}|{table}".encode()).hexdigest()
+
+
+def artifact_path(layer: str, table: str, emil_id: str, blob_sha256: str) -> Path:
+    """Where a package's table lives in a layer, relative to the data folder; the hive folder gives readers ``emil_id``."""
+    return Path(layer) / table / f"emil_id={emil_id}" / f"{blob_sha256[:16]}.parquet"
+
+
+def none_artifact(parser: str, blob_sha256: str) -> tuple[str, Written, Path]:
+    """The placed record of a package that yields no table, so the build remembers it instead of parsing it every run."""
+    return artifact_key(parser, blob_sha256, NONE), Written(NONE, Path(NONE), 0, 0, ()), Path(NONE)
 
 
 def posting_order(posted_at: datetime | None, tiebreak: str) -> tuple:

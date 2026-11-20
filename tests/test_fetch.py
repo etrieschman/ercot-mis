@@ -6,7 +6,8 @@ import polars as pl
 import pytest
 
 from ercot_mis import BudgetError, Session
-from ercot_mis.archive.ews import EwsError, RemoteDoc
+from ercot_mis.archive.documents import RemoteDoc
+from ercot_mis.archive.ews import EwsError
 
 NOW = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
 

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from ercot_mis.archive.products import get_product
-from ercot_mis.archive import ews, public_api
+from ercot_mis.archive import public_api
 from ercot_mis.archive.public_api import ARCHIVE_URL, TOKEN_URL, PublicApiClient, PublicApiError
 
 PRODUCT = get_product("NP4-191-CD")
@@ -54,11 +54,6 @@ def page(ids, pages=1):
 def client(replies):
     server = Server(replies)
     return PublicApiClient(*SECRETS, session=server, clock=lambda: 0.0, sleep=lambda s: None), server
-
-
-@pytest.fixture(autouse=True)
-def no_waiting(monkeypatch):
-    monkeypatch.setattr(ews, "DELAYS", (0.0, 0.0))
 
 
 def test_listing_follows_pages_and_sends_both_credentials():
