@@ -56,8 +56,8 @@ parsed.
   disconnects. `checks/prices.py` compares it with the points our solve leaves without a
   connected bus (NAM-07).
 - The load CSV header ends with a trailing comma its rows lack.
-- **Logical resource nodes (combined-cycle trains) have no bus in `Sp`** and no
-  combined-cycle settlement point either, although the column exists. The `Gn` file
+- **`Sp` gives a logical resource node (a combined-cycle train) neither a bus nor a
+  combined-cycle settlement point**, although the column exists. The `Gn` file
   places them: every unit of a train names the train's logical resource node and its own
   resource node and bus. Protocols 4.6.1.4 weighs the units by their High Reasonability
   Limit from Resource Registration, which no file we pull carries, so core gives each
@@ -75,8 +75,8 @@ parsed.
   at or below its tie reactance). A few reactances are negative (series capacitors).
 - **Base kV with a tenths digit** (138.1, 345.2) tells buses of one substation apart; it
   is not a voltage. Drop the tenths to compare voltage levels.
-- The package has no GTC file. DAM GTC limits come from NP3-766-M and the member
-  definitions from NP3-770-M (generic-transmission-limits.md).
+- DAM GTC limits come from NP3-766-M and the member definitions from NP3-770-M, because
+  the package carries neither (generic-transmission-limits.md).
 - `Monitored?` and `Monitored and Secured?` are the CIM `DAM Monitored` and `DAM Secured`
   flags (defaults FALSE and TRUE). Secured means enforced; `out.network` limits secured
   branches (RAT-08).

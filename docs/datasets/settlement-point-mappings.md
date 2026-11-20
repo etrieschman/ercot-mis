@@ -7,7 +7,7 @@ price files: electrical buses. NP4-160-SG maps every electrical bus to its RAW n
 PSS/E name and number, voltage level, substation, load zone, resource node and hub.
 NP3-220-SG lists the electrical buses of each hub with their kV. The DAM package carries
 the same facts in its `Sp`, `Hb` and `Ld` files; these two products are the public
-version, and the only bridge from the LMP file's bus names to the model.
+version, and the only published link from the LMP file's bus names to the model.
 
 ## Source and capture
 

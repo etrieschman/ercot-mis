@@ -7,9 +7,9 @@ what a function returns; these notes say what the files are.
 Notes are public. They describe layouts, column names and formats, never an equipment,
 bus, substation, contingency or constraint name, and never a document file name.
 
-Notes hold no measurements. Counts, rates and the dates of runs live in the scripts that
-measure them (`scripts/validate_parsers.py`, `scripts/check.py`) and in the reports they
-write under `data/reports/`.
+Counts, rates and the dates of runs live in the scripts that measure them
+(`scripts/validate_parsers.py`, `scripts/check.py`) and in the reports they write under
+`data/reports/`, not in the notes.
 
 | note | products | state |
 |---|---|---|

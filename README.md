@@ -4,9 +4,9 @@ ercot-mis fetches ERCOT Market Information System (MIS) data, keeps the original
 and standardizes them into tables that record which ERCOT file and which code produced
 every row. A daily pull archives the CRR and DAM network models, the generic transmission
 limits, ERCOT's settlement point mappings, the day-ahead prices and pricing inputs and the
-60-day disclosure, builds the raw and core tables, and checks the DAM's prices and flows and the CRR auction's prices
-against what ERCOT published. `CLAUDE.md` holds the design and the open work;
-`demo/tour.ipynb` walks through every call.
+60-day disclosure. It builds the raw and core tables and checks the DAM's prices and flows
+and the CRR auction's prices against what ERCOT published. `CLAUDE.md` holds the design
+and the open work; `demo/tour.ipynb` walks through every call.
 
 ## What it does
 

@@ -3,10 +3,10 @@
 ## What it is and why we use it
 
 A generic transmission constraint (GTC) is a limit on the sum of flows over several
-branches, enforced as a base-case constraint in CRR, DAM and real time. The DAM package
-ships no GTC file. Nodal Protocols 3.10.7.6 posts the definitions and the day-ahead
-limits to the MIS Secure Area as ECEII: NP3-766-M carries the limits, NP3-770-M the
-per-constraint studies that define the members.
+branches, enforced as a base-case constraint in CRR, DAM and real time. Nodal Protocols
+3.10.7.6 posts the definitions and the day-ahead limits to the MIS Secure Area as ECEII,
+apart from the DAM package: NP3-766-M carries the limits, NP3-770-M the per-constraint
+studies that define the members.
 
 ## Source and capture
 

@@ -36,8 +36,8 @@ The header picks the table (`raw/dam_prices.py`): `dam_shadow_prices`, `dam_lmps
 `dam_settlement_point_prices`, `dam_system_lambda`, `dam_deenergized_settlement_points`,
 `dam_electrically_similar_settlement_points`, `heuristic_pricing_associations` and
 `load_distribution_factors`. `delivery_date` (`MM/DD/YYYY`), `hour_ending` (`HH:00`,
-`24:00` last) and `dst_flag` stay as ERCOT writes them; numbers are cast. The raw rows
-carry no operating date: the delivery date is in the rows.
+`24:00` last) and `dst_flag` stay as ERCOT writes them; numbers are cast. The delivery
+date is in the rows, so the raw rows have no `operating_date` column.
 
 ## Decisions
 

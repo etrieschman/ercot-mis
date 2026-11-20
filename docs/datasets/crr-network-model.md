@@ -78,8 +78,9 @@ assumptions; the monitored CSV already carries the ratings they produce).
   `_None` are a comma-separated header with no rows.
 - Only a PeakWD RAW ships, while the ratings carry PeakWD, PeakWE and Off-peak blocks,
   which can be identical for a month (RAT-06, RAT-07).
-- `BaseCaseRating` is a fixed fraction of the RAW's rate A on every monitored line;
-  `checks/identity.py` records the fraction.
+- `BaseCaseRating` is a fixed fraction of the RAW's rate A on every monitored line.
+  `checks/identity.py` records the CRR base rating against the DAM's rate A on the
+  branches both models enforce.
 - The contingency, monitored and GTC CSVs name transformers by the `Autos` sheet's CRR
   name, which is not in the RAW; lines use the RAW comment. The sheet's `From #` and
   `To #` are swapped relative to the RAW for a large minority of rows.

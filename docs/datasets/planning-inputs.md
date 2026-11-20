@@ -5,8 +5,8 @@ around an auction or a DAM run. The Public API's product catalogue
 (`GET /api/public-reports`) lists every public product with its EMIL id, report type,
 posting frequency and archive depth. The products below are in `archive/products.py` with
 `is_fetched=False`: listed, so the catalog records what ERCOT offers, and not downloaded.
-Fetching one means setting `is_fetched=True`, adding it to the daily pull, and writing
-its parser and note.
+Fetching one means setting `is_fetched=True`, which the daily pull picks up on its next
+run, and writing its parser (`PARSERS` in `raw/build.py`) and its note.
 
 ## What the Public API has
 
@@ -29,14 +29,12 @@ its parser and note.
   report type ids from the EMIL. The CRR package's own Outages file is parsed
   (`raw.crr_outages`) and carries planned and actual dates per outage.
 - **CRR auction results**: awards, bids and offers, binding constraints and clearing
-  prices. Same route. Nothing checks the CRR model against what the auction cleared
-  until they are archived.
+  prices. They come over EWS (NP7-803-M, NP7-802-M; crr-auction-results.md).
 - **Network models before the first pull.** EWS keeps only the display window, and the
   Public API carries no network model.
 
 ## Open questions
 
-- The EWS report type ids and classifications of the transmission outage reports and
-  the CRR auction results.
+- The EWS report type ids and classifications of the transmission outage reports.
 - Whether the two-day reports add anything once the 60-day disclosure for the same day
   is in.

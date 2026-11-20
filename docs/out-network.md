@@ -5,7 +5,7 @@ CRR month or DAM hour: buses with a dense index, branches with reactance, tap ra
 two limits, contingencies as sets of branch indexes, GTCs as factor-weighted member sets,
 settlement point weights over the buses, and a list of everything it left out and why.
 Core stores facts; this layer applies ERCOT's practice. The two judgment calls a check
-varies are its options. A network is assembled on every call, in well under a second.
+varies are its options. A network is assembled on every call.
 
 The rows are buses because a solver's model is bus-branch. A DAM bus is a RAW record. A
 CRR bus is, by default, one node, because ERCOT's auction keeps the closed breakers as
@@ -77,7 +77,7 @@ source and the check that measures it.
   way round (`is_name_reversed`), because the CSV direction refers to the name. DAM GTC
   rows carry the GTL limit and the crosswalked CRR id but no members
   (generic-transmission-limits.md).
-- **Settlement points ride along** (SP-06). `settlement_point_buses` gives each point's
+- **Settlement point weights follow the kept buses** (SP-06). `settlement_point_buses` gives each point's
   weights over the kept buses, renormalized to one, and `settlement_points` records the
   weight that fell on dropped buses. A weight is given per `bus_key`; with CRR ties kept
   it is spread equally over the nodes of the bus.
